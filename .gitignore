@@ -1,0 +1,37 @@
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.*
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Backend build output
+backend/target/
+backend/logs/
+release/**/tradingbot-backend.jar
+
+# Local databases and broker/account state
+backend/*.db
+backend/*.db-*
+backend/*.db.*
+backend/trading_bot.db
+backend/cp.txt
+
+# Local IDE/runtime files
+.idea/
+.vscode/
+*.classpath
+*.project
+*.settings/
+.DS_Store
+.venv/
+*.log
+
+# Large generated or staged market-data backups
+backend/market_data/**/*.csv
+backend/market_data/status.properties
+backend/market_data/futures/backups/
+backend/market_data/futures/topstepx_stage/

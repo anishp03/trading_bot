@@ -1,0 +1,8 @@
+target
+logs
+*.db
+*.db-*
+market_data/**/*.csv
+market_data/futures/backups
+market_data/futures/topstepx_stage
+cp.txt

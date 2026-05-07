@@ -1,0 +1,35 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    environment:
+      TRADINGBOT_BIND_HOST: 0.0.0.0
+      TRADINGBOT_PORT: 7070
+      TRADINGBOT_DB_PATH: /data/tradingbot.db
+      TRADINGBOT_DEFAULT_ACCOUNT_EMAIL: ${TRADINGBOT_DEFAULT_ACCOUNT_EMAIL:-local@example.invalid}
+      TRADINGBOT_BOOTSTRAP_ADMIN_NAME: ${TRADINGBOT_BOOTSTRAP_ADMIN_NAME:-Trading Bot Admin}
+      TRADINGBOT_BOOTSTRAP_ADMIN_EMAIL: ${TRADINGBOT_BOOTSTRAP_ADMIN_EMAIL:-}
+      TRADINGBOT_BOOTSTRAP_ADMIN_PASSWORD: ${TRADINGBOT_BOOTSTRAP_ADMIN_PASSWORD:-}
+      TRADINGBOT_SESSION_TTL_SECONDS: ${TRADINGBOT_SESSION_TTL_SECONDS:-43200}
+    ports:
+      - "127.0.0.1:7070:7070"
+    volumes:
+      - backend_data:/data
+      - ./backend/logs:/app/logs
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:7070
+    environment:
+      TRADINGBOT_API_BASE_URL: http://localhost:7070
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend_data:

@@ -1,0 +1,2415 @@
+@import url("https://fonts.googleapis.com/css2?family=PT+Serif:wght@400;700&display=swap");
+
+:root {
+  --app-bg: #06090f;
+  --app-bg-soft: #0a0e17;
+  --app-panel: rgba(255, 255, 255, 0.04);
+  --app-panel-soft: rgba(255, 255, 255, 0.03);
+  --app-border: rgba(255, 255, 255, 0.08);
+  --app-text: #e5e7eb;
+  --app-muted: rgba(255, 255, 255, 0.66);
+  --app-link: rgba(255, 255, 255, 0.92);
+  --app-positive: rgba(120, 220, 160, 0.95);
+  --app-negative: rgba(255, 140, 140, 0.95);
+  --app-accent: rgba(100, 108, 255, 0.2);
+  --app-accent-border: rgba(100, 108, 255, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 320px;
+  overflow: hidden;
+  font-family: "PT Serif", serif;
+  background: var(--app-bg);
+  color: var(--app-text);
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--app-bg);
+}
+
+.app-sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 1rem;
+  border-right: 1px solid var(--app-border);
+  background: var(--app-bg-soft);
+}
+
+.app-brand-pill {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  font-weight: 800;
+  color: var(--app-link);
+}
+
+.app-brand-name {
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.app-nav-link {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 12px;
+  text-decoration: none;
+  color: var(--app-link);
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.03);
+  transition: 120ms ease;
+}
+
+.app-nav-link:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.app-nav-link.active {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--app-border);
+}
+
+.app-nav-sections {
+  display: grid;
+  gap: 18px;
+}
+
+.app-nav-section {
+  display: grid;
+  gap: 8px;
+}
+
+.app-nav-section-label {
+  padding: 0 4px;
+  color: var(--app-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.app-main {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: 56px 1fr;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.app-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--app-bg);
+  border-bottom: 1px solid var(--app-border);
+  padding: 0 1rem;
+}
+
+.app-content {
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 1rem 1.4rem 1rem 1rem;
+}
+
+.app-topbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--app-link);
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  text-decoration: none;
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.app-topbar-action {
+  cursor: pointer;
+}
+
+.app-topbar-action:hover,
+.app-topbar-action:focus {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.app-topbar-account {
+  max-width: min(42vw, 320px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--app-muted);
+  font-size: 0.78rem;
+}
+
+.app-page {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  width: 100%;
+}
+
+.auth-page {
+  min-height: 100vh;
+  width: min(100% - 32px, 400px);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-panel {
+  width: 100%;
+}
+
+.app-settings-page {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.app-panel {
+  border-radius: 16px;
+  padding: 14px;
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  min-width: 0;
+}
+
+.app-subpanel {
+  border-radius: 14px;
+  padding: 12px;
+  background: var(--app-panel-soft);
+  border: 1px solid var(--app-border);
+  min-width: 0;
+}
+
+.app-service-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.app-label {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.app-muted {
+  color: var(--app-muted);
+}
+
+.app-input,
+.app-input:focus {
+  width: 100%;
+  min-width: 0;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--app-link);
+  box-shadow: none;
+}
+
+.app-input::placeholder {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.app-input:disabled {
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+  opacity: 1;
+}
+
+.app-input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.85);
+  opacity: 0.8;
+}
+
+.app-btn {
+  height: 38px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--app-link);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.app-btn:hover,
+.app-btn:focus {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.app-btn:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.app-btn-primary {
+  background: var(--app-accent);
+  border-color: rgba(100, 108, 255, 0.44);
+}
+
+.app-btn-primary:hover,
+.app-btn-primary:focus {
+  background: rgba(100, 108, 255, 0.3);
+  border-color: rgba(100, 108, 255, 0.62);
+}
+
+.app-btn-danger {
+  background: rgba(180, 40, 40, 0.22);
+  border-color: rgba(220, 72, 72, 0.55);
+  color: #ffd7d7;
+}
+
+.app-btn-danger:hover,
+.app-btn-danger:focus {
+  background: rgba(180, 40, 40, 0.34);
+  border-color: rgba(240, 92, 92, 0.7);
+  color: #fff3f3;
+}
+
+.app-btn-selected {
+  border-color: var(--app-accent-border);
+  background: rgba(100, 108, 255, 0.2);
+}
+
+.app-btn-run {
+  min-width: 160px;
+  font-weight: 600;
+}
+
+.app-btn-small {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 0.78rem;
+}
+
+.app-card {
+  border-radius: 16px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--app-border);
+}
+
+.app-card-label {
+  color: var(--app-muted);
+  font-size: 0.75rem;
+}
+
+.app-card-value {
+  margin-top: 0.35rem;
+  font-size: 1.35rem;
+  font-weight: 800;
+}
+
+.app-status-pill {
+  min-height: 36px;
+  border-radius: 999px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  gap: 8px;
+}
+
+.app-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.app-status-dot.off {
+  background: var(--app-negative);
+  box-shadow: 0 0 10px rgba(255, 140, 140, 0.45);
+}
+
+.app-status-dot.on {
+  background: var(--app-positive);
+  box-shadow: 0 0 10px rgba(120, 220, 160, 0.55);
+}
+
+.app-status-text {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+  letter-spacing: 0.2px;
+}
+
+.app-table-wrap {
+  margin-top: 0.75rem;
+  border-radius: 14px;
+  border: 1px solid var(--app-border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.app-grid-head,
+.app-grid-row {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  width: 100%;
+  min-width: 100%;
+}
+
+.app-grid-head {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.app-grid-row {
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.92);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.app-grid-row.selected {
+  background: rgba(100, 108, 255, 0.08);
+}
+
+.history-grid {
+  grid-template-columns: 1.1fr 0.72fr 1.45fr 0.82fr 0.98fr 0.84fr 0.84fr 0.64fr 0.76fr;
+  min-width: 1000px;
+}
+
+.app-grid-head.history-grid,
+.app-grid-row.history-grid {
+  width: 100%;
+}
+
+.trades-grid {
+  grid-template-columns: 1.2fr 1.08fr 0.68fr 0.58fr 0.78fr 0.78fr 0.78fr 1.9fr;
+  min-width: 1080px;
+}
+
+.trades-grid.has-action {
+  grid-template-columns: 1.2fr 1.08fr 0.68fr 0.58fr 0.78fr 0.78fr 0.78fr 1.9fr 0.7fr;
+  min-width: 1180px;
+}
+
+.app-grid-head.trades-grid,
+.app-grid-row.trades-grid {
+  width: 100%;
+}
+
+.app-grid-row.trades-grid {
+  align-items: start;
+}
+
+.strategy-table-wrap {
+  margin-top: 0;
+}
+
+.strategy-grid {
+  grid-template-columns: 0.9fr 0.9fr 0.95fr 0.9fr 0.9fr 0.7fr 0.9fr;
+  min-width: 740px;
+}
+
+.app-time-cell {
+  display: grid;
+  gap: 2px;
+  font-size: 0.76rem;
+  line-height: 1.15rem;
+  letter-spacing: 0.1px;
+}
+
+.app-time-cell span {
+  color: var(--app-muted);
+}
+
+.app-pnl-pos {
+  color: var(--app-positive);
+  font-weight: 700;
+}
+
+.app-pnl-neg {
+  color: var(--app-negative);
+  font-weight: 700;
+}
+
+.app-trade-notes {
+  color: rgba(255, 255, 255, 0.66);
+  line-height: 1.25rem;
+  overflow-wrap: anywhere;
+}
+
+.app-empty {
+  padding: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 0.82rem;
+}
+
+.app-kicker {
+  font-size: 0.82rem;
+}
+
+.app-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--app-link);
+  padding: 2px 10px;
+  font-size: 0.72rem;
+  letter-spacing: 0.2px;
+}
+
+.app-positive-badge {
+  color: #c7f9df;
+  background: rgba(40, 120, 76, 0.3);
+  border-color: rgba(82, 200, 130, 0.45);
+}
+
+.app-risk-badge {
+  color: #ffd8d8;
+  background: rgba(140, 44, 44, 0.3);
+  border-color: rgba(242, 92, 92, 0.52);
+}
+
+.app-neutral-badge {
+  color: var(--app-muted);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.app-toggle-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  color: var(--app-link);
+  font-size: 0.78rem;
+}
+
+.app-side-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.72rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.app-side-pill.long {
+  color: #c7f9df;
+  background: rgba(40, 120, 76, 0.3);
+  border-color: rgba(82, 200, 130, 0.45);
+}
+
+.app-side-pill.short {
+  color: #ffd8d8;
+  background: rgba(140, 44, 44, 0.3);
+  border-color: rgba(242, 92, 92, 0.52);
+}
+
+.app-filter-btn {
+  height: 38px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--app-link);
+  min-width: 74px;
+}
+
+.app-filter-btn.active {
+  border-color: var(--app-accent-border);
+  background: rgba(100, 108, 255, 0.25);
+}
+
+.app-filter-btn:disabled {
+  opacity: 0.5;
+}
+
+.app-placeholder-copy {
+  opacity: 0.7;
+}
+
+.app-live-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.app-live-card {
+  min-height: 138px;
+}
+
+.app-active-trades-grid {
+  grid-template-columns: 1.35fr 0.6fr 0.55fr 0.72fr 0.72fr 0.72fr 0.72fr 0.72fr 1fr;
+  min-width: 980px;
+}
+
+.futures-run-grid {
+  grid-template-columns: 0.44fr 0.58fr minmax(180px, 1.45fr) 0.72fr 0.82fr 0.66fr 0.78fr 0.52fr 0.68fr minmax(96px, 0.72fr);
+  min-width: 980px;
+}
+
+.futures-portfolio-run-grid {
+  grid-template-columns: 0.44fr minmax(160px, 1.15fr) minmax(180px, 1.3fr) 0.58fr 0.82fr 0.66fr 0.78fr 0.52fr 0.55fr 0.55fr 0.82fr 0.68fr 0.68fr minmax(96px, 0.72fr);
+  min-width: 1320px;
+}
+
+.futures-trade-grid {
+  grid-template-columns: 1.25fr 1.15fr 0.62fr 0.66fr 0.72fr 0.72fr 0.82fr 0.9fr 0.95fr;
+  min-width: 1080px;
+}
+
+.futures-strategy-grid {
+  grid-template-columns: 1.35fr 0.48fr 0.62fr 0.8fr minmax(220px, 1.75fr);
+  min-width: 780px;
+}
+
+.futures-settings-grid {
+  grid-template-columns: minmax(220px, 1fr) 140px 160px;
+  min-width: 560px;
+}
+
+.futures-fieldset {
+  border: 0;
+  margin-left: 0;
+  margin-right: 0;
+  padding: 0;
+}
+
+.futures-segment-grid {
+  grid-template-columns: 1fr 0.9fr 0.62fr 0.62fr 0.78fr;
+  min-width: 520px;
+}
+
+.futures-lab-grid {
+  grid-template-columns: minmax(140px, 1.2fr) 0.55fr 0.75fr 0.82fr 0.58fr 0.52fr 0.58fr 0.58fr 0.82fr 0.9fr 0.82fr;
+  min-width: 1120px;
+}
+
+.futures-diagnostics-grid {
+  grid-template-columns: minmax(120px, 1fr) 0.72fr 0.72fr 0.72fr 0.72fr 0.82fr 0.72fr;
+  min-width: 840px;
+}
+
+.futures-live-decision-grid {
+  grid-template-columns: minmax(130px, 1fr) 0.52fr 0.62fr 0.48fr 0.42fr 0.58fr 0.9fr minmax(220px, 1.7fr);
+  min-width: 980px;
+}
+
+.futures-live-order-grid {
+  grid-template-columns: minmax(130px, 1fr) 0.58fr 0.52fr 0.58fr 0.42fr 0.58fr 1fr 0.88fr;
+  min-width: 900px;
+}
+
+.futures-live-risk-grid {
+  grid-template-columns: minmax(130px, 0.9fr) 0.72fr minmax(170px, 1fr) minmax(260px, 2fr);
+  min-width: 760px;
+}
+
+.futures-live-realtime-grid {
+  grid-template-columns: minmax(130px, 1fr) 0.55fr 0.9fr 0.58fr 0.8fr minmax(220px, 1.6fr);
+  min-width: 880px;
+}
+
+.futures-live-page {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.futures-live-control-panel,
+.futures-monitor-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.futures-launch-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.futures-launch-main {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+}
+
+.futures-launch-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.futures-launch-state {
+  width: max-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--app-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+  padding: 6px 8px;
+}
+
+.futures-launch-state span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.035);
+}
+
+.futures-launch-state.ready {
+  border-color: rgba(120, 220, 160, 0.2);
+  background: rgba(120, 220, 160, 0.08);
+  color: var(--app-positive);
+}
+
+.futures-launch-state.live {
+  border-color: rgba(122, 162, 255, 0.28);
+  background: rgba(122, 162, 255, 0.1);
+  color: #9db6ff;
+}
+
+.futures-launch-count {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--app-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+  padding: 5px 7px;
+}
+
+.futures-launch-count.ready {
+  border-color: rgba(120, 220, 160, 0.22);
+  background: rgba(120, 220, 160, 0.1);
+  color: var(--app-positive);
+}
+
+.futures-launch-config {
+  display: grid;
+  grid-template-columns: minmax(190px, 240px) minmax(160px, 0.75fr) minmax(140px, 0.55fr) minmax(260px, 1.2fr);
+  align-items: stretch;
+  gap: 8px;
+}
+
+.futures-launch-account-field {
+  min-width: 0;
+}
+
+.futures-launch-account-field .app-input,
+.futures-launch-chip,
+.futures-launch-symbols {
+  min-height: 54px;
+}
+
+.futures-launch-chip,
+.futures-launch-symbols {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.026);
+  padding: 8px 10px;
+}
+
+.futures-launch-chip.ready {
+  border-color: rgba(120, 220, 160, 0.18);
+  background: rgba(120, 220, 160, 0.06);
+}
+
+.futures-launch-chip span,
+.futures-launch-symbols span {
+  color: var(--app-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 0.92rem;
+}
+
+.futures-launch-chip strong {
+  color: var(--app-link);
+  font-size: 0.84rem;
+  line-height: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.futures-launch-chip small {
+  color: var(--app-muted);
+  font-size: 0.68rem;
+  line-height: 0.92rem;
+  overflow-wrap: anywhere;
+}
+
+.futures-launch-symbol-list {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.futures-launch-symbol-list b {
+  border-radius: 999px;
+  border: 1px solid rgba(122, 162, 255, 0.2);
+  background: rgba(122, 162, 255, 0.08);
+  color: var(--app-link);
+  font-size: 0.68rem;
+  line-height: 1;
+  padding: 5px 7px;
+}
+
+.futures-readiness-panel {
+  display: grid;
+  gap: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.025);
+  padding: 12px;
+}
+
+.futures-readiness-panel.ready {
+  border-color: rgba(120, 220, 160, 0.24);
+  background: linear-gradient(135deg, rgba(120, 220, 160, 0.07), rgba(255, 255, 255, 0.025) 48%);
+}
+
+.futures-readiness-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.futures-readiness-copy {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.futures-readiness-copy span,
+.futures-readiness-copy small,
+.futures-readiness-item small {
+  color: var(--app-muted);
+  font-size: 0.72rem;
+  line-height: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.futures-readiness-copy strong {
+  color: var(--app-link);
+  font-size: 0.94rem;
+  line-height: 1.18rem;
+}
+
+.futures-readiness-total {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--app-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  padding: 7px 9px;
+}
+
+.futures-readiness-total.ready {
+  border-color: rgba(120, 220, 160, 0.22);
+  background: rgba(120, 220, 160, 0.11);
+  color: var(--app-positive);
+}
+
+.futures-readiness-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.futures-readiness-item {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.026);
+  padding: 8px 9px;
+}
+
+.futures-readiness-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--app-muted);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.035);
+}
+
+.futures-readiness-item-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.futures-readiness-item-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.futures-readiness-item-line strong {
+  color: var(--app-link);
+  font-size: 0.76rem;
+  line-height: 1rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.futures-readiness-item-line em {
+  flex: 0 0 auto;
+  color: var(--app-muted);
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1rem;
+}
+
+.futures-readiness-item.pass .futures-readiness-dot {
+  background: var(--app-positive);
+  box-shadow: 0 0 0 3px rgba(120, 220, 160, 0.1);
+}
+
+.futures-readiness-item.pass .futures-readiness-item-line em {
+  color: var(--app-positive);
+}
+
+.futures-readiness-item.warn .futures-readiness-dot {
+  background: #f4c76e;
+  box-shadow: 0 0 0 3px rgba(244, 199, 110, 0.12);
+}
+
+.futures-readiness-item.warn .futures-readiness-item-line em {
+  color: #f4c76e;
+}
+
+.futures-readiness-item.fail .futures-readiness-dot {
+  background: #ff8f8f;
+  box-shadow: 0 0 0 3px rgba(255, 143, 143, 0.12);
+}
+
+.futures-readiness-item.fail .futures-readiness-item-line em {
+  color: #ff8f8f;
+}
+
+.futures-readiness-blocker {
+  grid-column: 1 / -1;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 143, 143, 0.24);
+  background: rgba(255, 95, 95, 0.07);
+  color: #ffb3b3;
+  font-size: 0.76rem;
+  line-height: 1.06rem;
+  padding: 8px 10px;
+}
+
+.futures-live-action-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.futures-live-action-row .app-btn {
+  min-width: 0;
+  min-height: 36px;
+  height: auto;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  line-height: 1.12;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.futures-symbol-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
+  gap: 8px;
+}
+
+.futures-chart-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.futures-live-data-notice {
+  margin-top: 14px;
+  border: 1px solid rgba(244, 191, 79, 0.24);
+  background: rgba(244, 191, 79, 0.08);
+  color: rgba(255, 236, 190, 0.92);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.futures-market-chart-shell-empty {
+  min-height: 420px;
+}
+
+.futures-chart-sync-empty {
+  min-height: 292px;
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 10px;
+  border-style: dashed;
+}
+
+.futures-chart-sync-empty strong {
+  color: var(--app-link);
+  font-size: 1rem;
+}
+
+.futures-chart-sync-empty span {
+  max-width: 720px;
+  color: var(--app-muted);
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.futures-chart-sync-grid {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.futures-chart-sync-grid span {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--app-link);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  padding: 7px 9px;
+}
+
+.futures-chart-actions button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.futures-timeframe-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.futures-timeframe-row-chart {
+  flex: 0 0 auto;
+}
+
+.futures-timeframe-btn {
+  min-width: 38px;
+  height: 26px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--app-muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.futures-timeframe-btn:hover,
+.futures-timeframe-btn:focus,
+.futures-timeframe-btn.active {
+  color: var(--app-link);
+  background: rgba(100, 180, 255, 0.16);
+}
+
+.futures-timeframe-btn:active {
+  transform: translateY(1px);
+}
+
+.futures-chart-symbol-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 8px;
+}
+
+.futures-chart-symbol-btn {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--app-link);
+  padding: 9px 11px;
+}
+
+.futures-chart-symbol-btn:hover,
+.futures-chart-symbol-btn:focus,
+.futures-chart-symbol-btn.active {
+  border-color: rgba(100, 180, 255, 0.48);
+  background: rgba(100, 180, 255, 0.14);
+}
+
+.futures-chart-symbol-btn span {
+  font-weight: 800;
+}
+
+.futures-chart-symbol-btn small {
+  color: var(--app-muted);
+  font-size: 0.74rem;
+}
+
+.futures-symbol-state-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 9px;
+}
+
+.futures-symbol-card {
+  min-height: 110px;
+  display: grid;
+  gap: 5px;
+  text-align: left;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--app-link);
+  padding: 10px 12px;
+}
+
+.futures-symbol-card:hover,
+.futures-symbol-card:focus,
+.futures-symbol-card.active {
+  border-color: rgba(120, 220, 160, 0.38);
+  background: rgba(120, 220, 160, 0.08);
+}
+
+.futures-symbol-card span {
+  color: var(--app-muted);
+  font-size: 0.72rem;
+}
+
+.futures-symbol-card strong {
+  font-size: 1.08rem;
+  line-height: 1.28rem;
+}
+
+.futures-symbol-card em,
+.futures-symbol-card small {
+  font-style: normal;
+  font-size: 0.76rem;
+  line-height: 1rem;
+}
+
+.futures-symbol-card small {
+  color: var(--app-muted);
+}
+
+.futures-market-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 10px;
+}
+
+.futures-bot-tracker-panel {
+  display: grid;
+  gap: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.028);
+  padding: 16px;
+}
+
+.futures-bot-tracker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.futures-bot-tracker-header div {
+  display: grid;
+  gap: 2px;
+}
+
+.futures-bot-tracker-header strong {
+  color: var(--app-link);
+  font-size: 0.9rem;
+}
+
+.futures-bot-tracker-header div > span {
+  color: var(--app-muted);
+  font-size: 0.76rem;
+}
+
+.futures-bot-tracker-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.futures-bot-tracker-card {
+  min-height: 168px;
+  display: grid;
+  align-content: space-between;
+  gap: 10px;
+  text-align: left;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(11, 15, 22, 0.72);
+  color: var(--app-link);
+  padding: 14px;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.futures-bot-tracker-card.active {
+  border-color: rgba(100, 180, 255, 0.48);
+  background: rgba(100, 180, 255, 0.1);
+}
+
+.futures-bot-tracker-card.reserved {
+  border-style: dashed;
+  background: rgba(255, 255, 255, 0.02);
+  opacity: 0.78;
+}
+
+.futures-bot-tracker-topline,
+.futures-bot-tracker-pnl,
+.futures-bot-tracker-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.futures-bot-tracker-topline span {
+  color: var(--app-muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.futures-bot-tracker-topline strong {
+  font-size: 1.24rem;
+  line-height: 1.35rem;
+}
+
+.futures-bot-tracker-pnl em {
+  font-style: normal;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.futures-bot-tracker-pnl small,
+.futures-bot-tracker-foot {
+  color: var(--app-muted);
+  font-size: 0.78rem;
+}
+
+.futures-bot-tracker-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.futures-bot-tracker-stats span,
+.futures-bot-signal {
+  min-width: 0;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--app-muted);
+  padding: 8px 6px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.futures-bot-tracker-stats b {
+  color: var(--app-link);
+}
+
+.futures-bot-signal.trading {
+  color: rgba(146, 232, 177, 0.98);
+  background: rgba(120, 220, 160, 0.12);
+}
+
+.futures-bot-signal.setup {
+  color: rgba(255, 214, 112, 0.98);
+  background: rgba(255, 214, 112, 0.12);
+}
+
+.futures-bot-signal.looking {
+  color: rgba(100, 180, 255, 0.98);
+  background: rgba(100, 180, 255, 0.12);
+}
+
+.futures-chart-selector-stack {
+  display: grid;
+  gap: 4px;
+  padding-top: 6px;
+}
+
+.futures-chart-symbol-mini-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.futures-chart-symbol-mini-btn {
+  min-width: 36px;
+  height: 22px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--app-muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.futures-chart-symbol-mini-btn:hover,
+.futures-chart-symbol-mini-btn:focus,
+.futures-chart-symbol-mini-btn.active {
+  color: var(--app-link);
+  background: rgba(100, 180, 255, 0.16);
+}
+
+.futures-market-chart-shell {
+  min-height: 0;
+  padding: 10px;
+  overscroll-behavior: contain;
+  touch-action: none;
+  user-select: none;
+  transition: opacity 180ms ease, transform 180ms ease, border-color 180ms ease;
+  will-change: opacity, transform;
+}
+
+.futures-market-chart-shell.is-transitioning {
+  opacity: 0.96;
+  transform: none;
+  border-color: rgba(100, 180, 255, 0.18);
+}
+
+.futures-market-chart-shell:focus {
+  outline: 1px solid rgba(100, 180, 255, 0.28);
+  outline-offset: 2px;
+}
+
+.futures-market-svg {
+  aspect-ratio: 3 / 1;
+  height: auto;
+  max-height: 620px;
+  min-height: 0;
+  overscroll-behavior: contain;
+  touch-action: none;
+  cursor: crosshair;
+  transition: opacity 180ms ease, filter 180ms ease;
+}
+
+.futures-market-chart-shell.is-transitioning .futures-market-svg {
+  opacity: 0.98;
+  filter: none;
+}
+
+.futures-chart-actionbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+
+.futures-chart-left-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.futures-chart-status-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.futures-chart-status-copy strong {
+  font-size: 0.82rem;
+  color: var(--app-link);
+}
+
+.futures-chart-status-copy span {
+  color: var(--app-muted);
+  font-size: 0.74rem;
+  line-height: 0.95rem;
+}
+
+.futures-chart-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.futures-chart-actions button {
+  min-width: 30px;
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--app-muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.futures-chart-actions button:hover,
+.futures-chart-actions button:focus {
+  color: var(--app-link);
+  background: rgba(100, 180, 255, 0.16);
+}
+
+.futures-chart-range-row {
+  display: grid;
+  grid-template-columns: auto minmax(140px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  color: var(--app-muted);
+  font-size: 0.7rem;
+}
+
+.futures-chart-range-row input {
+  width: 100%;
+  height: 16px;
+  accent-color: rgba(120, 220, 160, 0.9);
+  cursor: pointer;
+}
+
+.futures-chart-range-row input:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.futures-chart-bottom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 8px 10px;
+}
+
+.futures-timezone-note {
+  color: var(--app-muted);
+  font-size: 0.76rem;
+  line-height: 1rem;
+}
+
+.futures-timezone-svg-label {
+  fill: rgba(255, 255, 255, 0.52);
+  font-size: 13px;
+  font-weight: 800;
+  paint-order: stroke;
+  stroke: rgba(10, 14, 20, 0.9);
+  stroke-width: 3px;
+}
+
+.futures-price-grid {
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 1;
+}
+
+.futures-price-label {
+  fill: rgba(255, 255, 255, 0.55);
+  font-size: 13px;
+  font-weight: 800;
+  paint-order: stroke;
+  stroke: rgba(10, 14, 20, 0.9);
+  stroke-width: 3px;
+}
+
+.futures-current-price-line {
+  stroke: rgba(255, 255, 255, 0.24);
+  stroke-width: 1.5;
+  stroke-dasharray: 7 6;
+}
+
+.futures-volume-divider {
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-width: 1;
+}
+
+.futures-volume-bar.up {
+  fill: rgba(120, 220, 160, 0.22);
+  transition: height 180ms ease, y 180ms ease, opacity 180ms ease;
+}
+
+.futures-volume-bar.down {
+  fill: rgba(255, 140, 140, 0.2);
+  transition: height 180ms ease, y 180ms ease, opacity 180ms ease;
+}
+
+.futures-poll-dot {
+  fill: rgba(255, 214, 112, 0.9);
+  stroke: rgba(10, 14, 20, 0.92);
+  stroke-width: 2;
+}
+
+.futures-time-axis-label {
+  fill: rgba(255, 255, 255, 0.52);
+  font-size: 12px;
+  font-weight: 800;
+  paint-order: stroke;
+  stroke: rgba(10, 14, 20, 0.9);
+  stroke-width: 3px;
+}
+
+.futures-trade-overlay {
+  color: rgba(100, 180, 255, 0.95);
+  --trade-pnl-color: var(--app-positive);
+  outline: none;
+}
+
+.futures-trade-overlay:focus,
+.futures-trade-overlay:focus-visible {
+  outline: none;
+}
+
+.futures-trade-overlay.positive {
+  --trade-pnl-color: var(--app-positive);
+}
+
+.futures-trade-overlay.negative {
+  --trade-pnl-color: var(--app-negative);
+}
+
+.futures-trade-entry-control {
+  cursor: pointer;
+}
+
+.futures-trade-point-halo {
+  fill: rgba(100, 180, 255, 0.2);
+  stroke: rgba(100, 180, 255, 0.36);
+  stroke-width: 2;
+}
+
+.futures-trade-point {
+  fill: rgba(100, 180, 255, 0.98);
+  stroke: rgba(8, 12, 18, 0.95);
+  stroke-width: 2.4;
+}
+
+.futures-trade-point-button {
+  fill: rgba(8, 12, 18, 0.92);
+  stroke: rgba(100, 180, 255, 0.82);
+  stroke-width: 1.7;
+}
+
+.futures-trade-point-button-text {
+  fill: currentColor;
+  font-size: 12px;
+  font-weight: 900;
+  paint-order: stroke;
+  stroke: rgba(8, 12, 18, 0.95);
+  stroke-width: 3px;
+}
+
+.futures-trade-popover-box {
+  fill: rgba(8, 12, 18, 0.94);
+  stroke: currentColor;
+  stroke-width: 2;
+  filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.42));
+}
+
+.futures-trade-overlay.open .futures-trade-point-halo {
+  animation: futures-live-pnl-pulse 2.2s ease-in-out infinite;
+}
+
+.futures-trade-overlay.hovered .futures-trade-point-button,
+.futures-trade-overlay.active .futures-trade-point-button {
+  fill: rgba(100, 180, 255, 0.18);
+}
+
+.futures-trade-overlay:focus-visible .futures-trade-point-button {
+  stroke-width: 2.4;
+  fill: rgba(100, 180, 255, 0.22);
+}
+
+.futures-trade-popover-title,
+.futures-trade-popover-text,
+.futures-trade-popover-pnl {
+  fill: currentColor;
+  paint-order: stroke;
+  stroke: rgba(8, 12, 18, 0.92);
+  stroke-width: 2.6px;
+  stroke-linejoin: round;
+}
+
+.futures-trade-popover-title {
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.futures-trade-popover-pnl {
+  font-size: 24px;
+  font-weight: 950;
+}
+
+.futures-trade-popover-text {
+  font-size: 15px;
+  font-weight: 850;
+}
+
+.futures-trade-popover-risk {
+  fill: rgba(255, 255, 255, 0.72);
+}
+
+.futures-trade-pnl-value {
+  fill: var(--trade-pnl-color);
+}
+
+.futures-trade-exit-glyph {
+  fill: rgba(255, 214, 112, 0.95);
+  stroke: rgba(8, 12, 18, 0.95);
+  stroke-width: 2;
+  animation: futures-trade-exit-pop 1.1s ease-out both;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes futures-trade-entry-pulse {
+  0% {
+    transform: scale(0.92);
+    opacity: 0.82;
+  }
+  55% {
+    transform: scale(1.18);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.92);
+    opacity: 0.82;
+  }
+}
+
+@keyframes futures-trade-exit-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.2;
+  }
+  45% {
+    transform: scale(1.28);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.95;
+  }
+}
+
+@keyframes futures-live-pnl-pulse {
+  0%, 100% {
+    stroke-width: 1.4;
+    opacity: 0.9;
+  }
+  50% {
+    stroke-width: 2.2;
+    opacity: 1;
+  }
+}
+
+.app-candle-wick.live {
+  stroke-width: 3;
+}
+
+.app-candle-body.live {
+  stroke-width: 2.2;
+}
+
+.futures-strategy-watch {
+  display: grid;
+  gap: 12px;
+}
+
+.futures-strategy-watch-grid {
+  display: grid;
+  gap: 7px;
+  max-height: 304px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.futures-strategy-chip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 8px 10px;
+}
+
+.futures-strategy-chip.enabled {
+  border-color: rgba(100, 180, 255, 0.22);
+  background: rgba(100, 180, 255, 0.06);
+}
+
+.futures-strategy-chip div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.futures-strategy-chip strong {
+  font-size: 0.78rem;
+  color: var(--app-link);
+}
+
+.futures-strategy-chip span,
+.futures-strategy-chip em {
+  color: var(--app-muted);
+  font-size: 0.72rem;
+  font-style: normal;
+  overflow-wrap: anywhere;
+}
+
+.futures-latest-signals {
+  display: grid;
+  gap: 7px;
+}
+
+.futures-signal-row {
+  display: grid;
+  grid-template-columns: 0.8fr 0.8fr 0.8fr 1.35fr;
+  align-items: center;
+  gap: 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 8px 10px;
+  color: var(--app-muted);
+  font-size: 0.74rem;
+}
+
+.futures-signal-row strong {
+  color: var(--app-link);
+}
+
+.futures-signal-row em {
+  font-style: normal;
+}
+
+.app-empty.compact {
+  padding: 10px;
+  font-size: 0.74rem;
+}
+
+.futures-live-button-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.futures-live-button-row .app-btn {
+  min-height: 38px;
+  height: auto;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  line-height: 1.15;
+  white-space: normal;
+}
+
+.futures-live-chart-shell {
+  margin-top: 12px;
+  min-height: 340px;
+  display: grid;
+  gap: 10px;
+}
+
+.futures-live-chart {
+  width: 100%;
+  height: 300px;
+  display: block;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.futures-chart-axis,
+.futures-chart-zero {
+  stroke: rgba(255, 255, 255, 0.14);
+  stroke-width: 1;
+}
+
+.futures-chart-zero {
+  stroke-dasharray: 5 7;
+}
+
+.futures-chart-legend {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.78rem;
+}
+
+.futures-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+
+.futures-chart-legend-item i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.futures-live-trades-grid,
+.futures-live-all-trades-grid {
+  grid-template-columns: minmax(132px, 1fr) 0.46fr 0.68fr 0.46fr 0.38fr 0.58fr 0.58fr 0.62fr 0.95fr minmax(220px, 1.5fr);
+  min-width: 1120px;
+}
+
+.app-live-value {
+  margin-top: 0.45rem;
+  font-size: 1.08rem;
+  font-weight: 700;
+  line-height: 1.35rem;
+}
+
+.app-live-detail {
+  margin-top: 0.45rem;
+  color: var(--app-muted);
+  font-size: 0.78rem;
+  line-height: 1.32rem;
+}
+
+.app-live-feedback {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.82rem;
+}
+
+.app-live-snapshot-btn {
+  min-height: 38px;
+  height: auto;
+  line-height: 1.15;
+  white-space: normal;
+}
+
+.app-timeframe-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.app-trade-toolbar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.app-data-toolbar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr)) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.app-data-chip {
+  display: grid;
+  gap: 4px;
+  min-height: 56px;
+  border-radius: 14px;
+  border: 1px solid var(--app-border);
+  background: rgba(255, 255, 255, 0.035);
+  padding: 10px 12px;
+}
+
+.app-data-chip strong {
+  font-size: 0.9rem;
+  color: var(--app-link);
+  line-height: 1.2rem;
+}
+
+.app-keypoint-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.app-chart-shell {
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid var(--app-border);
+  background: rgba(0, 0, 0, 0.14);
+  padding: 12px;
+}
+
+.app-chart-empty {
+  margin-top: 12px;
+  border-radius: 14px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--app-muted);
+  padding: 18px;
+  font-size: 0.84rem;
+}
+
+.app-chart-hover {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 0.82rem;
+}
+
+.futures-market-chart-shell .app-chart-hover {
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 0.78rem;
+}
+
+.futures-market-chart-shell .app-chart-hover div {
+  gap: 8px;
+}
+
+.app-chart-hover div {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--app-muted);
+}
+
+.app-market-svg,
+.app-equity-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.app-market-svg.futures-market-svg {
+  aspect-ratio: 3 / 1;
+  height: auto;
+  max-height: 620px;
+}
+
+.app-candle-wick {
+  stroke-width: 2;
+}
+
+.app-candle-wick.up,
+.app-candle-body.up {
+  stroke: rgba(120, 220, 160, 0.95);
+  fill: rgba(120, 220, 160, 0.6);
+}
+
+.app-candle-wick.down,
+.app-candle-body.down {
+  stroke: rgba(255, 140, 140, 0.95);
+  fill: rgba(255, 140, 140, 0.58);
+}
+
+.app-indicator-line,
+.app-equity-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.app-indicator-line.vwap {
+  stroke: rgba(255, 214, 112, 0.9);
+  stroke-width: 2.4;
+}
+
+.app-indicator-line.ema-fast {
+  stroke: rgba(97, 218, 251, 0.88);
+  stroke-width: 1.8;
+}
+
+.app-indicator-line.ema-slow {
+  stroke: rgba(178, 151, 255, 0.88);
+  stroke-width: 1.8;
+}
+
+.app-orb-line,
+.app-trade-line,
+.app-trade-time-line,
+.app-hover-line {
+  stroke-dasharray: 7 6;
+  stroke-width: 2;
+}
+
+.app-orb-line.high {
+  stroke: rgba(120, 220, 160, 0.52);
+}
+
+.app-orb-line.low,
+.app-trade-line.stop {
+  stroke: rgba(255, 140, 140, 0.58);
+}
+
+.app-trade-line.entry {
+  stroke: rgba(100, 180, 255, 0.66);
+}
+
+.app-trade-line.exit {
+  stroke: rgba(178, 151, 255, 0.72);
+}
+
+.app-trade-line.target {
+  stroke: rgba(120, 220, 160, 0.64);
+}
+
+.app-trade-line.vwap {
+  stroke: rgba(255, 214, 112, 0.8);
+}
+
+.app-trade-line.ifvg {
+  stroke: rgba(97, 218, 251, 0.72);
+}
+
+.app-trade-line.market-high {
+  stroke: rgba(120, 220, 160, 0.38);
+}
+
+.app-trade-line.market-low {
+  stroke: rgba(255, 140, 140, 0.38);
+}
+
+.app-trade-line.previous-close {
+  stroke: rgba(255, 255, 255, 0.35);
+}
+
+.app-chart-zone {
+  fill: rgba(255, 255, 255, 0.08);
+  stroke: rgba(255, 255, 255, 0.08);
+}
+
+.app-chart-zone.orb {
+  fill: rgba(120, 220, 160, 0.09);
+}
+
+.app-chart-zone.ifvg {
+  fill: rgba(97, 218, 251, 0.1);
+}
+
+.app-trade-time-line.entry {
+  stroke: rgba(100, 180, 255, 0.72);
+}
+
+.app-trade-time-line.exit {
+  stroke: rgba(178, 151, 255, 0.72);
+}
+
+.app-trade-time-label,
+.app-chart-label {
+  fill: rgba(255, 255, 255, 0.9);
+  font-size: 11px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: rgba(10, 14, 20, 0.88);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.app-trade-time-label.entry {
+  fill: rgba(150, 210, 255, 0.95);
+}
+
+.app-trade-time-label.exit {
+  fill: rgba(200, 180, 255, 0.95);
+}
+
+.app-chart-label.orb-high,
+.app-chart-label.orb-low {
+  fill: rgba(150, 245, 190, 0.95);
+}
+
+.app-chart-label.ifvg,
+.app-chart-label.vwap {
+  fill: rgba(255, 230, 150, 0.95);
+}
+
+.app-trade-marker {
+  stroke: rgba(10, 14, 20, 0.9);
+  stroke-width: 2;
+}
+
+.app-trade-marker.entry {
+  fill: rgba(100, 180, 255, 0.95);
+}
+
+.app-trade-marker.exit {
+  fill: rgba(178, 151, 255, 0.95);
+}
+
+.app-hover-line {
+  stroke: rgba(255, 255, 255, 0.22);
+}
+
+.app-equity-line {
+  stroke: rgba(100, 180, 255, 0.95);
+  stroke-width: 4;
+}
+
+.app-equity-hit {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 14;
+}
+
+.app-chart-caption {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  color: var(--app-muted);
+  font-size: 0.78rem;
+}
+
+.futures-market-chart-shell .app-chart-caption {
+  margin-top: 4px;
+  font-size: 0.72rem;
+}
+
+.app-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.app-modal-card.app-trade-modal {
+  width: min(1120px, 100%);
+  max-height: min(90vh, 920px);
+  overflow-y: auto;
+}
+
+.app-error {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 140, 140, 0.28);
+  background: rgba(160, 40, 40, 0.16);
+  color: #ffd7d7;
+  padding: 10px 12px;
+  font-size: 0.84rem;
+}
+
+.app-btn-large {
+  height: 48px;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.app-btn-block {
+  width: 100%;
+}
+
+.app-settings-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.24fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+  padding: 12px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.app-settings-row:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.app-settings-value {
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.app-settings-value-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.app-settings-value-row .app-settings-value {
+  flex: 1;
+  min-width: 0;
+}
+
+.app-settings-action {
+  flex-shrink: 0;
+}
+
+.app-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(4, 8, 15, 0.72);
+}
+
+.app-modal-card {
+  width: min(520px, 100%);
+  border-radius: 18px;
+  padding: 16px;
+  background: #0f1624;
+  border: 1px solid var(--app-border);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.4);
+}
+
+.app-panel > .row,
+.app-subpanel > .row {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.app-panel > .row > [class*="col-"],
+.app-subpanel > .row > [class*="col-"] {
+  padding-left: 0.35rem;
+  padding-right: 0.35rem;
+}
+
+@media(max-width: 1100px) {
+  .history-grid {
+    grid-template-columns: 1.02fr 0.68fr 1.3fr 0.72fr 0.9fr 0.72fr 0.72fr 0.56fr 0.75fr;
+    min-width: 950px;
+  }
+
+  .trades-grid {
+    grid-template-columns: 1.15fr 0.98fr 0.65fr 0.55fr 0.72fr 0.72fr 0.72fr 1.6fr;
+    min-width: 1020px;
+  }
+
+  .trades-grid.has-action {
+    grid-template-columns: 1.15fr 0.98fr 0.65fr 0.55fr 0.72fr 0.72fr 0.72fr 1.6fr 0.68fr;
+    min-width: 1110px;
+  }
+
+  .strategy-grid {
+    grid-template-columns: 0.9fr 0.85fr 0.9fr 0.85fr 0.85fr 0.7fr 0.85fr;
+    min-width: 710px;
+  }
+
+  .app-live-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .futures-launch-shell,
+  .futures-readiness-panel,
+  .futures-market-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .futures-launch-actions {
+    justify-content: flex-start;
+  }
+
+  .futures-launch-config {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .futures-bot-tracker-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-data-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-trade-toolbar,
+  .app-detail-grid,
+  .app-keypoint-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 920px) {
+  .app-shell {
+    grid-template-columns: 170px 1fr;
+  }
+
+  .app-content {
+    padding-right: 1.55rem;
+  }
+
+  .app-sidebar {
+    padding: 12px 14px;
+  }
+
+  .app-nav-link {
+    font-size: 0.82rem;
+    padding: 10px 8px;
+  }
+}
+
+@media(max-width: 760px) {
+  .app-shell {
+    grid-template-columns: 120px 1fr;
+  }
+
+  .app-brand-name, .app-sidebar-text {
+    display: none;
+  }
+
+  .app-sidebar {
+    padding: 14px 10px;
+  }
+
+  .app-brand-row {
+    width: 100%;
+    justify-content: center;
+    gap: 0;
+  }
+
+  .app-brand-pill {
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .app-nav-link {
+    text-align: center;
+    padding: 10px 8px;
+    font-size: 0.8rem;
+  }
+
+  .app-nav-sections {
+    gap: 14px;
+  }
+
+  .app-nav-section-label {
+    text-align: center;
+    padding: 0;
+  }
+
+  .app-live-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .futures-launch-shell,
+  .futures-launch-config,
+  .futures-chart-symbol-row,
+  .futures-symbol-state-grid,
+  .futures-bot-tracker-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .futures-launch-actions .app-btn {
+    flex: 1 1 100%;
+  }
+
+  .futures-signal-row {
+    grid-template-columns: 0.72fr 0.72fr 0.78fr 1fr;
+  }
+
+  .app-data-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-trade-toolbar,
+  .app-detail-grid,
+  .app-keypoint-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-settings-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+}
