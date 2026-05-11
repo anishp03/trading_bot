@@ -10,6 +10,42 @@ Date: 2026-05-07
 - For local/private testing, map backend to loopback only: `127.0.0.1:7070:7070`.
 - For cloud control, point the frontend at a secure bridge/API gateway URL after that bridge exists.
 
+## What Belongs In GitHub
+
+Commit everything needed to rebuild and launch the app:
+
+- frontend source, `package.json`, `package-lock.json`, Dockerfile, Nginx config, and runtime env template
+- backend Java source, tests, `pom.xml`, Maven wrapper scripts, Dockerfile, and service/script templates
+- `docker-compose.yml`
+- launch docs, handoff docs, and example env files
+
+Do not commit local runtime state:
+
+- `.env` files with real credentials
+- SQLite DB files
+- broker/API keys
+- logs
+- generated build output
+- local market-data CSVs
+- release jars built from local code
+
+Those are intentionally ignored by `.gitignore`.
+
+## Trading DB Location And Migration
+
+For the first live/private launch, keep the authoritative trading DB on the home Windows PC where the backend runs. The backend owns trading state, broker sync state, live sessions, order ledgers, and risk/audit events, so keeping the DB local to that backend is the safest initial architecture.
+
+Do not migrate the trading DB to the cloud frontend host. The cloud side should only host the UI and, later, optional auth/relay metadata. It should not write directly to the trading DB and should never store broker credentials.
+
+Only migrate the trading DB if you move the backend to a different trusted backend machine. In that case:
+
+```bash
+docker compose stop backend
+docker run --rm -v trading_bot_backend_data:/data -v "$PWD":/backup alpine sh -c "cp /data/tradingbot.db /backup/tradingbot-backup-$(date +%Y%m%d-%H%M%S).db"
+```
+
+Copy the backup DB to the new backend machine, then restore it into that machine's backend data volume while the backend is stopped. After restoring, start the backend in read-only/dry-run mode first, check `/api/system/health`, confirm the account/settings, and keep order submission disarmed until the live readiness checks pass.
+
 ## First Private User
 
 Public registration is disabled by default. A fresh DB can create one private admin from env vars:
