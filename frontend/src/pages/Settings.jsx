@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "../utils/api.js";
+import { apiFetch, apiFormFetch } from "../utils/api.js";
 
 const PROVIDER_LABELS = {
   DATABENTO: "Databento",
@@ -18,11 +18,11 @@ export default function Settings({ accountEmail }) {
     broker: "Alpaca",
     baseUrl: "https://paper-api.alpaca.markets/v2",
     connectedAccountName: "Not connected",
-    apiKey: "",
-    secretKey: "",
+    hasApiKey: false,
+    apiKeyPreview: "",
+    hasSecretKey: false,
+    secretKeyPreview: "",
   });
-  const [showApiKey, setShowApiKey] = useState(false);
-  const [showSecretKey, setShowSecretKey] = useState(false);
   const [isBrokerOpen, setIsBrokerOpen] = useState(false);
   const [brokerDraft, setBrokerDraft] = useState({ apiKey: "", secretKey: "" });
   const [brokerError, setBrokerError] = useState("");
@@ -70,8 +70,10 @@ export default function Settings({ accountEmail }) {
         setBrokerSettings((current) => ({
           ...current,
           connectedAccountName: "Unavailable",
-          apiKey: "",
-          secretKey: "",
+          hasApiKey: false,
+          apiKeyPreview: "",
+          hasSecretKey: false,
+          secretKeyPreview: "",
         }));
       });
   }, []);
@@ -94,8 +96,8 @@ export default function Settings({ accountEmail }) {
 
   function openBrokerModal() {
     setBrokerDraft({
-      apiKey: brokerSettings.apiKey || "",
-      secretKey: brokerSettings.secretKey || "",
+      apiKey: "",
+      secretKey: "",
     });
     setBrokerError("");
     setIsBrokerOpen(true);
@@ -104,14 +106,11 @@ export default function Settings({ accountEmail }) {
   function saveBrokerSettings(event) {
     event.preventDefault();
     setBrokerError("");
-    const params = new URLSearchParams({
+
+    apiFormFetch("/api/settings/broker", {
       email: accountEmail || "",
       apiKey: brokerDraft.apiKey,
       secretKey: brokerDraft.secretKey,
-    });
-
-    apiFetch(`/api/settings/broker?${params.toString()}`, {
-      method: "POST",
     })
       .then(async (response) => {
         if (!response.ok) {
@@ -138,7 +137,7 @@ export default function Settings({ accountEmail }) {
     setBusyProvider(connection.provider);
     setFuturesFeedback("");
 
-    const params = new URLSearchParams({
+    const params = {
       enabled: String(Boolean(connection.enabled)),
       baseUrl: connection.baseUrl || "",
       environment: connection.environment || "",
@@ -156,12 +155,10 @@ export default function Settings({ accountEmail }) {
       symbols: connection.symbols || "",
       marketHubUrl: connection.marketHubUrl || "",
       userHubUrl: connection.userHubUrl || "",
-    });
+    };
 
     try {
-      const response = await apiFetch(`/api/futures/connections/${connection.provider}?${params.toString()}`, {
-        method: "POST",
-      });
+      const response = await apiFormFetch(`/api/futures/connections/${connection.provider}`, params);
       const payload = await readApiResponse(response);
       if (!response.ok) {
         throw new Error(payload.message || payload.text || "Failed to save futures connection.");
@@ -220,17 +217,11 @@ export default function Settings({ accountEmail }) {
         <SettingRow label="Connected Account Name" value={brokerSettings.connectedAccountName} />
         <SettingRow
           label="API Key"
-          value={brokerSettings.apiKey}
-          concealed={true}
-          revealed={showApiKey}
-          onToggleReveal={() => setShowApiKey(!showApiKey)}
+          value={brokerSettings.hasApiKey ? brokerSettings.apiKeyPreview || "Saved" : ""}
         />
         <SettingRow
           label="Secret Key"
-          value={brokerSettings.secretKey}
-          concealed={true}
-          revealed={showSecretKey}
-          onToggleReveal={() => setShowSecretKey(!showSecretKey)}
+          value={brokerSettings.hasSecretKey ? brokerSettings.secretKeyPreview || "Saved" : ""}
         />
 
         <div className="d-flex justify-content-end pt-3">
@@ -271,22 +262,24 @@ export default function Settings({ accountEmail }) {
             <label className="d-grid gap-1">
               <span className="app-label">API Key</span>
               <input
-                type="text"
+                type="password"
+                autoComplete="off"
                 className="form-control app-input"
                 value={brokerDraft.apiKey}
                 onChange={(event) => setBrokerDraft((current) => ({ ...current, apiKey: event.target.value }))}
-                placeholder="Enter Alpaca API key"
+                placeholder={brokerSettings.hasApiKey ? "Saved; enter a new key to replace" : "Enter Alpaca API key"}
               />
             </label>
 
             <label className="d-grid gap-1">
               <span className="app-label">Secret Key</span>
               <input
-                type="text"
+                type="password"
+                autoComplete="off"
                 className="form-control app-input"
                 value={brokerDraft.secretKey}
                 onChange={(event) => setBrokerDraft((current) => ({ ...current, secretKey: event.target.value }))}
-                placeholder="Enter Alpaca secret key"
+                placeholder={brokerSettings.hasSecretKey ? "Saved; enter a new secret to replace" : "Enter Alpaca secret key"}
               />
             </label>
 
@@ -351,6 +344,8 @@ function ConnectionPanel({ connection, busyProvider, onChange, onSave, onTest })
 
         <Field label={credentialFieldLabel(provider, "username")} className="col-12 col-md-4 col-xl-3">
           <input
+            type={provider === "DATABENTO" ? "password" : "text"}
+            autoComplete={provider === "DATABENTO" ? "off" : undefined}
             value={provider === "DATABENTO" ? connection.apiKey || "" : connection.username || ""}
             onChange={(event) => onChange(provider, provider === "DATABENTO" ? "apiKey" : "username", event.target.value)}
             placeholder={provider === "DATABENTO" ? connection.apiKeyPreview || "db-..." : provider === "TOPSTEPX" ? "ProjectX username" : ""}

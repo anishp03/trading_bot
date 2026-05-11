@@ -11,6 +11,8 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.sql.*;
@@ -28,6 +30,10 @@ public class MainServer {
     private static final Pattern OPENING_GAP_PATTERN = Pattern.compile("(?i)opening\\s+gap\\s+(-?[0-9]+(?:\\.[0-9]+)?)%");
     private static final Pattern BIAS_PATTERN = Pattern.compile("(?i)bias\\s+([a-z]+)\\s+from\\s+([^\\.]+)");
     private static final Pattern ORB_WINDOW_PATTERN = Pattern.compile("(?i)(\\d+)m\\s+range");
+    private static final int MAX_LOGIN_FAILURES = 5;
+    private static final long LOGIN_FAILURE_WINDOW_MS = 15L * 60L * 1000L;
+    private static final long LOGIN_LOCKOUT_MS = 15L * 60L * 1000L;
+    private static final Map<String, LoginAttempt> LOGIN_ATTEMPTS = new ConcurrentHashMap<String, LoginAttempt>();
 
     public static void main(String[] args) {
         DatabaseManager.initializeDatabase();
@@ -41,8 +47,8 @@ public class MainServer {
         String bindHost = configuredBindHost();
         int port = parseIntOrDefault(System.getProperty("tradingbot.port", System.getenv("TRADINGBOT_PORT")), 7070);
 
-        Javalin app =  Javalin.create(config -> {
-            config.enableCorsForAllOrigins();
+        Javalin app = Javalin.create(config -> {
+            config.enableCorsForOrigin(configuredCorsOrigins());
         }).start(bindHost, port);
 
         app.before("/api/*", ctx -> authorizeApiRequest(ctx, accountManager));
@@ -53,10 +59,7 @@ public class MainServer {
             ctx.contentType("application/json").result("{"
                 + "\"app\":\"trading_bot\","
                 + "\"version\":" + jsonString(APP_VERSION) + ","
-                + "\"build\":" + jsonString(BUILD_ID) + ","
-                + "\"bindHost\":" + jsonString(bindHost) + ","
-                + "\"port\":" + port + ","
-                + "\"databasePath\":" + jsonString(DatabaseManager.getDatabasePath())
+                + "\"build\":" + jsonString(BUILD_ID)
                 + "}");
         });
 
@@ -69,13 +72,22 @@ public class MainServer {
         });
         
         app.post("/api/login", ctx -> {
-            String email = ctx.queryParam("email");
-            String password = ctx.queryParam("password");
+            String email = requestParam(ctx, "email");
+            String password = requestParam(ctx, "password");
+            String loginKey = loginThrottleKey(ctx, email);
+
+            if (isLoginLocked(loginKey)) {
+                ctx.status(429).result("Too many failed login attempts. Try again later.");
+                return;
+            }
+
             AccountManager.AccountSession session = accountManager.createSession(email, password);
             
             if(session != null) {
+                clearLoginFailures(loginKey);
                 ctx.contentType("application/json").result(sessionJson(session));
             } else {
+                recordFailedLogin(loginKey);
                 ctx.status(401).result("Invalid credentials.");
             }
         });
@@ -100,11 +112,11 @@ public class MainServer {
                 return;
             }
 
-            String name = ctx.queryParam("name");
-            String email = ctx.queryParam("email");
-            String phoneNumber = ctx.queryParam("phoneNumber");
-            String address = ctx.queryParam("address");
-            String password = ctx.queryParam("password");
+            String name = requestParam(ctx, "name");
+            String email = requestParam(ctx, "email");
+            String phoneNumber = requestParam(ctx, "phoneNumber");
+            String address = requestParam(ctx, "address");
+            String password = requestParam(ctx, "password");
 
             if (isBlank(name) || isBlank(email) || isBlank(phoneNumber) || isBlank(address) || isBlank(password)) {
                 ctx.status(400).result("Missing account fields.");
@@ -212,9 +224,9 @@ public class MainServer {
         });
 
         app.post("/api/account/change-password", ctx -> {
-            String email = resolveAccountEmail(ctx, ctx.queryParam("email"));
-            String currentPassword = ctx.queryParam("currentPassword");
-            String newPassword = ctx.queryParam("newPassword");
+            String email = resolveAccountEmail(ctx, requestParam(ctx, "email"));
+            String currentPassword = requestParam(ctx, "currentPassword");
+            String newPassword = requestParam(ctx, "newPassword");
 
             if (isBlank(currentPassword) || isBlank(newPassword)) {
                 ctx.status(400).result("Missing password fields.");
@@ -231,11 +243,11 @@ public class MainServer {
         });
 
         app.post("/api/account/details", ctx -> {
-            String currentEmail = resolveAccountEmail(ctx, ctx.queryParam("currentEmail"));
-            String name = ctx.queryParam("name");
-            String newEmail = resolveAccountEmail(ctx, ctx.queryParam("email"));
-            String phoneNumber = ctx.queryParam("phoneNumber");
-            String address = ctx.queryParam("address");
+            String currentEmail = resolveAccountEmail(ctx, requestParam(ctx, "currentEmail"));
+            String name = requestParam(ctx, "name");
+            String newEmail = resolveAccountEmail(ctx, requestParam(ctx, "email"));
+            String phoneNumber = requestParam(ctx, "phoneNumber");
+            String address = requestParam(ctx, "address");
 
             if (isBlank(name) || isBlank(phoneNumber) || isBlank(address)) {
                 ctx.status(400).result("Missing account detail fields.");
@@ -287,15 +299,17 @@ public class MainServer {
                 + "\"broker\":" + jsonString(AlpacaManager.getBrokerName()) + ","
                 + "\"baseUrl\":" + jsonString(AlpacaManager.getBaseUrl()) + ","
                 + "\"connectedAccountName\":" + jsonString(connectedAccountName) + ","
-                + "\"apiKey\":" + jsonString(apiKey) + ","
-                + "\"secretKey\":" + jsonString(secretKey)
+                + "\"hasApiKey\":" + !isBlank(apiKey) + ","
+                + "\"apiKeyPreview\":" + jsonString(maskSecret(apiKey)) + ","
+                + "\"hasSecretKey\":" + !isBlank(secretKey) + ","
+                + "\"secretKeyPreview\":" + jsonString(maskSecret(secretKey))
                 + "}");
         });
 
         app.post("/api/settings/broker", ctx -> {
-            String email = resolveAccountEmail(ctx, ctx.queryParam("email"));
-            String apiKey = ctx.queryParam("apiKey");
-            String secretKey = ctx.queryParam("secretKey");
+            String email = resolveAccountEmail(ctx, requestParam(ctx, "email"));
+            String apiKey = requestParam(ctx, "apiKey");
+            String secretKey = requestParam(ctx, "secretKey");
 
             String finalApiKey = isBlank(apiKey) ? accountManager.getBrokerApiKey(email) : apiKey.trim();
             String finalSecretKey = isBlank(secretKey) ? accountManager.getBrokerSecretKey(email) : secretKey.trim();
@@ -785,23 +799,23 @@ public class MainServer {
             String provider = ctx.pathParam("provider");
             boolean saved = FuturesConnectionManager.saveConnection(
                 provider,
-                parseBooleanOrDefault(ctx.queryParam("enabled"), true),
-                ctx.queryParam("baseUrl"),
-                ctx.queryParam("environment"),
-                ctx.queryParam("username"),
-                ctx.queryParam("apiKey"),
-                ctx.queryParam("password"),
-                ctx.queryParam("secret"),
-                ctx.queryParam("appId"),
-                ctx.queryParam("appVersion"),
-                ctx.queryParam("cid"),
-                ctx.queryParam("accountId"),
-                ctx.queryParam("accountSpec"),
-                ctx.queryParam("dataset"),
-                ctx.queryParam("schema"),
-                ctx.queryParam("symbols"),
-                ctx.queryParam("marketHubUrl"),
-                ctx.queryParam("userHubUrl")
+                parseBooleanOrDefault(requestParam(ctx, "enabled"), true),
+                requestParam(ctx, "baseUrl"),
+                requestParam(ctx, "environment"),
+                requestParam(ctx, "username"),
+                requestParam(ctx, "apiKey"),
+                requestParam(ctx, "password"),
+                requestParam(ctx, "secret"),
+                requestParam(ctx, "appId"),
+                requestParam(ctx, "appVersion"),
+                requestParam(ctx, "cid"),
+                requestParam(ctx, "accountId"),
+                requestParam(ctx, "accountSpec"),
+                requestParam(ctx, "dataset"),
+                requestParam(ctx, "schema"),
+                requestParam(ctx, "symbols"),
+                requestParam(ctx, "marketHubUrl"),
+                requestParam(ctx, "userHubUrl")
             );
 
             if (saved) {
@@ -1261,6 +1275,69 @@ public class MainServer {
         return isBlank(expiresAt) ? "" : expiresAt;
     }
 
+    static String requestParam(Context ctx, String name) {
+        try {
+            return ctx.formParam(name);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static String loginThrottleKey(Context ctx, String email) {
+        String normalizedEmail = isBlank(email) ? "unknown" : email.trim().toLowerCase();
+        String ip = valueOrDefault(ctx.ip(), "unknown");
+        return ip + "|" + normalizedEmail;
+    }
+
+    private static boolean isLoginLocked(String key) {
+        LoginAttempt attempt = LOGIN_ATTEMPTS.get(key);
+        if (attempt == null) {
+            return false;
+        }
+
+        long now = System.currentTimeMillis();
+        if (attempt.lockedUntilMs > now) {
+            return true;
+        }
+        if (attempt.lockedUntilMs > 0L || now - attempt.firstFailureMs > LOGIN_FAILURE_WINDOW_MS) {
+            LOGIN_ATTEMPTS.remove(key);
+        }
+        return false;
+    }
+
+    private static void recordFailedLogin(String key) {
+        long now = System.currentTimeMillis();
+        LOGIN_ATTEMPTS.compute(key, (ignored, attempt) -> {
+            LoginAttempt next = attempt;
+            if (next == null || now - next.firstFailureMs > LOGIN_FAILURE_WINDOW_MS) {
+                next = new LoginAttempt();
+                next.firstFailureMs = now;
+            }
+
+            next.failureCount++;
+            if (next.failureCount >= MAX_LOGIN_FAILURES) {
+                next.lockedUntilMs = now + LOGIN_LOCKOUT_MS;
+            }
+            return next;
+        });
+    }
+
+    private static void clearLoginFailures(String key) {
+        LOGIN_ATTEMPTS.remove(key);
+    }
+
+    private static String maskSecret(String value) {
+        if (isBlank(value)) {
+            return "";
+        }
+
+        String trimmed = value.trim();
+        if (trimmed.length() <= 8) {
+            return "saved";
+        }
+        return trimmed.substring(0, 4) + "..." + trimmed.substring(trimmed.length() - 4);
+    }
+
     static double parseDoubleOrDefault(String value, double defaultValue) {
         if (value == null || value.trim().isEmpty()) {
             return defaultValue;
@@ -1333,6 +1410,33 @@ public class MainServer {
             bindHost = System.getenv("TRADINGBOT_BIND_HOST");
         }
         return isBlank(bindHost) ? "127.0.0.1" : bindHost.trim();
+    }
+
+    private static String[] configuredCorsOrigins() {
+        String origins = System.getProperty("tradingbot.corsOrigins");
+        if (isBlank(origins)) {
+            origins = System.getenv("TRADINGBOT_CORS_ORIGINS");
+        }
+        if (!isBlank(origins)) {
+            String[] parts = origins.split(",");
+            List<String> cleaned = new ArrayList<String>();
+            for (String part : parts) {
+                if (!isBlank(part)) {
+                    cleaned.add(part.trim());
+                }
+            }
+            if (!cleaned.isEmpty()) {
+                return cleaned.toArray(new String[0]);
+            }
+        }
+        return new String[] {
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
+            "http://localhost:8080",
+            "http://127.0.0.1:8080"
+        };
     }
 
     static boolean isBlank(String value) {
@@ -1902,6 +2006,12 @@ public class MainServer {
             this.low = low;
             this.high = high;
         }
+    }
+
+    private static class LoginAttempt {
+        int failureCount;
+        long firstFailureMs;
+        long lockedUntilMs;
     }
     
 }

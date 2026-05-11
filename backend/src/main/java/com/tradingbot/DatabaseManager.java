@@ -715,7 +715,7 @@ public class DatabaseManager {
 			pstmt.setString(2, normalizedEmail);
 			pstmt.setString(3, "");
 			pstmt.setString(4, "");
-			pstmt.setString(5, password);
+			pstmt.setString(5, AccountManager.hashPassword(password));
 			pstmt.setString(6, Instant.now().toString());
 			pstmt.setString(7, "admin");
 			pstmt.executeUpdate();

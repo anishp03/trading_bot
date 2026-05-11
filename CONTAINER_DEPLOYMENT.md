@@ -24,9 +24,19 @@ Edit `.env` before launch:
 TRADINGBOT_BOOTSTRAP_ADMIN_EMAIL=your-private-email@example.com
 TRADINGBOT_BOOTSTRAP_ADMIN_PASSWORD=use-a-long-private-password
 TRADINGBOT_DEFAULT_ACCOUNT_EMAIL=your-private-email@example.com
+TRADINGBOT_CORS_ORIGINS=http://localhost:8080,http://127.0.0.1:8080
 ```
 
 After the first successful login, remove the bootstrap password from `.env` or rotate it. Existing accounts are not overwritten.
+
+## Security Hardening Notes
+
+- Account passwords are stored as PBKDF2 hashes. Legacy plaintext passwords are upgraded after successful login.
+- Login, password changes, profile edits, broker key saves, and futures connection saves use form POST bodies instead of query-string secrets.
+- Broker/API keys remain editable in the web settings UI, but read APIs return only saved status and masked previews.
+- Public registration is off by default and direct protected-route navigation redirects to login.
+- CORS is restricted by `TRADINGBOT_CORS_ORIGINS`; keep this set to only the frontend origins you actually use.
+- `/api/system/version` is public, but it no longer exposes bind host, port, or database path.
 
 ## Local Container Smoke Test
 

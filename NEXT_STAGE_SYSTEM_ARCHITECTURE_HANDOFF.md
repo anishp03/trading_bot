@@ -278,3 +278,32 @@ Still needed:
 - Choose/build the secure bridge or private network path before cloud UI control is allowed.
 - Run full UI sequence QA against a seeded private user.
 - Create/push the private GitHub repo once GitHub access is available.
+
+## 2026-05-11 Security Hardening Progress
+
+Completed the launch-blocking auth and secret-handling pass:
+
+- Account passwords are now stored as PBKDF2 hashes instead of plaintext.
+- Legacy plaintext account passwords migrate to hashes after a successful login.
+- Login attempts are rate-limited per email/IP pair.
+- Sensitive account, broker, and futures connection writes now use POST form bodies instead of query strings.
+- Alpaca and futures API keys can still be edited through the web UI, but stored key values are not returned to the browser.
+- Settings read APIs return only saved flags and masked previews, such as `AKTE...7890`.
+- Frontend reveal controls for stored broker secrets were removed.
+- Public registration remains disabled by default.
+- CORS is restricted to configured frontend origins through `TRADINGBOT_CORS_ORIGINS`.
+- Public version metadata no longer exposes backend bind host, port, or database path.
+
+Verification:
+
+- `./mvnw package`: passed, 31 backend tests.
+- `npm run build`: passed.
+- `npm run lint`: 0 errors, same 5 existing React hook dependency warnings.
+- API smoke: unauthenticated protected account request returned `401`, public registration returned `403`, broker key save required auth, broker settings returned only masked previews.
+- Browser smoke: direct logged-out navigation to `/settings` redirected to `/login`.
+
+Still needed:
+
+- Use a secure bridge/private network before exposing cloud UI control of the PC backend.
+- Create/push the private GitHub repo when GitHub access is available.
+- Run one final end-to-end UI QA on the real launch machine and frontend origin.

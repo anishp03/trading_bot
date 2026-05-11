@@ -59,3 +59,20 @@ export function apiFetch(path, options = {}) {
     headers,
   });
 }
+
+export function apiFormFetch(path, fields = {}, options = {}) {
+  const headers = new Headers(options.headers || {});
+  headers.set("Content-Type", "application/x-www-form-urlencoded");
+
+  const body = new URLSearchParams();
+  Object.entries(fields).forEach(([key, value]) => {
+    body.set(key, value == null ? "" : String(value));
+  });
+
+  return apiFetch(path, {
+    ...options,
+    method: options.method || "POST",
+    headers,
+    body,
+  });
+}

@@ -1,17 +1,23 @@
 package com.tradingbot;
 
 import java.time.Instant;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Base64;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.PBEKeySpec;
 
 public class AccountManager {
 	private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 	private static final long DEFAULT_SESSION_TTL_SECONDS = 12L * 60L * 60L;
+	private static final int PASSWORD_HASH_ITERATIONS = 120000;
+	private static final int PASSWORD_HASH_BITS = 256;
+	private static final int PASSWORD_SALT_BYTES = 16;
+	private static final String PASSWORD_HASH_PREFIX = "pbkdf2_sha256";
 
 	public static class AccountSession {
 		public int accountId;
@@ -34,7 +40,7 @@ public class AccountManager {
 			pstmt.setString(2, email);
 			pstmt.setString(3, phoneNumber);
 			pstmt.setString(4, address);
-			pstmt.setString(5, password);
+			pstmt.setString(5, hashPassword(password));
 			pstmt.setString(6, Instant.now().toString());
 			
 			int rows = pstmt.executeUpdate();
@@ -49,17 +55,22 @@ public class AccountManager {
 	}
 	
 	public int login(String email, String password) {
-		String sql = "SELECT accountID FROM Account WHERE email = ? AND passwordHash = ?";
+		String sql = "SELECT accountID, passwordHash FROM Account WHERE email = ?";
 		
 		try(Connection conn = DatabaseManager.getConnection();
 				PreparedStatement pstmt = conn.prepareStatement(sql)) {
-			pstmt.setString(1, email);
-			pstmt.setString(2, password);
-			ResultSet rs = pstmt.executeQuery();
-			
-			if(rs.next()) {
-				int accountId = rs.getInt("accountID");
-				System.out.println("Login successful, your User ID: " + accountId);
+			pstmt.setString(1, normalizeEmail(email));
+			int accountId = 0;
+			String storedHash = null;
+			try (ResultSet rs = pstmt.executeQuery()) {
+				if(rs.next() && verifyPassword(password, rs.getString("passwordHash"))) {
+					accountId = rs.getInt("accountID");
+					storedHash = rs.getString("passwordHash");
+				}
+			}
+
+			if(accountId > 0) {
+				migrateLegacyPasswordIfNeeded(conn, normalizeEmail(email), password, storedHash);
 				return accountId;
 			} else {
 				System.out.println("Invalid email or password.");
@@ -74,25 +85,30 @@ public class AccountManager {
 	}
 
 	public AccountSession createSession(String email, String password) {
-		String sql = "SELECT accountID, email, role FROM Account WHERE email = ? AND passwordHash = ?";
+		String sql = "SELECT accountID, email, role, passwordHash FROM Account WHERE email = ?";
 
 		try(Connection conn = DatabaseManager.getConnection();
 				PreparedStatement pstmt = conn.prepareStatement(sql)) {
 			pstmt.setString(1, normalizeEmail(email));
-			pstmt.setString(2, password);
-			ResultSet rs = pstmt.executeQuery();
+			AccountSession session;
+			String storedHash;
 
-			if (!rs.next()) {
-				System.out.println("Invalid email or password.");
-				return null;
+			try (ResultSet rs = pstmt.executeQuery()) {
+				if (!rs.next() || !verifyPassword(password, rs.getString("passwordHash"))) {
+					System.out.println("Invalid email or password.");
+					return null;
+				}
+
+				session = new AccountSession();
+				session.accountId = rs.getInt("accountID");
+				session.email = valueOrDefault(rs.getString("email"), normalizeEmail(email));
+				session.role = normalizeRole(rs.getString("role"));
+				session.token = generateToken();
+				session.expiresAt = Instant.now().plusSeconds(configuredSessionTtlSeconds()).toString();
+				storedHash = rs.getString("passwordHash");
 			}
 
-			AccountSession session = new AccountSession();
-			session.accountId = rs.getInt("accountID");
-			session.email = valueOrDefault(rs.getString("email"), normalizeEmail(email));
-			session.role = normalizeRole(rs.getString("role"));
-			session.token = generateToken();
-			session.expiresAt = Instant.now().plusSeconds(configuredSessionTtlSeconds()).toString();
+			migrateLegacyPasswordIfNeeded(conn, session.email, password, storedHash);
 			insertSession(conn, session);
 			return session;
 		} catch(SQLException e) {
@@ -180,16 +196,24 @@ public class AccountManager {
 	}
 
 	public boolean changePassword(String email, String currentPassword, String newPassword) {
-		String sql = "UPDATE Account SET passwordHash = ? WHERE email = ? AND passwordHash = ?";
+		String selectSql = "SELECT passwordHash FROM Account WHERE email = ?";
+		String updateSql = "UPDATE Account SET passwordHash = ? WHERE email = ?";
 
 		try(Connection conn = DatabaseManager.getConnection();
-				PreparedStatement pstmt = conn.prepareStatement(sql)) {
-			pstmt.setString(1, newPassword);
-			pstmt.setString(2, email);
-			pstmt.setString(3, currentPassword);
+				PreparedStatement select = conn.prepareStatement(selectSql)) {
+			select.setString(1, normalizeEmail(email));
 
-			int rows = pstmt.executeUpdate();
-			return rows > 0;
+			try (ResultSet rs = select.executeQuery()) {
+				if (!rs.next() || !verifyPassword(currentPassword, rs.getString("passwordHash"))) {
+					return false;
+				}
+			}
+
+			try (PreparedStatement update = conn.prepareStatement(updateSql)) {
+				update.setString(1, hashPassword(newPassword));
+				update.setString(2, normalizeEmail(email));
+				return update.executeUpdate() > 0;
+			}
 
 		} catch(SQLException e) {
 			e.printStackTrace();
@@ -315,6 +339,71 @@ public class AccountManager {
 		byte[] bytes = new byte[32];
 		SECURE_RANDOM.nextBytes(bytes);
 		return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+	}
+
+	static String hashPassword(String password) {
+		byte[] salt = new byte[PASSWORD_SALT_BYTES];
+		SECURE_RANDOM.nextBytes(salt);
+		byte[] hash = pbkdf2(password, salt, PASSWORD_HASH_ITERATIONS);
+		return PASSWORD_HASH_PREFIX
+			+ "$" + PASSWORD_HASH_ITERATIONS
+			+ "$" + Base64.getUrlEncoder().withoutPadding().encodeToString(salt)
+			+ "$" + Base64.getUrlEncoder().withoutPadding().encodeToString(hash);
+	}
+
+	private static boolean verifyPassword(String password, String storedHash) {
+		if (isBlank(password) || isBlank(storedHash)) {
+			return false;
+		}
+
+		if (!storedHash.startsWith(PASSWORD_HASH_PREFIX + "$")) {
+			return MessageDigest.isEqual(
+				storedHash.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+				password.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+			);
+		}
+
+		String[] parts = storedHash.split("\\$");
+		if (parts.length != 4) {
+			return false;
+		}
+
+		try {
+			int iterations = Integer.parseInt(parts[1]);
+			byte[] salt = Base64.getUrlDecoder().decode(parts[2]);
+			byte[] expected = Base64.getUrlDecoder().decode(parts[3]);
+			byte[] actual = pbkdf2(password, salt, iterations);
+			return MessageDigest.isEqual(expected, actual);
+		} catch (RuntimeException e) {
+			return false;
+		}
+	}
+
+	private static byte[] pbkdf2(String password, byte[] salt, int iterations) {
+		char[] passwordChars = password == null ? new char[0] : password.toCharArray();
+		try {
+			PBEKeySpec spec = new PBEKeySpec(passwordChars, salt, iterations, PASSWORD_HASH_BITS);
+			SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+			return factory.generateSecret(spec).getEncoded();
+		} catch (Exception e) {
+			throw new IllegalStateException("Password hashing failed.", e);
+		} finally {
+			java.util.Arrays.fill(passwordChars, '\0');
+		}
+	}
+
+	private void migrateLegacyPasswordIfNeeded(Connection conn, String email, String password, String storedHash) throws SQLException {
+		if (isBlank(email) || isBlank(password) || isBlank(storedHash) || storedHash.startsWith(PASSWORD_HASH_PREFIX + "$")) {
+			return;
+		}
+
+		String sql = "UPDATE Account SET passwordHash = ? WHERE email = ? AND passwordHash = ?";
+		try(PreparedStatement pstmt = conn.prepareStatement(sql)) {
+			pstmt.setString(1, hashPassword(password));
+			pstmt.setString(2, normalizeEmail(email));
+			pstmt.setString(3, storedHash);
+			pstmt.executeUpdate();
+		}
 	}
 
 	private static boolean isExpired(String expiresAt) {

@@ -2,6 +2,7 @@ package com.tradingbot;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -43,6 +44,8 @@ public class AccountManagerTest {
 		assertEquals("Test User", manager.getAccountName(email));
 		assertEquals("555-0100", manager.getPhoneNumber(email));
 		assertEquals("123 Market St", manager.getAddress(email));
+		assertNotEquals(password, manager.getPasswordHash(email), "Passwords must be stored as one-way hashes.");
+		assertTrue(manager.getPasswordHash(email).startsWith("pbkdf2_sha256$"));
 	}
 
 	@Test

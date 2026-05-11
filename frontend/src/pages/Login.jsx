@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiFetch } from "../utils/api.js";
+import { apiFormFetch } from "../utils/api.js";
 
 export default function Login({ onLogin }) {
   const navigate = useNavigate();
@@ -13,14 +13,8 @@ export default function Login({ onLogin }) {
     event.preventDefault();
     setError("");
     setIsSubmitting(true);
-    const params = new URLSearchParams({
-      email,
-      password,
-    });
 
-    apiFetch(`/api/login?${params.toString()}`, {
-      method: "POST",
-    })
+    apiFormFetch("/api/login", { email, password })
       .then(async (response) => {
         if (response.ok) {
           const session = await response.json();
