@@ -40,6 +40,17 @@ mkdir -p "$APP_DIR/data" "$APP_DIR/logs"
 cp tradingbot-backend.jar "$APP_DIR/tradingbot-backend.jar"
 cp run-backend-release.sh "$APP_DIR/run-backend-release.sh"
 cp tradingbot-backend.service "$SERVICE_FILE"
+
+if [ -f "data/tradingbot.db" ]; then
+  if [ ! -f "$APP_DIR/data/tradingbot.db" ]; then
+    cp data/tradingbot.db "$APP_DIR/data/tradingbot.db"
+    echo "Installed packaged DB: $APP_DIR/data/tradingbot.db"
+  else
+    echo "Existing DB kept: $APP_DIR/data/tradingbot.db"
+    echo "Packaged DB was not copied because overwriting live trading state is unsafe."
+  fi
+fi
+
 chmod +x "$APP_DIR/run-backend-release.sh"
 chown -R tradingbot:tradingbot /opt/tradingbot
 

@@ -34,6 +34,10 @@ backend/*.db-shm
 backend/*.db-wal
 backend/trading_bot.db
 backend/cp.txt
+release/**/data/
+release/**/*.db
+release/**/*.sqlite
+release/**/*.sqlite3
 
 # Large generated or staged market-data backups
 backend/market_data/**/*.csv
@@ -59,6 +63,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # Local archives / export bundles
+handoff/
 *.zip
 *.tar.gz
 *.rar

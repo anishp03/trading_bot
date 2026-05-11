@@ -36,6 +36,7 @@ Copy-Item (Join-Path $ProjectRoot "scripts\install-windows-scheduled-task.ps1") 
 Copy-Item (Join-Path $ProjectRoot "scripts\uninstall-windows-scheduled-task.ps1") $ReleaseDir -Force
 Copy-Item (Join-Path $ProjectRoot "scripts\bootstrap-windows-pc.ps1") $ReleaseDir -Force
 Copy-Item (Join-Path $ProjectRoot ".env.example") $ReleaseDir -Force
+Copy-Item (Join-Path $ProjectRoot "WINDOWS_LIVE_BACKEND_HANDOFF.md") $ReleaseDir -Force
 
 @"
 Trading Bot Backend Release for Windows

@@ -32,6 +32,18 @@ New-Item -ItemType Directory -Force -Path $AppDir, (Join-Path $AppDir "data"), (
 Copy-Item (Join-Path $ScriptDir "tradingbot-backend.jar") (Join-Path $AppDir "tradingbot-backend.jar") -Force
 Copy-Item (Join-Path $ScriptDir "run-backend-release.ps1") (Join-Path $AppDir "run-backend-release.ps1") -Force
 
+$PackagedDb = Join-Path $ScriptDir "data\tradingbot.db"
+$InstalledDb = Join-Path $AppDir "data\tradingbot.db"
+if (Test-Path $PackagedDb) {
+  if (-not (Test-Path $InstalledDb)) {
+    Copy-Item $PackagedDb $InstalledDb -Force
+    Write-Host "Installed packaged DB: $InstalledDb"
+  } else {
+    Write-Host "Existing DB kept: $InstalledDb"
+    Write-Host "Packaged DB was not copied because overwriting live trading state is unsafe."
+  }
+}
+
 $EnvPath = Join-Path $AppDir ".env"
 if (-not (Test-Path $EnvPath)) {
   Copy-Item (Join-Path $ScriptDir ".env.example") $EnvPath -Force

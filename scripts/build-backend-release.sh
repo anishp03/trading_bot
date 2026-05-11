@@ -35,6 +35,7 @@ cp "$PROJECT_ROOT/scripts/tradingbot-backend.service" "$RELEASE_DIR/tradingbot-b
 cp "$PROJECT_ROOT/scripts/install-linux-systemd-backend.sh" "$RELEASE_DIR/install-linux-systemd-backend.sh"
 cp "$PROJECT_ROOT/scripts/bootstrap-linux-pc.sh" "$RELEASE_DIR/bootstrap-linux-pc.sh"
 cp "$PROJECT_ROOT/.env.example" "$RELEASE_DIR/.env.example"
+cp "$PROJECT_ROOT/WINDOWS_LIVE_BACKEND_HANDOFF.md" "$WINDOWS_RELEASE_DIR/WINDOWS_LIVE_BACKEND_HANDOFF.md"
 chmod +x "$RELEASE_DIR/run-backend-release.sh" "$RELEASE_DIR/install-linux-systemd-backend.sh" "$RELEASE_DIR/bootstrap-linux-pc.sh"
 
 cp "$PROJECT_ROOT/scripts/run-backend-release.ps1" "$WINDOWS_RELEASE_DIR/run-backend-release.ps1"
