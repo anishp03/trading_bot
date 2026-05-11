@@ -8,6 +8,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Base64;
+import java.util.Locale;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
 
@@ -432,7 +433,7 @@ public class AccountManager {
 	}
 
 	private static String normalizeEmail(String email) {
-		return email == null ? "" : email.trim();
+		return email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
 	}
 
 	private static String normalizeRole(String role) {

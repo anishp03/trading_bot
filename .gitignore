@@ -1,6 +1,17 @@
+# Java / Maven
+*.class
+*.jar
+*.war
+*.nar
+*.ear
+**/target/
+.mvn/wrapper/maven-wrapper.jar
+
 # Frontend
 frontend/node_modules/
 frontend/dist/
+frontend/.vite/
+frontend/coverage/
 frontend/.env
 frontend/.env.*
 .env
@@ -8,8 +19,7 @@ frontend/.env.*
 !.env.example
 !**/.env.example
 
-# Backend build output
-backend/target/
+# Backend runtime output
 backend/logs/
 release/**/tradingbot-backend.jar
 
@@ -17,10 +27,21 @@ release/**/tradingbot-backend.jar
 backend/*.db
 backend/*.db-*
 backend/*.db.*
+backend/*.sqlite
+backend/*.sqlite3
+backend/*.db-journal
+backend/*.db-shm
+backend/*.db-wal
 backend/trading_bot.db
 backend/cp.txt
 
-# Local IDE/runtime files
+# Large generated or staged market-data backups
+backend/market_data/**/*.csv
+backend/market_data/status.properties
+backend/market_data/futures/backups/
+backend/market_data/futures/topstepx_stage/
+
+# Local IDE / OS / runtime files
 .idea/
 .vscode/
 *.classpath
@@ -29,9 +50,15 @@ backend/cp.txt
 .DS_Store
 .venv/
 *.log
+*.ctxt
+.mtj.tmp/
+hs_err_pid*
+replay_pid*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# Large generated or staged market-data backups
-backend/market_data/**/*.csv
-backend/market_data/status.properties
-backend/market_data/futures/backups/
-backend/market_data/futures/topstepx_stage/
+# Local archives / export bundles
+*.zip
+*.tar.gz
+*.rar

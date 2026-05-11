@@ -11,10 +11,17 @@ export default function Login({ onLogin }) {
 
   function handleLogin(event) {
     event.preventDefault();
+    if (isSubmitting) {
+      return;
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
     setError("");
+    setEmail(normalizedEmail);
     setIsSubmitting(true);
 
-    apiFormFetch("/api/login", { email, password })
+    apiFormFetch("/api/login", { email: normalizedEmail, password })
       .then(async (response) => {
         if (response.ok) {
           const session = await response.json();
@@ -34,6 +41,19 @@ export default function Login({ onLogin }) {
       });
   }
 
+  function handleFormKeyDown(event) {
+    if (event.key !== "Enter" || event.isComposing || isSubmitting) {
+      return;
+    }
+
+    if (event.target?.tagName === "BUTTON") {
+      return;
+    }
+
+    event.preventDefault();
+    event.currentTarget.requestSubmit();
+  }
+
   return (
     <div
       className="auth-page"
@@ -47,7 +67,7 @@ export default function Login({ onLogin }) {
           </div>
         )}
 
-        <form onSubmit={handleLogin} className="d-grid gap-3">
+        <form onSubmit={handleLogin} onKeyDown={handleFormKeyDown} className="d-grid gap-3">
           <label className="d-grid gap-1">
             <span className="app-label">Email</span>
             <input
@@ -55,6 +75,8 @@ export default function Login({ onLogin }) {
               className="form-control app-input"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
+              autoComplete="username"
+              autoFocus
               required
             />
           </label>
@@ -66,6 +88,7 @@ export default function Login({ onLogin }) {
               className="form-control app-input"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
               required
             />
           </label>
