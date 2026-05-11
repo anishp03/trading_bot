@@ -67,20 +67,4 @@ handoff/
 *.zip
 *.tar.gz
 *.rar
-
-# Tracked Windows backend-only transport package.
-# Keep the runnable release JAR in GitHub for the backend PC, but never DBs or live state.
-!LiveBackend/
-!LiveBackend/tradingbot-backend.jar
-LiveBackend/.env
-LiveBackend/.env.*
-!LiveBackend/.env.example
-LiveBackend/data/
-LiveBackend/**/*.db
-LiveBackend/**/*.db-*
-LiveBackend/**/*.db.*
-LiveBackend/**/*.sqlite
-LiveBackend/**/*.sqlite3
-LiveBackend/**/*.db-journal
-LiveBackend/**/*.db-shm
-LiveBackend/**/*.db-wal
+LiveBackend/

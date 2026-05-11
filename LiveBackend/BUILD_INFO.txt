@@ -1,8 +1,0 @@
-LiveBackend transport package
-
-Built from local backend release: 2026-05-11 16:37 America/New_York
-Source commit at package creation: fe200da
-JAR SHA-256: 1ee3f7f3cea25bec480af63ec019e005aae4c41fdc458c07bd4f155064f1571f
-JAR size: 23493038 bytes
-
-Live DB, .env, broker/API keys, logs, and runtime state are intentionally not included in GitHub.
