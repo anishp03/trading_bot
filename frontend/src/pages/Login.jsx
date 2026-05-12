@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiFormFetch } from "../utils/api.js";
+import { apiFormFetch, readApiErrorMessage } from "../utils/api.js";
 
 export default function Login({ onLogin }) {
   const navigate = useNavigate();
@@ -28,8 +28,7 @@ export default function Login({ onLogin }) {
           onLogin(session);
           navigate("/dashboard", { replace: true });
         } else {
-          const text = await response.text();
-          setError(text || "Invalid credentials.");
+          setError(await readApiErrorMessage(response, "Invalid credentials."));
         }
       })
       .catch((requestError) => {

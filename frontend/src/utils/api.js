@@ -68,6 +68,27 @@ export function isApiNetworkError(error) {
     || /failed to fetch|networkerror|load failed|abort/i.test(message);
 }
 
+export async function readApiErrorMessage(response, fallback = "Request failed.") {
+  const contentType = response.headers.get("content-type") || "";
+  const text = await response.text();
+  const trimmed = text.trim();
+
+  if (!trimmed) {
+    return fallback;
+  }
+
+  if (
+    response.status >= 500
+    || contentType.toLowerCase().includes("text/html")
+    || /^<!doctype\s+html/i.test(trimmed)
+    || /^<html[\s>]/i.test(trimmed)
+  ) {
+    return "Backend unavailable. Start the live backend tunnel and try again.";
+  }
+
+  return trimmed.length > 240 ? `${trimmed.slice(0, 240)}...` : trimmed;
+}
+
 export function apiFormFetch(path, fields = {}, options = {}) {
   const headers = new Headers(options.headers || {});
   headers.set("Content-Type", "application/x-www-form-urlencoded");

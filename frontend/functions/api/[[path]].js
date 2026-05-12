@@ -1,6 +1,6 @@
 export async function onRequest({ request, env, params }) {
   if (!env.BACKEND_API_ORIGIN) {
-    return new Response("Missing BACKEND_API_ORIGIN.", { status: 500 });
+    return backendUnavailable("Backend API origin is not configured.");
   }
 
   const incomingUrl = new URL(request.url);
@@ -16,10 +16,32 @@ export async function onRequest({ request, env, params }) {
     headers.set("CF-Access-Client-Secret", env.CF_ACCESS_CLIENT_SECRET);
   }
 
-  return fetch(backendUrl, {
-    method: request.method,
-    headers,
-    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
-    redirect: "manual",
+  try {
+    const response = await fetch(backendUrl, {
+      method: request.method,
+      headers,
+      body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+      redirect: "manual",
+    });
+
+    const contentType = response.headers.get("content-type") || "";
+    if (!response.ok && contentType.toLowerCase().includes("text/html")) {
+      return backendUnavailable();
+    }
+
+    return response;
+  } catch (error) {
+    console.error(error);
+    return backendUnavailable();
+  }
+}
+
+function backendUnavailable(message = "Backend unavailable. Start the live backend tunnel and try again.") {
+  return new Response(message, {
+    status: 503,
+    headers: {
+      "Cache-Control": "no-store",
+      "Content-Type": "text/plain; charset=utf-8",
+    },
   });
 }
