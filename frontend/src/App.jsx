@@ -15,6 +15,29 @@ import Login from "./pages/Login.jsx";
 import { apiFetch, clearStoredAuth, isApiNetworkError, readStoredAuth, writeStoredAuth } from "./utils/api.js";
 
 const PRIMARY_ACCOUNT_EMAIL = import.meta.env.VITE_PRIMARY_ACCOUNT_EMAIL || "local@example.invalid";
+const ALLOW_OFFLINE_AUTH = import.meta.env.DEV && import.meta.env.VITE_ALLOW_OFFLINE_AUTH === "true";
+
+function anonymousAuthState() {
+  return {
+    status: "anonymous",
+    token: "",
+    email: PRIMARY_ACCOUNT_EMAIL,
+    role: "viewer",
+    expiresAt: "",
+    offline: false,
+  };
+}
+
+function offlineAuthState() {
+  return {
+    status: "offline",
+    token: "",
+    email: "backend offline",
+    role: "offline",
+    expiresAt: "",
+    offline: true,
+  };
+}
 
 function ProtectedLayout({ auth, onLogout }) {
   const location = useLocation();
@@ -65,49 +88,13 @@ export default function App() {
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), 1800);
       apiFetch("/api/system/health", { signal: controller.signal })
-        .then((response) => {
+        .then(() => {
           if (!isMounted) return;
-          if (response.ok) {
-            setAuth({
-              status: "anonymous",
-              token: "",
-              email: PRIMARY_ACCOUNT_EMAIL,
-              role: "viewer",
-              expiresAt: "",
-              offline: false,
-            });
-          } else {
-            setAuth({
-              status: "anonymous",
-              token: "",
-              email: PRIMARY_ACCOUNT_EMAIL,
-              role: "viewer",
-              expiresAt: "",
-              offline: false,
-            });
-          }
+          setAuth(anonymousAuthState());
         })
         .catch((error) => {
           if (!isMounted) return;
-          if (isApiNetworkError(error)) {
-            setAuth({
-              status: "offline",
-              token: "",
-              email: "backend offline",
-              role: "offline",
-              expiresAt: "",
-              offline: true,
-            });
-          } else {
-            setAuth({
-              status: "anonymous",
-              token: "",
-              email: PRIMARY_ACCOUNT_EMAIL,
-              role: "viewer",
-              expiresAt: "",
-              offline: false,
-            });
-          }
+          setAuth(isApiNetworkError(error) && ALLOW_OFFLINE_AUTH ? offlineAuthState() : anonymousAuthState());
         })
         .finally(() => window.clearTimeout(timeoutId));
       return () => {
@@ -125,14 +112,7 @@ export default function App() {
 
         if (!response.ok) {
           clearStoredAuth();
-          setAuth({
-            status: "anonymous",
-            token: "",
-            email: PRIMARY_ACCOUNT_EMAIL,
-            role: "viewer",
-            expiresAt: "",
-            offline: false,
-          });
+          setAuth(anonymousAuthState());
           return;
         }
 
@@ -149,19 +129,13 @@ export default function App() {
       .catch((error) => {
         console.error(error);
         if (isMounted) {
-          if (isApiNetworkError(error)) {
-            setAuth({
-              status: "offline",
-              token: "",
-              email: "backend offline",
-              role: "offline",
-              expiresAt: "",
-              offline: true,
-            });
-          } else {
-            clearStoredAuth();
-            setAuth((current) => ({ ...current, status: "anonymous", token: "", offline: false }));
+          if (isApiNetworkError(error) && ALLOW_OFFLINE_AUTH) {
+            setAuth(offlineAuthState());
+            return;
           }
+
+          clearStoredAuth();
+          setAuth(anonymousAuthState());
         }
       });
 
@@ -180,14 +154,7 @@ export default function App() {
       apiFetch("/api/system/health")
         .then((response) => {
           if (!isMounted || !response.ok) return;
-          setAuth({
-            status: "anonymous",
-            token: "",
-            email: PRIMARY_ACCOUNT_EMAIL,
-            role: "viewer",
-            expiresAt: "",
-            offline: false,
-          });
+          setAuth(anonymousAuthState());
         })
         .catch(() => {});
     };
