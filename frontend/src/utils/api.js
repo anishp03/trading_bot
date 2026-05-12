@@ -60,6 +60,14 @@ export function apiFetch(path, options = {}) {
   });
 }
 
+export function isApiNetworkError(error) {
+  const name = String(error?.name || "");
+  const message = String(error?.message || error || "");
+  return name === "AbortError"
+    || name === "TypeError"
+    || /failed to fetch|networkerror|load failed|abort/i.test(message);
+}
+
 export function apiFormFetch(path, fields = {}, options = {}) {
   const headers = new Headers(options.headers || {});
   headers.set("Content-Type", "application/x-www-form-urlencoded");

@@ -166,6 +166,21 @@ body {
   font-size: 0.78rem;
 }
 
+.app-topbar-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(244, 191, 79, 0.28);
+  background: rgba(244, 191, 79, 0.1);
+  color: rgba(255, 236, 190, 0.96);
+  padding: 6px 10px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .app-page {
   display: grid;
   gap: 0.75rem;
@@ -713,6 +728,12 @@ body {
   color: #9db6ff;
 }
 
+.futures-launch-state.offline {
+  border-color: rgba(244, 191, 79, 0.28);
+  background: rgba(244, 191, 79, 0.1);
+  color: rgba(255, 236, 190, 0.96);
+}
+
 .futures-launch-count {
   flex: 0 0 auto;
   border-radius: 999px;
@@ -1001,6 +1022,18 @@ body {
   padding: 10px 12px;
   font-size: 0.84rem;
   line-height: 1.35;
+}
+
+.futures-live-data-notice.offline {
+  border-color: rgba(255, 127, 127, 0.28);
+  background: rgba(255, 127, 127, 0.08);
+  color: rgba(255, 215, 215, 0.94);
+}
+
+.futures-live-data-notice.idle {
+  border-color: rgba(134, 171, 255, 0.22);
+  background: rgba(134, 171, 255, 0.075);
+  color: rgba(218, 229, 255, 0.94);
 }
 
 .futures-market-chart-shell-empty {

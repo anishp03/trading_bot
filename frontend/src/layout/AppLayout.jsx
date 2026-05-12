@@ -29,7 +29,7 @@ function navClassName({ isActive }) {
   return isActive ? "app-nav-link active" : "app-nav-link";
 }
 
-export default function AppLayout({ accountEmail, accountRole, onLogout }) {
+export default function AppLayout({ accountEmail, accountRole, backendMode = "online", onLogout }) {
   const location = useLocation();
   const currentPage =
     navSections
@@ -68,11 +68,14 @@ export default function AppLayout({ accountEmail, accountRole, onLogout }) {
         <header className="app-topbar d-flex align-items-center justify-content-between">
           <div className="fw-bold">{currentPage}</div>
           <div className="d-flex align-items-center gap-2">
+            {backendMode === "offline" && <span className="app-topbar-status offline">Backend Offline</span>}
             <span className="app-topbar-btn">{accountRole || "viewer"}</span>
             <span className="app-topbar-account">{accountEmail}</span>
-            <button type="button" className="app-topbar-btn app-topbar-action" onClick={onLogout}>
-              Logout
-            </button>
+            {onLogout && (
+              <button type="button" className="app-topbar-btn app-topbar-action" onClick={onLogout}>
+                Logout
+              </button>
+            )}
           </div>
         </header>
 

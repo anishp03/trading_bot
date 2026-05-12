@@ -285,9 +285,7 @@ export default function FuturesStrategy() {
   async function updateLiveStrategyConfig() {
     setIsUpdatingLive(true);
     setSaveStatus("");
-    const copySymbols = instruments.length
-      ? instruments.map((instrument) => instrument.symbol).join(",")
-      : DEFAULT_PORTFOLIO_SYMBOLS.join(",");
+    const copySymbols = DEFAULT_PORTFOLIO_SYMBOLS.join(",");
     try {
       const params = new URLSearchParams({ symbols: copySymbols });
       const response = await apiFetch(`/api/futures/strategy-configs/copy-to-live?${params.toString()}`, { method: "POST" });

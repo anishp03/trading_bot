@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiFetch } from "../utils/api.js";
+import { apiFetch, isApiNetworkError } from "../utils/api.js";
 import { EASTERN_TIME_LABEL, formatEstTime } from "../utils/time.js";
 
-const DEFAULT_SYMBOLS = ["MES", "MNQ", "M2K", "ES", "NQ", "MGC", "GC"];
+const DEFAULT_SYMBOLS = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K"];
 const TIMEFRAME_OPTIONS = [
   { value: "1m", label: "1m" },
   { value: "5m", label: "5m" },
@@ -11,23 +11,24 @@ const TIMEFRAME_OPTIONS = [
 ];
 const LIVE_MONITOR_REFRESH_MS = 30000;
 const MIN_OPENING_CHART_BARS = 24;
-const DEFAULT_PROFILE = "TOPSTEP_150K_PRACTICE";
+const DEFAULT_PROFILE = "TOPSTEP_50K_RESEARCH";
 const PROFILE_ACCOUNTS = {
+  TOPSTEP_50K_RESEARCH: { label: "50K Research Paper", accountId: "22539378" },
   TOPSTEP_150K_PRACTICE: { label: "150K Practice", accountId: "22539378" },
   TOPSTEP_50K_COMBINE: { label: "50K Combine", accountId: "22529998" },
 };
 const FALLBACK_PROFILE = {
-  code: "TOPSTEP_150K_PRACTICE",
-  name: "Topstep 150K Practice",
-  accountSize: 150000,
-  maxTrailingDrawdown: 4500,
-  dailyLossLimit: 3000,
-  maxRiskPerTrade: 900,
-  maxContracts: 15,
-  maxMicroContracts: 150,
+  code: "TOPSTEP_50K_RESEARCH",
+  name: "Topstep 50K Research",
+  accountSize: 50000,
+  maxTrailingDrawdown: 2000,
+  dailyLossLimit: 1000,
+  maxRiskPerTrade: 700,
+  maxContracts: 5,
+  maxMicroContracts: 50,
   maxOpenPositions: 3,
-  maxAggregateContracts: 150,
-  maxAggregateMiniUnits: 15,
+  maxAggregateContracts: 50,
+  maxAggregateMiniUnits: 5,
 };
 
 export default function FuturesLive() {
@@ -47,6 +48,7 @@ export default function FuturesLive() {
   const [busyAction, setBusyAction] = useState("");
   const [chartTransitioning, setChartTransitioning] = useState(false);
   const [lastMonitorRefreshAt, setLastMonitorRefreshAt] = useState("");
+  const [backendOnline, setBackendOnline] = useState(true);
   const chartTransitionTimer = useRef(null);
   const botStartedRef = useRef(false);
 
@@ -60,9 +62,10 @@ export default function FuturesLive() {
   const monitorSymbols = DEFAULT_SYMBOLS;
   const accountPreset = PROFILE_ACCOUNTS[selectedProfileCode] || PROFILE_ACCOUNTS[DEFAULT_PROFILE];
   const symbolsCsv = monitorSymbols.join(",");
-  const botStarted = Boolean(liveStatus?.running);
-  const feedRunning = Boolean(realtimeStatus?.running || liveMonitor?.realtimeRunning);
-  const monitorDataActive = Boolean(botStarted || feedRunning);
+  const backendOffline = backendOnline === false;
+  const botStarted = !backendOffline && Boolean(liveStatus?.running);
+  const feedRunning = !backendOffline && Boolean(realtimeStatus?.running || liveMonitor?.realtimeRunning);
+  const monitorDataActive = !backendOffline && Boolean(botStarted || feedRunning);
   const graphReadiness = liveMonitor?.graphReadiness || null;
   const graphReady = monitorDataActive && Boolean(graphReadiness?.ready);
   const graphBuilding = monitorDataActive && !graphReady;
@@ -100,12 +103,17 @@ export default function FuturesLive() {
   const feedStaleSeconds = Number(liveMonitor?.feedStaleSeconds ?? -1);
   const activeSignalCount = monitorDataActive ? symbolStates.reduce((total, state) => total + Number(state.activeSignalCount || 0), 0) : 0;
   const enabledStrategyCount = monitorDataActive ? symbolStates.reduce((total, state) => total + Number(state.enabledStrategies || 0), 0) : 0;
-  const marketSession = liveMonitor?.marketSession || liveStatus?.marketSession || null;
-  const feedStatus = monitorDataActive ? (feedRunning ? "ProjectX Live" : dataSourceLabel(liveMonitor?.dataSource)) : "Not Started";
+  const marketSession = liveMonitor?.marketSession || liveStatus?.marketSession || estimateFuturesMarketSession();
+  const marketIdle = !backendOffline && !monitorDataActive;
+  const feedStatus = backendOffline
+    ? "Backend Offline"
+    : monitorDataActive ? (feedRunning ? "ProjectX Live" : dataSourceLabel(liveMonitor?.dataSource)) : "Idle / No Pull";
   const lastRealtimeEventDisplay = shortTime(liveMonitor?.lastRealtimeEventAt || realtimeStatus?.lastEventAt);
-  const feedDetail = monitorDataActive && feedRunning
+  const feedDetail = backendOffline
+    ? "API unreachable"
+    : monitorDataActive && feedRunning
     ? lastRealtimeEventDisplay === "--" ? "No live data yet" : lastRealtimeEventDisplay
-    : monitorDataActive ? `${monitorSymbols.length} futures tracked` : "Click Start Live Bot";
+    : monitorDataActive ? `${monitorSymbols.length} futures tracked` : marketSession?.detail || "No live data is being pulled";
   const metrics = botStarted ? liveMetrics : null;
   const realChartTrades = useMemo(
     () => buildChartTrades(displayedDecisions, selectedChartSymbol, selectedChartMarkPrice),
@@ -122,12 +130,14 @@ export default function FuturesLive() {
     }),
     [botStarted, displayedDecisions, liveMonitor?.marketData, monitorSymbols, symbolStates]
   );
-  const canStartLiveBot = Boolean(readiness?.canStartRealOrders && activeSnapshot && !liveStatus?.running);
-  const controlMessage = feedback || (botStarted ? liveStatus?.lastDecision || realtimeStatus?.lastMessage : feedRunning ? realtimeStatus?.lastMessage || liveMonitor?.realtimeMessage : "");
+  const canStartLiveBot = !backendOffline && Boolean(readiness?.canStartRealOrders && activeSnapshot && !liveStatus?.running);
+  const controlMessage = backendOffline
+    ? "Frontend is online, but the backend API is not reachable. Live data, login, and order controls will reconnect automatically when the backend comes back."
+    : feedback || (botStarted ? liveStatus?.lastDecision || realtimeStatus?.lastMessage : feedRunning ? realtimeStatus?.lastMessage || liveMonitor?.realtimeMessage : "");
   const readinessChecks = Array.isArray(readiness?.checks) ? readiness.checks : [];
   const readyCheckCount = readinessChecks.filter((check) => check.status === "pass").length;
-  const launchTone = botControlActive ? "live" : readiness?.ready ? "ready" : "pending";
-  const launchLabel = botStarted ? "Running" : feedRunning ? "Feed Live" : readiness?.ready ? "Ready" : "Setup";
+  const launchTone = backendOffline ? "offline" : botControlActive ? "live" : readiness?.ready ? "ready" : "pending";
+  const launchLabel = backendOffline ? "Offline" : botStarted ? "Running" : feedRunning ? "Feed Live" : readiness?.ready ? "Ready" : marketIdle && !marketSession?.entryWindowOpen ? "Closed" : "Setup";
 
   useEffect(() => {
     loadFundedProfiles();
@@ -176,43 +186,77 @@ export default function FuturesLive() {
     loadReadiness();
   }
 
+  function noteBackendResponse(response) {
+    setBackendOnline(true);
+    if (!response.ok) {
+      throw new Error(`Backend returned ${response.status}`);
+    }
+    return response;
+  }
+
+  function noteBackendError(label, error) {
+    console.error(label, error);
+    if (isApiNetworkError(error)) {
+      setBackendOnline(false);
+      setLastMonitorRefreshAt(new Date().toISOString());
+    } else {
+      setBackendOnline(true);
+    }
+  }
+
   function loadFundedProfiles() {
     apiFetch("/api/futures/funded-rule-profiles")
+      .then(noteBackendResponse)
       .then((response) => response.json())
       .then((data) => {
         const topstepProfiles = Array.isArray(data)
-          ? data.filter((profile) => profile.code === "TOPSTEP_150K_PRACTICE" || profile.code === "TOPSTEP_50K_COMBINE")
+          ? data.filter((profile) => profile.code === "TOPSTEP_50K_RESEARCH" || profile.code === "TOPSTEP_150K_PRACTICE" || profile.code === "TOPSTEP_50K_COMBINE")
           : [];
         setFundedProfiles(topstepProfiles.length ? topstepProfiles : [FALLBACK_PROFILE]);
       })
       .catch((error) => {
-        console.error("Error loading funded profiles:", error);
+        noteBackendError("Error loading funded profiles:", error);
         setFundedProfiles([FALLBACK_PROFILE]);
       });
   }
 
   function loadLiveStatus() {
     apiFetch("/api/futures/live/status")
+      .then(noteBackendResponse)
       .then((response) => response.json())
       .then((data) => {
         setLiveStatus(data || null);
         loadLiveDecisions(data || null);
       })
-      .catch((error) => console.error("Error loading live status:", error));
+      .catch((error) => {
+        noteBackendError("Error loading live status:", error);
+        if (isApiNetworkError(error)) {
+          setLiveStatus(null);
+          setLiveDecisions([]);
+        }
+      });
   }
 
   function loadRealtimeStatus() {
     apiFetch("/api/futures/live/realtime/status")
+      .then(noteBackendResponse)
       .then((response) => response.json())
       .then((data) => setRealtimeStatus(data || null))
-      .catch((error) => console.error("Error loading realtime status:", error));
+      .catch((error) => {
+        noteBackendError("Error loading realtime status:", error);
+        if (isApiNetworkError(error)) setRealtimeStatus(null);
+      });
   }
 
   function loadLiveSnapshot() {
     apiFetch("/api/futures/live/strategy-snapshot")
+      .then(noteBackendResponse)
       .then((response) => response.json())
       .then((data) => setSnapshotState(data || null))
-      .catch((error) => console.error("Error loading live strategy snapshot:", error));
+      .catch((error) => {
+        noteBackendError("Error loading live strategy snapshot:", error);
+        if (isApiNetworkError(error)) setSnapshotState(null);
+      });
   }
 
   function loadLiveDecisions(status = liveStatus) {
@@ -222,19 +266,24 @@ export default function FuturesLive() {
       return;
     }
     apiFetch(`/api/futures/live/decisions?sessionId=${sessionId}&limit=160`)
+      .then(noteBackendResponse)
       .then((response) => response.json())
       .then((data) => setLiveDecisions(Array.isArray(data) ? data : []))
       .catch((error) => {
-        console.error("Error loading live decisions:", error);
+        noteBackendError("Error loading live decisions:", error);
         setLiveDecisions([]);
       });
   }
 
   function loadLiveMetrics() {
     apiFetch("/api/futures/live/metrics")
+      .then(noteBackendResponse)
       .then((response) => response.json())
       .then((data) => setLiveMetrics(data || null))
-      .catch((error) => console.error("Error loading live metrics:", error));
+      .catch((error) => {
+        noteBackendError("Error loading live metrics:", error);
+        if (isApiNetworkError(error)) setLiveMetrics(null);
+      });
   }
 
   function loadLiveMonitor() {
@@ -244,6 +293,7 @@ export default function FuturesLive() {
       timeframe: selectedTimeframe,
     });
     apiFetch(`/api/futures/live/monitor?${params.toString()}`)
+      .then(noteBackendResponse)
       .then((response) => response.json())
       .then((data) => {
         if (data) {
@@ -259,21 +309,28 @@ export default function FuturesLive() {
         }
         setLastMonitorRefreshAt(new Date().toISOString());
       })
-      .catch((error) => console.error("Error loading live monitor:", error));
+      .catch((error) => {
+        noteBackendError("Error loading live monitor:", error);
+        if (isApiNetworkError(error)) {
+          setLiveMonitor(null);
+          setMonitorCache({});
+        }
+      });
   }
 
   function loadReadiness() {
     const params = new URLSearchParams({ symbols: symbolsCsv || DEFAULT_SYMBOLS.join(","), fundedProfile: selectedProfileCode });
     apiFetch(`/api/futures/live/readiness?${params.toString()}`)
+      .then(noteBackendResponse)
       .then((response) => response.json())
       .then((data) => setReadiness(data || null))
       .catch((error) => {
-        console.error("Error loading live readiness:", error);
+        noteBackendError("Error loading live readiness:", error);
         setReadiness({
           canStartSimulated: false,
           ready: false,
-          message: "Readiness check is unavailable.",
-          checks: [{ key: "readiness-api", label: "Pre-flight", status: "fail", detail: "Backend readiness endpoint did not respond.", blocking: true }],
+          message: isApiNetworkError(error) ? "Backend API is offline. The frontend can stay open, but live trading controls are paused." : "Readiness check is unavailable.",
+          checks: [{ key: "readiness-api", label: "Backend API", status: "fail", detail: isApiNetworkError(error) ? "No backend response at the configured API URL." : "Backend readiness endpoint did not respond.", blocking: true }],
         });
       });
   }
@@ -373,6 +430,9 @@ export default function FuturesLive() {
       await handler();
     } catch (error) {
       console.error(error);
+      if (isApiNetworkError(error)) {
+        setBackendOnline(false);
+      }
       setFeedback(error.message || "Action failed.");
     } finally {
       setBusyAction("");
@@ -384,7 +444,7 @@ export default function FuturesLive() {
       <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap">
         <h2 className="app-title m-0">Live Futures Bot</h2>
         <span className={liveStatus?.running ? "app-badge app-positive-badge" : "app-badge app-neutral-badge"}>
-          {liveStatus?.running ? "Running" : "Stopped"}
+          {backendOffline ? "Backend Offline" : liveStatus?.running ? "Running" : "Stopped"}
         </span>
       </div>
 
@@ -413,7 +473,7 @@ export default function FuturesLive() {
             >
               {busyAction === "start" ? "Starting..." : busyAction === "stop" ? "Stopping..." : botStarted ? "Stop Live Bot" : feedRunning ? "Stop Market Feed" : "Start Live Bot"}
             </button>
-            <button type="button" className="app-btn px-3" onClick={updateLiveStrategy} disabled={busyAction === "update-live" || liveStatus?.running || !monitorSymbols.length}>
+            <button type="button" className="app-btn px-3" onClick={updateLiveStrategy} disabled={backendOffline || busyAction === "update-live" || liveStatus?.running || !monitorSymbols.length}>
               {busyAction === "update-live" ? "Copying..." : "Copy Backtest To Live"}
             </button>
           </div>
@@ -459,7 +519,7 @@ export default function FuturesLive() {
         <div className="d-flex align-items-start justify-content-between gap-2 flex-wrap">
           <div className="fw-bold app-kicker">Live Market Monitor</div>
           <div className="futures-chart-toolbar">
-            <span className={marketSession?.entryWindowOpen ? "app-badge app-positive-badge" : "app-badge app-neutral-badge"}>
+            <span className={marketSession?.entryWindowOpen && monitorDataActive ? "app-badge app-positive-badge" : "app-badge app-neutral-badge"}>
               {marketSession?.label || "Session Unknown"}
             </span>
             <span className={monitorDataActive && String(liveMonitor?.dataSource || "").startsWith("PROJECTX_SIGNALR") ? "app-badge app-positive-badge" : "app-badge app-neutral-badge"}>
@@ -467,6 +527,18 @@ export default function FuturesLive() {
             </span>
           </div>
         </div>
+
+        {backendOffline && (
+          <div className="futures-live-data-notice offline">
+            Backend API is offline or unreachable. The frontend is still healthy, live controls are paused, and market data will reconnect automatically when the backend is back on.
+          </div>
+        )}
+
+        {marketIdle && !backendOffline && (
+          <div className="futures-live-data-notice idle">
+            {marketSession?.entryWindowOpen ? "Live bot is idle." : `${marketSession?.label || "Market Closed"}: ${marketSession?.detail || "No live data is being pulled."}`}
+          </div>
+        )}
 
         {botStarted && marketSession && !marketSession.entryWindowOpen && (
           <div className="futures-live-data-notice">
@@ -511,6 +583,8 @@ export default function FuturesLive() {
             feedStaleSeconds={feedStaleSeconds}
             warmupPending={warmupPending}
             graphReadiness={graphReadiness}
+            backendOffline={backendOffline}
+            marketIdle={marketIdle}
           />
           <FuturesBotTrackerPanel
             trackers={botTrackers}
@@ -674,6 +748,8 @@ function FuturesMarketChart({
   feedStaleSeconds = -1,
   warmupPending = false,
   graphReadiness = null,
+  backendOffline = false,
+  marketIdle = false,
 }) {
   const [hoveredIndex, setHoveredIndex] = useState(null);
   const [hoveredTradeIndex, setHoveredTradeIndex] = useState(null);
@@ -928,9 +1004,15 @@ function FuturesMarketChart({
     const graphReadyItems = Number(graphReadiness?.readyItems || 0);
     const graphTotalItems = Number(graphReadiness?.totalItems || 0);
     const graphIsBuilding = botStarted && graphReadiness && !graphReadiness.ready;
-    const emptyTitle = graphIsBuilding ? "Currently building." : botStarted ? "Give it a bit." : "Start the live bot.";
+    const emptyTitle = backendOffline
+      ? "Backend offline."
+      : marketIdle ? (marketSession?.entryWindowOpen ? "Feed idle." : "Market closed.") : graphIsBuilding ? "Currently building." : botStarted ? "Give it a bit." : "Start the live bot.";
     const emptyMessage = graphIsBuilding
       ? "The graph will stay hidden until ProjectX history is ready for every tracked futures symbol and every timeframe."
+      : backendOffline
+      ? "No backend API is reachable right now, so live candles, trades, and readiness checks are paused while the frontend remains available."
+      : marketIdle
+      ? `${marketSession?.label || "Market Closed"}: ${marketSession?.detail || "No live data is being pulled while the bot is idle."}`
       : botStarted
       ? marketSession && !marketSession.entryWindowOpen
         ? `${marketSession.label}: live candles will sync when the entry window opens.`
@@ -991,7 +1073,7 @@ function FuturesMarketChart({
             <span>{symbol}</span>
             <span>{timeframeLabel(timeframe)}</span>
             {graphTotalItems > 0 && <span>{graphReadyItems}/{graphTotalItems} ready</span>}
-            <span>{warmupPending ? "Warmup syncing" : botStarted ? "Feed active" : "Feed idle"}</span>
+            <span>{backendOffline ? "Backend offline" : marketIdle ? "No live pull" : warmupPending ? "Warmup syncing" : botStarted ? "Feed active" : "Feed idle"}</span>
           </div>
         </div>
       </div>
@@ -1668,6 +1750,55 @@ function dataSourceLabel(value) {
   if (value === "PROJECTX_SIGNALR_WAITING") return "Waiting for Live Ticks";
   if (value === "LIVE_NOT_STARTED") return "Not Started";
   return "Live Data Only";
+}
+
+function estimateFuturesMarketSession(now = new Date()) {
+  const parts = easternDateParts(now);
+  const minuteOfDay = parts.hour * 60 + parts.minute;
+  const weekday = parts.weekday;
+  const dailyBreak = weekday >= 1 && weekday <= 4 && minuteOfDay >= 17 * 60 && minuteOfDay < 18 * 60;
+  const weekendClosed = weekday === 6 || (weekday === 5 && minuteOfDay >= 17 * 60) || (weekday === 0 && minuteOfDay < 18 * 60);
+  const globexOpen = !dailyBreak && !weekendClosed;
+  const regularSessionOpen = weekday >= 1 && weekday <= 5 && minuteOfDay >= 9 * 60 + 30 && minuteOfDay < 16 * 60;
+
+  if (!globexOpen) {
+    return {
+      label: "Market Closed",
+      detail: "Futures are outside the normal Globex availability window, so the 24/7 frontend is idle.",
+      entryWindowOpen: false,
+    };
+  }
+
+  if (!regularSessionOpen) {
+    return {
+      label: "Entry Window Closed",
+      detail: "Futures may be trading, but the live bot is outside its regular-session entry window and should sit idle.",
+      entryWindowOpen: false,
+    };
+  }
+
+  return {
+    label: "Market Open",
+    detail: "Regular session is open. Live data appears once the backend feed is running.",
+    entryWindowOpen: true,
+  };
+}
+
+function easternDateParts(date) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const values = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
+  const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return {
+    weekday: weekdayMap[values.weekday] ?? 0,
+    hour: Number(values.hour === "24" ? 0 : values.hour || 0),
+    minute: Number(values.minute || 0),
+  };
 }
 
 function readinessStatusLabel(value) {

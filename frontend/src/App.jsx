@@ -12,14 +12,14 @@ import FuturesLive from "./pages/FuturesLive.jsx";
 import Settings from "./pages/Settings.jsx";
 import NotFound from "./pages/NotFound.jsx";
 import Login from "./pages/Login.jsx";
-import { apiFetch, clearStoredAuth, readStoredAuth, writeStoredAuth } from "./utils/api.js";
+import { apiFetch, clearStoredAuth, isApiNetworkError, readStoredAuth, writeStoredAuth } from "./utils/api.js";
 
 const PRIMARY_ACCOUNT_EMAIL = import.meta.env.VITE_PRIMARY_ACCOUNT_EMAIL || "local@example.invalid";
 
 function ProtectedLayout({ auth, onLogout }) {
   const location = useLocation();
 
-  if (auth.status === "loading") {
+  if (auth.status === "loading" || auth.status === "checking") {
     return (
       <div className="auth-page">
         <div className="app-panel auth-panel">
@@ -30,22 +30,30 @@ function ProtectedLayout({ auth, onLogout }) {
     );
   }
 
-  if (!auth.token) {
+  if (!auth.token && !auth.offline) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
-  return <AppLayout accountEmail={auth.email} accountRole={auth.role} onLogout={onLogout} />;
+  return (
+    <AppLayout
+      accountEmail={auth.email}
+      accountRole={auth.role}
+      backendMode={auth.offline ? "offline" : "online"}
+      onLogout={auth.offline ? null : onLogout}
+    />
+  );
 }
 
 export default function App() {
   const [auth, setAuth] = useState(() => {
     const stored = readStoredAuth();
     return {
-      status: stored?.token ? "loading" : "anonymous",
+      status: stored?.token ? "loading" : "checking",
       token: stored?.token || "",
       email: stored?.email || PRIMARY_ACCOUNT_EMAIL,
       role: stored?.role || "viewer",
       expiresAt: stored?.expiresAt || "",
+      offline: false,
     };
   });
 
@@ -54,7 +62,59 @@ export default function App() {
     const stored = readStoredAuth();
 
     if (!stored?.token) {
-      return undefined;
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 1800);
+      apiFetch("/api/system/health", { signal: controller.signal })
+        .then((response) => {
+          if (!isMounted) return;
+          if (response.ok) {
+            setAuth({
+              status: "anonymous",
+              token: "",
+              email: PRIMARY_ACCOUNT_EMAIL,
+              role: "viewer",
+              expiresAt: "",
+              offline: false,
+            });
+          } else {
+            setAuth({
+              status: "anonymous",
+              token: "",
+              email: PRIMARY_ACCOUNT_EMAIL,
+              role: "viewer",
+              expiresAt: "",
+              offline: false,
+            });
+          }
+        })
+        .catch((error) => {
+          if (!isMounted) return;
+          if (isApiNetworkError(error)) {
+            setAuth({
+              status: "offline",
+              token: "",
+              email: "backend offline",
+              role: "offline",
+              expiresAt: "",
+              offline: true,
+            });
+          } else {
+            setAuth({
+              status: "anonymous",
+              token: "",
+              email: PRIMARY_ACCOUNT_EMAIL,
+              role: "viewer",
+              expiresAt: "",
+              offline: false,
+            });
+          }
+        })
+        .finally(() => window.clearTimeout(timeoutId));
+      return () => {
+        isMounted = false;
+        window.clearTimeout(timeoutId);
+        controller.abort();
+      };
     }
 
     apiFetch("/api/session")
@@ -71,6 +131,7 @@ export default function App() {
             email: PRIMARY_ACCOUNT_EMAIL,
             role: "viewer",
             expiresAt: "",
+            offline: false,
           });
           return;
         }
@@ -83,13 +144,24 @@ export default function App() {
           expiresAt: session.expiresAt || stored.expiresAt || "",
         };
         writeStoredAuth(nextAuth);
-        setAuth({ ...nextAuth, status: "authenticated" });
+        setAuth({ ...nextAuth, status: "authenticated", offline: false });
       })
       .catch((error) => {
         console.error(error);
         if (isMounted) {
-          clearStoredAuth();
-          setAuth((current) => ({ ...current, status: "anonymous", token: "" }));
+          if (isApiNetworkError(error)) {
+            setAuth({
+              status: "offline",
+              token: "",
+              email: "backend offline",
+              role: "offline",
+              expiresAt: "",
+              offline: true,
+            });
+          } else {
+            clearStoredAuth();
+            setAuth((current) => ({ ...current, status: "anonymous", token: "", offline: false }));
+          }
         }
       });
 
@@ -98,7 +170,36 @@ export default function App() {
     };
   }, []);
 
-  const isAuthenticated = Boolean(auth.token);
+  useEffect(() => {
+    if (!auth.offline) {
+      return undefined;
+    }
+
+    let isMounted = true;
+    const checkBackend = () => {
+      apiFetch("/api/system/health")
+        .then((response) => {
+          if (!isMounted || !response.ok) return;
+          setAuth({
+            status: "anonymous",
+            token: "",
+            email: PRIMARY_ACCOUNT_EMAIL,
+            role: "viewer",
+            expiresAt: "",
+            offline: false,
+          });
+        })
+        .catch(() => {});
+    };
+
+    const intervalId = window.setInterval(checkBackend, 30000);
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, [auth.offline]);
+
+  const isAuthenticated = Boolean(auth.token) || Boolean(auth.offline);
   const loginAuth = useMemo(
     () => ({
       isAuthenticated,
@@ -110,7 +211,7 @@ export default function App() {
           expiresAt: session.expiresAt || "",
         };
         writeStoredAuth(nextAuth);
-        setAuth({ ...nextAuth, status: "authenticated" });
+        setAuth({ ...nextAuth, status: "authenticated", offline: false });
       },
     }),
     [isAuthenticated]
@@ -125,6 +226,7 @@ export default function App() {
       email: PRIMARY_ACCOUNT_EMAIL,
       role: "viewer",
       expiresAt: "",
+      offline: false,
     });
   }
 
@@ -134,7 +236,7 @@ export default function App() {
         path="/login"
         element={
           loginAuth.isAuthenticated ? (
-            <Navigate to="/dashboard" replace />
+            <Navigate to={auth.offline ? "/futures-live" : "/dashboard"} replace />
           ) : (
             <Login onLogin={loginAuth.setSession} />
           )
