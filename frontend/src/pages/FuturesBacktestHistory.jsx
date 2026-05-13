@@ -220,7 +220,7 @@ export default function FuturesBacktestHistory() {
   const previewPortfolioTrades = useMemo(() => selectedPortfolioTrades.map(toPreviewTrade), [selectedPortfolioTrades]);
 
   return (
-    <div className="app-page">
+    <div className="app-page futures-history-page">
       <h2 className="app-title">Futures Backtest History</h2>
 
       <div className="app-panel">

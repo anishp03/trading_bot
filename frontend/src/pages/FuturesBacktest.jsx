@@ -342,7 +342,7 @@ export default function FuturesBacktest() {
   const batchRunnableCount = batchSymbols.filter((symbol) => Number(marketData.rowsBySymbol?.[symbol] || 0) > 0).length;
 
   return (
-    <div className="app-page">
+    <div className="app-page futures-config-page">
       <h2 className="app-title">Futures Backtest</h2>
 
       <div className="app-panel">

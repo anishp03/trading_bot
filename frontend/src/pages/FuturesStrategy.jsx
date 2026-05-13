@@ -310,7 +310,7 @@ export default function FuturesStrategy() {
   const isLiveSlot = selectedSlot === "LIVE";
 
   return (
-    <div className="app-page">
+    <div className="app-page futures-config-page">
       <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
         <h2 className="app-title m-0">Futures Strategy Configurations</h2>
         <div className="d-flex gap-2 flex-wrap">

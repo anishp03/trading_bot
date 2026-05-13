@@ -94,22 +94,29 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
 
       <main className="app-main">
         <header className="app-topbar">
-          <div className="app-market-switch" aria-label="Market navigation">
-            {Object.entries(marketSections).map(([market, section]) => (
-              <button
-                type="button"
-                key={market}
-                className={market === selectedMarket ? "app-market-tab active" : "app-market-tab"}
-                onClick={() => switchMarket(market)}
-              >
-                {section.label}
-              </button>
-            ))}
-          </div>
+          <div className="app-topbar-inner">
+            <div className="app-topbar-left">
+              <div className="app-market-switch" aria-label="Market navigation">
+                {Object.entries(marketSections).map(([market, section]) => (
+                  <button
+                    type="button"
+                    key={market}
+                    className={market === selectedMarket ? "app-market-tab active" : "app-market-tab"}
+                    aria-pressed={market === selectedMarket}
+                    onClick={() => switchMarket(market)}
+                  >
+                    {section.label}
+                  </button>
+                ))}
+              </div>
 
-          <div className="app-topbar-page-row">
-            <div className="fw-bold">{currentPage}</div>
-            <div className="d-flex align-items-center gap-2">
+              <div className="app-topbar-heading">
+                <span className="app-topbar-kicker">{activeMarket.label}</span>
+                <div className="app-current-page">{currentPage}</div>
+              </div>
+            </div>
+
+            <div className="app-topbar-account-group">
               {backendMode === "offline" && <span className="app-topbar-status offline">Backend Offline</span>}
               <span className="app-topbar-btn">{accountRole || "viewer"}</span>
               <span className="app-topbar-account">{accountEmail}</span>
