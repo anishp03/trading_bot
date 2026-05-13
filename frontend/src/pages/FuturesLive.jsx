@@ -127,11 +127,9 @@ export default function FuturesLive() {
     [botStarted, displayedDecisions, liveMonitor?.marketData, monitorSymbols, symbolStates]
   );
   const canStartLiveBot = !backendOffline && Boolean(sidebarStartReady && activeSnapshot && !liveStatus?.running);
-  const controlMessage = backendOffline
-    ? "Frontend is online, but the backend API is not reachable. Live data, login, and order controls will reconnect automatically when the backend comes back."
-    : feedback || (botStarted ? liveStatus?.lastDecision || realtimeStatus?.lastMessage : feedRunning ? realtimeStatus?.lastMessage || liveMonitor?.realtimeMessage : "");
+  const controlMessage = feedback || (botStarted ? liveStatus?.lastDecision || realtimeStatus?.lastMessage : feedRunning ? realtimeStatus?.lastMessage || liveMonitor?.realtimeMessage : "");
   const launchTone = backendOffline ? "offline" : botControlActive ? "live" : sidebarStartReady ? "ready" : "pending";
-  const launchLabel = backendOffline ? "Offline" : botStarted ? "Running" : feedRunning ? "Feed Live" : sidebarStartReady ? "Ready" : marketIdle && !marketSession?.entryWindowOpen ? "Closed" : "Setup";
+  const launchLabel = backendOffline ? "Bot Status: OFF" : botStarted ? "Running" : feedRunning ? "Feed Live" : sidebarStartReady ? "Ready" : marketIdle && !marketSession?.entryWindowOpen ? "Closed" : "Setup";
 
   useEffect(() => {
     loadFundedProfiles();
@@ -435,9 +433,11 @@ export default function FuturesLive() {
     <div className="app-page futures-live-page">
       <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap">
         <h2 className="app-title m-0">Live Futures Bot</h2>
-        <span className={liveStatus?.running ? "app-badge app-positive-badge" : "app-badge app-neutral-badge"}>
-          {backendOffline ? "Backend Offline" : liveStatus?.running ? "Running" : "Stopped"}
-        </span>
+        {!backendOffline && (
+          <span className={liveStatus?.running ? "app-badge app-positive-badge" : "app-badge app-neutral-badge"}>
+            {liveStatus?.running ? "Running" : "Stopped"}
+          </span>
+        )}
       </div>
 
       <section className="app-panel futures-live-control-panel">
@@ -506,21 +506,7 @@ export default function FuturesLive() {
       <section className="app-panel futures-monitor-panel">
         <div className="d-flex align-items-start justify-content-between gap-2 flex-wrap">
           <div className="fw-bold app-kicker">Live Market Monitor</div>
-          <div className="futures-chart-toolbar">
-            <span className={marketSession?.entryWindowOpen && monitorDataActive ? "app-badge app-positive-badge" : "app-badge app-neutral-badge"}>
-              {marketSession?.label || "Session Unknown"}
-            </span>
-            <span className={monitorDataActive && String(liveMonitor?.dataSource || "").startsWith("PROJECTX_SIGNALR") ? "app-badge app-positive-badge" : "app-badge app-neutral-badge"}>
-              {monitorDataActive ? dataSourceLabel(liveMonitor?.dataSource) : "Not Started"}
-            </span>
-          </div>
         </div>
-
-        {backendOffline && (
-          <div className="futures-live-data-notice offline">
-            Backend API is offline or unreachable. The frontend is still healthy, live controls are paused, and market data will reconnect automatically when the backend is back on.
-          </div>
-        )}
 
         {marketIdle && !backendOffline && (
           <div className="futures-live-data-notice idle">
@@ -954,12 +940,12 @@ function FuturesMarketChart({
     const graphTotalItems = Number(graphReadiness?.totalItems || 0);
     const graphIsBuilding = botStarted && graphReadiness && !graphReadiness.ready;
     const emptyTitle = backendOffline
-      ? "Backend offline."
+      ? "Feed paused."
       : marketIdle ? "Feed stopped." : graphIsBuilding ? "Currently building." : botStarted ? "Waiting for data." : "Start the live bot.";
     const emptyMessage = graphIsBuilding
       ? "The graph will stay hidden until ProjectX history is ready for every tracked futures symbol and every timeframe."
       : backendOffline
-      ? "No backend API is reachable right now, so live candles, trades, and controls are paused while the frontend remains available."
+      ? "The chart will resume when live futures data is available."
       : marketIdle
       ? "ProjectX realtime data is not running right now. The monitor will open again when the feed starts."
       : botStarted
@@ -1022,7 +1008,7 @@ function FuturesMarketChart({
             <span>{symbol}</span>
             <span>{timeframeLabel(timeframe)}</span>
             {graphTotalItems > 0 && <span>{graphReadyItems}/{graphTotalItems} ready</span>}
-            <span>{backendOffline ? "Backend offline" : marketIdle ? "Feed stopped" : warmupPending ? "Warmup syncing" : botStarted ? "Feed active" : "Feed idle"}</span>
+            {!backendOffline && <span>{marketIdle ? "Feed stopped" : warmupPending ? "Warmup syncing" : botStarted ? "Feed active" : "Feed idle"}</span>}
           </div>
         </div>
       </div>
@@ -1688,17 +1674,6 @@ function statusClass(status) {
   if (value.includes("ACCEPTED") || value.includes("EXIT") || value.includes("FLAT")) return "app-badge app-positive-badge";
   if (value.includes("REJECTED") || value.includes("BLOCK")) return "app-badge app-risk-badge";
   return "app-badge app-neutral-badge";
-}
-
-function dataSourceLabel(value) {
-  if (value === "PROJECTX_SIGNALR_WITH_WARMUP") return "ProjectX Live + Warmup";
-  if (value === "PROJECTX_HISTORY_WARMUP") return "ProjectX Warmup";
-  if (value === "LOCAL_SESSION_WARMUP") return "Cached Session Warmup";
-  if (value === "PROJECTX_SIGNALR") return "ProjectX Live";
-  if (value === "PROJECTX_SIGNALR_MARKET_ONLY") return "ProjectX Prices";
-  if (value === "PROJECTX_SIGNALR_WAITING") return "Waiting for Live Ticks";
-  if (value === "LIVE_NOT_STARTED") return "Not Started";
-  return "Live Data Only";
 }
 
 function estimateFuturesMarketSession(now = new Date()) {

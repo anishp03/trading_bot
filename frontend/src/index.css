@@ -175,6 +175,28 @@ textarea {
   gap: 12px;
 }
 
+.app-update-backend-btn {
+  width: 100%;
+  min-height: 46px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 115, 115, 0.38);
+  background: rgba(255, 86, 86, 0.08);
+  color: #ffb8b8;
+  font-size: 0.9rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.app-update-backend-btn:hover,
+.app-update-backend-btn:focus-visible {
+  border-color: rgba(255, 115, 115, 0.74);
+  background: rgba(255, 86, 86, 0.14);
+  box-shadow: 0 0 18px rgba(255, 80, 80, 0.35);
+  color: #ffe1e1;
+  transform: translateY(-1px);
+}
+
 .app-main {
   height: 100vh;
   display: grid;
@@ -935,9 +957,14 @@ textarea {
 }
 
 .futures-launch-state.offline {
-  border-color: rgba(244, 191, 79, 0.28);
-  background: rgba(244, 191, 79, 0.1);
-  color: rgba(255, 236, 190, 0.96);
+  border-color: rgba(255, 140, 140, 0.26);
+  background: rgba(255, 140, 140, 0.055);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.futures-launch-state.offline span {
+  background: var(--app-negative);
+  box-shadow: 0 0 10px rgba(255, 140, 140, 0.45);
 }
 
 .futures-launch-config {
@@ -1034,13 +1061,6 @@ textarea {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
   gap: 8px;
-}
-
-.futures-chart-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
 }
 
 .futures-live-data-notice {

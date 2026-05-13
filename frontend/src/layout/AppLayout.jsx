@@ -92,6 +92,12 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
     };
   }, [loadFuturesSidebarStatus, selectedMarket]);
 
+  function handleUpdateBackendClick() {
+    const confirmed = window.confirm("Run the backend update now?");
+    if (!confirmed) return;
+    window.alert("Backend update confirmed. The update command is not connected yet.");
+  }
+
   return (
     <div className="app-shell">
       <aside className="app-sidebar d-flex flex-column gap-3">
@@ -132,7 +138,9 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
               ))}
             </div>
           </div>
-          <div className="border-top pt-2 app-sidebar-text">trading_bot</div>
+          <button type="button" className="app-update-backend-btn" onClick={handleUpdateBackendClick}>
+            Update Backend
+          </button>
         </div>
       </aside>
 
@@ -161,7 +169,7 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
             </div>
 
             <div className="app-topbar-account-group">
-              {backendMode === "offline" && <span className="app-topbar-status offline">Backend Offline</span>}
+              {backendMode === "offline" && selectedMarket !== "futures" && <span className="app-topbar-status offline">Backend Offline</span>}
               <span className="app-topbar-btn">{accountRole || "viewer"}</span>
               <span className="app-topbar-account">{accountEmail}</span>
               {onLogout && (
