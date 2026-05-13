@@ -224,6 +224,18 @@ function FuturesSidebarStatus({ backendOnline, status }) {
       detail: backendOn ? "API live" : "API offline",
     },
     {
+      label: "TopStep API",
+      value: topstepApiOn ? "ON" : "OFF",
+      tone: topstepApiOn ? "on" : "off",
+      detail: topstepApiOn ? `Acct ${status?.topstepApi?.accountId || "--"}` : "Needs test",
+    },
+    {
+      label: "Strategy Config",
+      value: strategyOn ? "ON" : "OFF",
+      tone: strategyOn ? "on" : "off",
+      detail: strategyOn ? `${shortSidebarTime(strategy.updatedAt)} | ${strategyResult}` : strategyResult,
+    },
+    {
       label: "Bot Status",
       value: botOn ? "ON" : "OFF",
       tone: botOn ? "on" : "off",
@@ -236,22 +248,10 @@ function FuturesSidebarStatus({ backendOnline, status }) {
       detail: marketDataOn ? `Fresh ${shortSidebarTime(status?.marketData?.lastEventAt)}` : status?.marketData?.running ? "Feed waiting" : "Feed stopped",
     },
     {
-      label: "TopStep API",
-      value: topstepApiOn ? "ON" : "OFF",
-      tone: topstepApiOn ? "on" : "off",
-      detail: topstepApiOn ? `Acct ${status?.topstepApi?.accountId || "--"}` : "Needs test",
-    },
-    {
       label: "Trading Enabled",
       value: tradingOn ? "ON" : "OFF",
       tone: tradingOn ? "on" : "off",
       detail: status?.trading?.marketSession?.entryWindowOpen ? "9:35-3:45 ET" : status?.trading?.marketSession?.label || "Session closed",
-    },
-    {
-      label: "Strategy Config",
-      value: strategyOn ? "ON" : "OFF",
-      tone: strategyOn ? "on" : "off",
-      detail: strategyOn ? `${shortSidebarTime(strategy.updatedAt)} | ${strategyResult}` : strategyResult,
     },
   ];
 
