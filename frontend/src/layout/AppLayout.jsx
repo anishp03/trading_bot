@@ -250,10 +250,9 @@ function FuturesSidebarStatus({ backendOnline, status }) {
   return (
     <div className="app-sidebar-status-grid" aria-label="Futures live status">
       {cards.map((card) => (
-        <div className={`app-sidebar-status-card ${card.tone}`} key={card.label}>
+        <div className={`app-sidebar-status-card ${card.tone}`} key={card.label} aria-label={`${card.label} ${card.value}: ${card.detail}`}>
           <div>
             <span>{card.label}</span>
-            <strong>{card.value}</strong>
           </div>
           <small>{card.detail}</small>
         </div>

@@ -118,28 +118,26 @@ textarea {
 
 .app-sidebar-status-grid {
   display: grid;
-  gap: 8px;
-  margin-top: 10px;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 .app-sidebar-status-card {
-  min-height: 64px;
+  min-height: 48px;
   display: grid;
   align-content: center;
-  gap: 2px;
+  gap: 1px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.035);
-  padding: 10px 14px;
+  padding: 7px 12px;
   overflow: hidden;
 }
 
 .app-sidebar-status-card div {
   min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  display: grid;
+  gap: 1px;
 }
 
 .app-sidebar-status-card span,
@@ -152,21 +150,14 @@ textarea {
 
 .app-sidebar-status-card span {
   color: var(--app-muted);
-  font-size: 0.66rem;
+  font-size: 0.6rem;
   font-weight: 800;
   text-transform: uppercase;
 }
 
-.app-sidebar-status-card strong {
-  flex: 0 0 auto;
-  color: var(--app-link);
-  font-size: 0.74rem;
-  font-weight: 900;
-}
-
 .app-sidebar-status-card small {
   color: rgba(255, 255, 255, 0.72);
-  font-size: 0.68rem;
+  font-size: 0.64rem;
 }
 
 .app-sidebar-status-card.on {
@@ -174,17 +165,9 @@ textarea {
   background: rgba(120, 220, 160, 0.08);
 }
 
-.app-sidebar-status-card.on strong {
-  color: var(--app-positive);
-}
-
 .app-sidebar-status-card.off {
   border-color: rgba(255, 140, 140, 0.28);
   background: rgba(255, 140, 140, 0.055);
-}
-
-.app-sidebar-status-card.off strong {
-  color: var(--app-negative);
 }
 
 .app-system-nav {
@@ -1314,17 +1297,9 @@ textarea {
 }
 
 .futures-bot-tracker-card.reserved {
-  border-radius: 999px;
   border-style: dashed;
   background: rgba(255, 255, 255, 0.02);
   opacity: 0.78;
-  padding-left: 26px;
-  padding-right: 26px;
-}
-
-.futures-bot-tracker-card.reserved .futures-bot-tracker-stats span,
-.futures-bot-tracker-card.reserved .futures-bot-signal {
-  border-radius: 999px;
 }
 
 .futures-bot-tracker-topline,
