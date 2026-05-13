@@ -3,8 +3,8 @@ import RunPreview from "../components/RunPreview.jsx";
 import { apiFetch } from "../utils/api.js";
 import { formatEstTime } from "../utils/time.js";
 
-const PAGE_SIZE = 5;
-const PORTFOLIO_PAGE_SIZE = 8;
+const PAGE_SIZE = 8;
+const PROTECTED_PORTFOLIO_RUN_ID = 3154;
 
 export default function FuturesBacktestHistory() {
   const [runs, setRuns] = useState([]);
@@ -12,19 +12,13 @@ export default function FuturesBacktestHistory() {
   const [selectedRunId, setSelectedRunId] = useState(null);
   const [selectedTrades, setSelectedTrades] = useState([]);
   const [selectedSegments, setSelectedSegments] = useState({ monthly: [], quarterly: [] });
+  const [selectedSymbols, setSelectedSymbols] = useState([]);
   const [isClearing, setIsClearing] = useState(false);
-  const [portfolioRuns, setPortfolioRuns] = useState([]);
-  const [portfolioPage, setPortfolioPage] = useState(1);
-  const [selectedPortfolioRunId, setSelectedPortfolioRunId] = useState(null);
-  const [selectedPortfolioTrades, setSelectedPortfolioTrades] = useState([]);
-  const [selectedPortfolioSegments, setSelectedPortfolioSegments] = useState({ monthly: [], quarterly: [] });
-  const [selectedPortfolioSymbols, setSelectedPortfolioSymbols] = useState([]);
-  const [isClearingPortfolio, setIsClearingPortfolio] = useState(false);
 
   const loadRuns = useCallback((preferredId = null) => {
-    apiFetch("/api/futures/backtests")
+    apiFetch("/api/futures/portfolio-backtests")
       .then((response) => {
-        if (!response.ok) throw new Error("Failed to load futures runs.");
+        if (!response.ok) throw new Error("Failed to load futures backtest runs.");
         return response.json();
       })
       .then((data) => {
@@ -39,60 +33,30 @@ export default function FuturesBacktestHistory() {
         if (nextRuns.length === 0) {
           setSelectedTrades([]);
           setSelectedSegments({ monthly: [], quarterly: [] });
+          setSelectedSymbols([]);
         }
       })
       .catch((error) => {
-        console.error("Error loading futures backtests:", error);
+        console.error("Error loading futures backtest runs:", error);
         setRuns([]);
+        setPage(1);
         setSelectedRunId(null);
         setSelectedTrades([]);
         setSelectedSegments({ monthly: [], quarterly: [] });
-      });
-  }, []);
-
-  const loadPortfolioRuns = useCallback((preferredId = null) => {
-    apiFetch("/api/futures/portfolio-backtests")
-      .then((response) => {
-        if (!response.ok) throw new Error("Failed to load futures portfolio runs.");
-        return response.json();
-      })
-      .then((data) => {
-        const nextRuns = decorateRuns(Array.isArray(data) ? data : []);
-        setPortfolioRuns(nextRuns);
-        setPortfolioPage(1);
-        setSelectedPortfolioRunId((currentId) => {
-          if (preferredId && nextRuns.some((run) => run.id === preferredId)) return preferredId;
-          if (nextRuns.some((run) => run.id === currentId)) return currentId;
-          return nextRuns[0]?.id ?? null;
-        });
-        if (nextRuns.length === 0) {
-          setSelectedPortfolioTrades([]);
-          setSelectedPortfolioSegments({ monthly: [], quarterly: [] });
-          setSelectedPortfolioSymbols([]);
-        }
-      })
-      .catch((error) => {
-        console.error("Error loading futures portfolio backtests:", error);
-        setPortfolioRuns([]);
-        setPortfolioPage(1);
-        setSelectedPortfolioRunId(null);
-        setSelectedPortfolioTrades([]);
-        setSelectedPortfolioSegments({ monthly: [], quarterly: [] });
-        setSelectedPortfolioSymbols([]);
+        setSelectedSymbols([]);
       });
   }, []);
 
   useEffect(() => {
     loadRuns();
-    loadPortfolioRuns();
-  }, [loadRuns, loadPortfolioRuns]);
+  }, [loadRuns]);
 
   useEffect(() => {
     if (!selectedRunId) {
       return;
     }
 
-    apiFetch(`/api/futures/backtests/${selectedRunId}/trades`)
+    apiFetch(`/api/futures/portfolio-backtests/${selectedRunId}/trades`)
       .then((response) => {
         if (!response.ok) throw new Error("Failed to load futures trades.");
         return response.json();
@@ -103,9 +67,9 @@ export default function FuturesBacktestHistory() {
         setSelectedTrades([]);
       });
 
-    apiFetch(`/api/futures/backtests/${selectedRunId}/segments`)
+    apiFetch(`/api/futures/portfolio-backtests/${selectedRunId}/segments`)
       .then((response) => {
-        if (!response.ok) throw new Error("Failed to load futures segment analytics.");
+        if (!response.ok) throw new Error("Failed to load futures segments.");
         return response.json();
       })
       .then((data) => {
@@ -115,126 +79,64 @@ export default function FuturesBacktestHistory() {
         });
       })
       .catch((error) => {
-        console.error("Error loading futures segment analytics:", error);
+        console.error("Error loading futures segments:", error);
         setSelectedSegments({ monthly: [], quarterly: [] });
+      });
+
+    apiFetch(`/api/futures/portfolio-backtests/${selectedRunId}/symbols`)
+      .then((response) => {
+        if (!response.ok) throw new Error("Failed to load futures symbol stats.");
+        return response.json();
+      })
+      .then((data) => setSelectedSymbols(Array.isArray(data) ? data : []))
+      .catch((error) => {
+        console.error("Error loading futures symbol stats:", error);
+        setSelectedSymbols([]);
       });
   }, [selectedRunId]);
 
-  useEffect(() => {
-    if (!selectedPortfolioRunId) {
-      return;
-    }
-
-    apiFetch(`/api/futures/portfolio-backtests/${selectedPortfolioRunId}/trades`)
-      .then((response) => {
-        if (!response.ok) throw new Error("Failed to load futures portfolio trades.");
-        return response.json();
-      })
-      .then((data) => setSelectedPortfolioTrades(Array.isArray(data) ? data : []))
-      .catch((error) => {
-        console.error("Error loading futures portfolio trades:", error);
-        setSelectedPortfolioTrades([]);
-      });
-
-    apiFetch(`/api/futures/portfolio-backtests/${selectedPortfolioRunId}/segments`)
-      .then((response) => {
-        if (!response.ok) throw new Error("Failed to load futures portfolio segments.");
-        return response.json();
-      })
-      .then((data) => {
-        setSelectedPortfolioSegments({
-          monthly: Array.isArray(data.monthly) ? data.monthly : [],
-          quarterly: Array.isArray(data.quarterly) ? data.quarterly : [],
-        });
-      })
-      .catch((error) => {
-        console.error("Error loading futures portfolio segments:", error);
-        setSelectedPortfolioSegments({ monthly: [], quarterly: [] });
-      });
-
-    apiFetch(`/api/futures/portfolio-backtests/${selectedPortfolioRunId}/symbols`)
-      .then((response) => {
-        if (!response.ok) throw new Error("Failed to load futures portfolio symbol stats.");
-        return response.json();
-      })
-      .then((data) => setSelectedPortfolioSymbols(Array.isArray(data) ? data : []))
-      .catch((error) => {
-        console.error("Error loading futures portfolio symbol stats:", error);
-        setSelectedPortfolioSymbols([]);
-      });
-  }, [selectedPortfolioRunId]);
-
-  function clearRuns() {
+  async function clearRuns() {
     setIsClearing(true);
-    apiFetch("/api/futures/backtests/clear", { method: "POST" })
-      .then((response) => {
-        if (!response.ok) throw new Error("Failed to clear futures backtests.");
-        setRuns([]);
-        setPage(1);
-        setSelectedRunId(null);
-        setSelectedTrades([]);
-        setSelectedSegments({ monthly: [], quarterly: [] });
-      })
-      .catch((error) => {
-        console.error("Error clearing futures backtests:", error);
-      })
-      .finally(() => {
-        setIsClearing(false);
-      });
-  }
-
-  function clearPortfolioRuns() {
-    setIsClearingPortfolio(true);
-    apiFetch("/api/futures/portfolio-backtests/clear", { method: "POST" })
-      .then((response) => {
-        if (!response.ok) throw new Error("Failed to clear futures portfolio backtests.");
-        setPortfolioRuns([]);
-        setPortfolioPage(1);
-        setSelectedPortfolioRunId(null);
-        setSelectedPortfolioTrades([]);
-        setSelectedPortfolioSegments({ monthly: [], quarterly: [] });
-        setSelectedPortfolioSymbols([]);
-      })
-      .catch((error) => {
-        console.error("Error clearing futures portfolio backtests:", error);
-      })
-      .finally(() => {
-        setIsClearingPortfolio(false);
-      });
+    try {
+      const response = await apiFetch("/api/futures/portfolio-backtests/clear", { method: "POST" });
+      if (!response.ok) throw new Error("Failed to clear futures portfolio runs.");
+      setPage(1);
+      setSelectedRunId(null);
+      setSelectedTrades([]);
+      setSelectedSegments({ monthly: [], quarterly: [] });
+      setSelectedSymbols([]);
+      loadRuns();
+    } catch (error) {
+      console.error("Error clearing futures backtest runs:", error);
+    } finally {
+      setIsClearing(false);
+    }
   }
 
   const totalPages = Math.max(1, Math.ceil(runs.length / PAGE_SIZE));
   const boundedPage = Math.min(page, totalPages);
   const pageRuns = runs.slice((boundedPage - 1) * PAGE_SIZE, boundedPage * PAGE_SIZE);
-  const portfolioTotalPages = Math.max(1, Math.ceil(portfolioRuns.length / PORTFOLIO_PAGE_SIZE));
-  const boundedPortfolioPage = Math.min(portfolioPage, portfolioTotalPages);
-  const portfolioPageRuns = portfolioRuns.slice(
-    (boundedPortfolioPage - 1) * PORTFOLIO_PAGE_SIZE,
-    boundedPortfolioPage * PORTFOLIO_PAGE_SIZE
-  );
   const selectedRun = runs.find((run) => run.id === selectedRunId) || null;
+  const clearableRuns = runs.filter((run) => run.id !== PROTECTED_PORTFOLIO_RUN_ID);
   const previewRun = useMemo(() => toPreviewRun(selectedRun), [selectedRun]);
   const previewTrades = useMemo(() => selectedTrades.map(toPreviewTrade), [selectedTrades]);
-  const selectedPortfolioRun = portfolioRuns.find((run) => run.id === selectedPortfolioRunId) || null;
-  const previewPortfolioRun = useMemo(() => toPreviewPortfolioRun(selectedPortfolioRun), [selectedPortfolioRun]);
-  const previewPortfolioTrades = useMemo(() => selectedPortfolioTrades.map(toPreviewTrade), [selectedPortfolioTrades]);
 
   return (
     <div className="app-page futures-history-page">
-      <h2 className="app-title">Futures Backtest History</h2>
+      <h2 className="app-title">Futures Portfolio Runs</h2>
 
       <div className="app-panel">
         <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap">
-          <div className="fw-bold app-kicker">True Portfolio Runs</div>
-          <button type="button" className="app-btn app-btn-danger px-3" onClick={clearPortfolioRuns} disabled={isClearingPortfolio || portfolioRuns.length === 0}>
-            {isClearingPortfolio ? "Clearing..." : "Clear Portfolio Runs"}
+          <div className="fw-bold app-kicker">Portfolio Runs</div>
+          <button type="button" className="app-btn app-btn-danger px-3" onClick={clearRuns} disabled={isClearing || clearableRuns.length === 0}>
+            {isClearing ? "Clearing..." : "Clear Runs"}
           </button>
         </div>
 
         <div className="app-table-wrap">
           <div className="app-grid-head futures-portfolio-run-grid">
             <div>Run</div>
-            <div>Symbols</div>
+            <div>Contracts</div>
             <div>Range</div>
             <div>Win</div>
             <div>Profit</div>
@@ -249,8 +151,8 @@ export default function FuturesBacktestHistory() {
             <div className="text-end">Action</div>
           </div>
 
-          {portfolioPageRuns.map((run) => {
-            const selected = run.id === selectedPortfolioRunId;
+          {pageRuns.map((run) => {
+            const selected = run.id === selectedRunId;
             return (
               <div key={run.id} className={selected ? "app-grid-row futures-portfolio-run-grid selected" : "app-grid-row futures-portfolio-run-grid"}>
                 <div>#{run.visibleRunNumber}</div>
@@ -274,93 +176,6 @@ export default function FuturesBacktestHistory() {
                   <button
                     type="button"
                     className={selected ? "app-btn app-btn-selected px-3" : "app-btn px-3"}
-                    onClick={() => setSelectedPortfolioRunId(run.id)}
-                  >
-                    {selected ? "Selected" : "Select"}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-
-          {portfolioRuns.length === 0 && <div className="app-empty">No portfolio futures runs yet.</div>}
-        </div>
-
-        <div className="d-flex align-items-center justify-content-between gap-2 mt-3">
-          <button type="button" className="app-btn px-3" disabled={boundedPortfolioPage === 1} onClick={() => setPortfolioPage((current) => Math.max(1, current - 1))}>
-            Prev
-          </button>
-          <div className="app-muted app-kicker">
-            Page <b>{boundedPortfolioPage}</b> of <b>{portfolioTotalPages}</b>
-          </div>
-          <button type="button" className="app-btn px-3" disabled={boundedPortfolioPage === portfolioTotalPages} onClick={() => setPortfolioPage((current) => Math.min(portfolioTotalPages, current + 1))}>
-            Next
-          </button>
-        </div>
-      </div>
-
-      {selectedPortfolioRun && previewPortfolioRun && (
-        <>
-          <div className="app-panel">
-            <div className="fw-bold app-kicker">Portfolio Contribution / Monthly Quality Check</div>
-            <div className="row g-3 mt-1">
-              <SymbolTable symbols={selectedPortfolioSymbols} />
-              <SegmentTable title="Portfolio Monthly" segments={selectedPortfolioSegments.monthly} />
-            </div>
-          </div>
-
-          <RunPreview
-            run={previewPortfolioRun}
-            trades={previewPortfolioTrades}
-            showCapitalCards={true}
-            showTradeLogs={true}
-          />
-        </>
-      )}
-
-      <div className="app-panel">
-        <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap">
-          <div className="fw-bold app-kicker">Previous Runs</div>
-          <button type="button" className="app-btn app-btn-danger px-3" onClick={clearRuns} disabled={isClearing || runs.length === 0}>
-            {isClearing ? "Clearing..." : "Clear Runs"}
-          </button>
-        </div>
-
-        <div className="app-table-wrap">
-          <div className="app-grid-head futures-run-grid">
-            <div>Run</div>
-            <div>Contract</div>
-            <div>Range</div>
-            <div>Win Rate</div>
-            <div>Profit</div>
-            <div>Return</div>
-            <div>Drawdown</div>
-            <div>Trades</div>
-            <div>Rules</div>
-            <div className="text-end">Action</div>
-          </div>
-
-          {pageRuns.map((run) => {
-            const selected = run.id === selectedRunId;
-            return (
-              <div key={run.id} className={selected ? "app-grid-row futures-run-grid selected" : "app-grid-row futures-run-grid"}>
-                <div>#{run.visibleRunNumber}</div>
-                <div>{run.symbol}</div>
-                <div>{formatEstTime(run.startDate)} to {formatEstTime(run.endDate)}</div>
-                <div>{formatPercent(run.winRate)}</div>
-                <div className={run.totalProfit >= 0 ? "app-pnl-pos" : "app-pnl-neg"}>{formatCurrency(run.totalProfit)}</div>
-                <div>{formatPercent(run.returnPct)}</div>
-                <div>{formatPercent(run.maxDrawdownPct)}</div>
-                <div>{run.trades}</div>
-                <div>
-                  <span className={run.trades === 0 ? "app-badge app-neutral-badge" : run.ruleViolation ? "app-badge app-risk-badge" : "app-badge app-positive-badge"}>
-                    {run.trades === 0 ? "No Trades" : run.ruleViolation ? "Violation" : "Pass"}
-                  </span>
-                </div>
-                <div className="text-end">
-                  <button
-                    type="button"
-                    className={selected ? "app-btn app-btn-selected px-3" : "app-btn px-3"}
                     onClick={() => setSelectedRunId(run.id)}
                   >
                     {selected ? "Selected" : "Select"}
@@ -370,7 +185,7 @@ export default function FuturesBacktestHistory() {
             );
           })}
 
-          {runs.length === 0 && <div className="app-empty">No futures runs yet.</div>}
+          {runs.length === 0 && <div className="app-empty">No futures portfolio runs yet.</div>}
         </div>
 
         <div className="d-flex align-items-center justify-content-between gap-2 mt-3">
@@ -389,8 +204,9 @@ export default function FuturesBacktestHistory() {
       {selectedRun && previewRun && (
         <>
           <div className="app-panel">
-            <div className="fw-bold app-kicker">Monthly / Quarterly Quality Check</div>
+            <div className="fw-bold app-kicker">Contribution / Monthly Quality Check</div>
             <div className="row g-3 mt-1">
+              <SymbolTable symbols={selectedSymbols} />
               <SegmentTable title="Monthly" segments={selectedSegments.monthly} />
               <SegmentTable title="Quarterly" segments={selectedSegments.quarterly} />
             </div>
@@ -414,26 +230,6 @@ function toPreviewRun(run) {
   return {
     id: `Futures #${runNumber}`,
     name: `Futures #${runNumber}`,
-    equity: run.symbol,
-    start: run.startDate,
-    end: run.endDate,
-    startingCapital: run.startingBalance,
-    endingCapital: run.endingBalance,
-    totalProfit: run.totalProfit,
-    winRate: run.winRate,
-    totalReturn: run.returnPct,
-    trades: run.trades,
-    profitFactor: run.profitFactor,
-    drawdown: run.maxDrawdownPct,
-  };
-}
-
-function toPreviewPortfolioRun(run) {
-  if (!run) return null;
-  const runNumber = run.visibleRunNumber ?? run.id;
-  return {
-    id: `Portfolio #${runNumber}`,
-    name: `Portfolio #${runNumber}`,
     equity: run.symbols,
     start: run.startDate,
     end: run.endDate,
@@ -472,7 +268,7 @@ function decorateRuns(runs) {
 
 function SegmentTable({ title, segments }) {
   return (
-    <div className="col-12 col-xl-6">
+    <div className="col-12 col-xl-4">
       <div className="app-card h-100">
         <div className="fw-bold app-kicker mb-2">{title}</div>
         <div className="app-table-wrap strategy-table-wrap">
@@ -501,7 +297,7 @@ function SegmentTable({ title, segments }) {
 
 function SymbolTable({ symbols }) {
   return (
-    <div className="col-12 col-xl-6">
+    <div className="col-12 col-xl-4">
       <div className="app-card h-100">
         <div className="fw-bold app-kicker mb-2">By Contract</div>
         <div className="app-table-wrap strategy-table-wrap">

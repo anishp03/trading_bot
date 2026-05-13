@@ -790,11 +790,13 @@ textarea {
 }
 
 .futures-live-summary-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .app-live-card {
-  min-height: 138px;
+  min-height: 92px;
+  display: grid;
+  align-content: start;
 }
 
 .app-active-trades-grid {
@@ -1278,6 +1280,86 @@ textarea {
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.028);
   padding: 16px;
+}
+
+.futures-thinking-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.futures-thinking-header,
+.futures-thinking-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.futures-thinking-header {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.futures-thinking-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.futures-thinking-pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--app-muted);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.futures-thinking-log {
+  max-height: 260px;
+  display: grid;
+  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 12, 18, 0.58);
+}
+
+.futures-thinking-log-head,
+.futures-thinking-row {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 8px 10px;
+}
+
+.futures-thinking-log-head {
+  color: var(--app-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.futures-thinking-row {
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 0.78rem;
+  line-height: 1.24rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.futures-thinking-row:last-child {
+  border-bottom: 0;
+}
+
+.futures-thinking-row time {
+  color: var(--app-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.futures-thinking-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .futures-bot-tracker-header {
@@ -1988,7 +2070,7 @@ textarea {
 
 .app-trade-toolbar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  grid-template-columns: repeat(6, minmax(130px, 1fr));
   gap: 10px;
 }
 
@@ -1997,6 +2079,29 @@ textarea {
   grid-template-columns: repeat(3, minmax(150px, 1fr)) auto;
   align-items: end;
   gap: 12px;
+}
+
+.futures-data-toolbar {
+  grid-template-columns: repeat(6, minmax(150px, 1fr));
+}
+
+.futures-strategy-slot-toolbar {
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+}
+
+.futures-data-field {
+  min-width: 0;
+}
+
+.futures-run-builder {
+  display: grid;
+  gap: 14px;
+}
+
+.futures-contract-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
 }
 
 .app-data-chip {
@@ -2549,6 +2654,11 @@ textarea {
 
   .futures-launch-actions .app-btn {
     flex: 1 1 100%;
+  }
+
+  .futures-thinking-log-head,
+  .futures-thinking-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .futures-signal-row {

@@ -1,14 +1,33 @@
-const DEFAULT_API_BASE_URL = "http://localhost:7070";
+const LIVE_API_BASE_URL = "http://localhost:7070";
+const DEV_API_BASE_URL = "http://localhost:7071";
 export const AUTH_STORAGE_KEY = "tradingbot.auth";
 
 function runtimeApiBaseUrl() {
   if (typeof window !== "undefined" && window.__TRADINGBOT_CONFIG__?.API_BASE_URL) {
     return window.__TRADINGBOT_CONFIG__.API_BASE_URL;
   }
-  return import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL;
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL;
+  }
+  return import.meta.env.DEV ? DEV_API_BASE_URL : LIVE_API_BASE_URL;
 }
 
 export const API_BASE_URL = runtimeApiBaseUrl().replace(/\/+$/, "");
+
+function isDevWriteToLiveBackend(method) {
+  const normalizedMethod = String(method || "GET").toUpperCase();
+  if (["GET", "HEAD", "OPTIONS"].includes(normalizedMethod)) {
+    return false;
+  }
+  try {
+    const base = new URL(API_BASE_URL);
+    return import.meta.env.DEV
+      && ["localhost", "127.0.0.1"].includes(base.hostname)
+      && base.port === "7070";
+  } catch {
+    return import.meta.env.DEV && /(^|:)7070$/.test(API_BASE_URL);
+  }
+}
 
 export function readStoredAuth() {
   if (typeof window === "undefined") {
@@ -48,9 +67,17 @@ export function apiUrl(path) {
 
 export function apiFetch(path, options = {}) {
   const headers = new Headers(options.headers || {});
+  const method = options.method || "GET";
+
+  if (isDevWriteToLiveBackend(method)) {
+    return Promise.reject(new Error(
+      `Blocked ${String(method).toUpperCase()} ${path}: this Vite dev frontend is pointed at the live backend (${API_BASE_URL}). Use http://localhost:7071 for dev writes.`
+    ));
+  }
 
   return fetch(apiUrl(path), {
     ...options,
+    method,
     headers,
   });
 }

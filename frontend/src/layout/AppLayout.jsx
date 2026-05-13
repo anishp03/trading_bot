@@ -263,7 +263,7 @@ function FuturesSidebarStatus({ backendOnline, status }) {
   const strategyOn = Boolean(backendOn && status?.strategyConfig?.active);
   const strategy = status?.strategyConfig || {};
   const strategyResult = strategyOn
-    ? `${formatSidebarCurrency(strategy.totalProfit)} | ${formatSidebarPercent(strategy.winRate)} | ${Number(strategy.trades || 0).toLocaleString()} trades`
+    ? `${formatSidebarPercent(strategy.winRate)} win | ${formatSidebarCurrency(strategy.totalProfit)} PnL | ${Number(strategy.trades || 0).toLocaleString()} trades`
     : "Copy Backtest Strategy";
   const cards = [
     {

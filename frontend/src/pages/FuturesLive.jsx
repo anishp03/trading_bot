@@ -40,6 +40,9 @@ export default function FuturesLive() {
   const [realtimeStatus, setRealtimeStatus] = useState(null);
   const [snapshotState, setSnapshotState] = useState(null);
   const [liveDecisions, setLiveDecisions] = useState([]);
+  const [liveThinking, setLiveThinking] = useState([]);
+  const [, setLiveThinkingStatus] = useState("idle");
+  const [observedThinking, setObservedThinking] = useState([]);
   const [liveMetrics, setLiveMetrics] = useState(null);
   const [liveMonitor, setLiveMonitor] = useState(null);
   const [monitorCache, setMonitorCache] = useState({});
@@ -50,6 +53,8 @@ export default function FuturesLive() {
   const [backendOnline, setBackendOnline] = useState(true);
   const chartTransitionTimer = useRef(null);
   const botStartedRef = useRef(false);
+  const observedThinkingKeys = useRef(new Set());
+  const observedThinkingSession = useRef(0);
   const {
     futuresSidebarOnline = true,
     futuresSidebarStatus = null,
@@ -100,7 +105,6 @@ export default function FuturesLive() {
   const chartHasWarmupWindow = chartCandles.some((candle) => !candle.live) || chartCandles.length >= MIN_OPENING_CHART_BARS;
   const warmupPending = graphBuilding || (graphReady && chartCandles.length > 0 && !chartHasWarmupWindow);
   const chartDisplayCandles = chartCandles;
-  const selectedHasLiveCandles = graphReady && chartCandles.length > 0;
   const selectedSymbolState = useMemo(
     () => symbolStates.find((state) => String(state.symbol || "").toUpperCase() === selectedChartSymbol) || null,
     [selectedChartSymbol, symbolStates]
@@ -126,9 +130,15 @@ export default function FuturesLive() {
     }),
     [botStarted, displayTradeRows, liveMonitor?.marketData, monitorSymbols, symbolStates]
   );
+  const backendThinkingEntries = useMemo(
+    () => Array.isArray(liveThinking) ? liveThinking.filter((entry) => entry && (entry.summary || entry.detail)).slice(0, 1000) : [],
+    [liveThinking]
+  );
+  const thinkingEntries = backendThinkingEntries.length > 0 ? backendThinkingEntries : observedThinking;
   const canStartLiveBot = !backendOffline && Boolean(sidebarStartReady && activeSnapshot && !liveStatus?.running);
   const controlMessage = feedback || (botStarted ? liveStatus?.lastDecision || realtimeStatus?.lastMessage : feedRunning ? realtimeStatus?.lastMessage || liveMonitor?.realtimeMessage : "");
   const launchTone = backendOffline ? "offline" : botControlActive ? "live" : sidebarStartReady ? "ready" : "pending";
+  const liveStrategySlotSummary = activeSnapshot ? formatStrategySlotSummary(activeSnapshot.sourceMetrics) : "Copy backtest first";
   const launchLabel = backendOffline ? "Bot Status: OFF" : botStarted ? "Running" : feedRunning ? "Feed Live" : sidebarStartReady ? "Ready" : marketIdle && !marketSession?.entryWindowOpen ? "Closed" : "Setup";
 
   useEffect(() => {
@@ -160,6 +170,38 @@ export default function FuturesLive() {
     const intervalId = window.setInterval(refreshLiveData, LIVE_MONITOR_REFRESH_MS);
     return () => window.clearInterval(intervalId);
   }, [symbolsCsv, selectedTimeframe, selectedProfileCode]);
+
+  useEffect(() => {
+    const sessionId = Number(liveStatus?.sessionId || 0);
+    if (sessionId > 0 && observedThinkingSession.current !== sessionId) {
+      observedThinkingSession.current = sessionId;
+      observedThinkingKeys.current = new Set();
+      setObservedThinking([]);
+    }
+  }, [liveStatus?.sessionId]);
+
+  useEffect(() => {
+    const observedEntries = buildObservedLiveBotLogEntries({
+      backendOffline,
+      botStarted,
+      feedRunning,
+      liveStatus,
+      realtimeStatus,
+      liveMonitor,
+      liveDecisions,
+      liveMetrics,
+      symbolStates,
+    });
+    if (!observedEntries.length) return;
+    const additions = [];
+    observedEntries.forEach((entry) => {
+      if (!entry?.observedKey || observedThinkingKeys.current.has(entry.observedKey)) return;
+      observedThinkingKeys.current.add(entry.observedKey);
+      additions.push(entry);
+    });
+    if (!additions.length) return;
+    setObservedThinking((current) => additions.concat(current).slice(0, 1000));
+  }, [backendOffline, botStarted, feedRunning, liveStatus, realtimeStatus, liveMonitor, liveDecisions, liveMetrics, symbolStates]);
 
   useEffect(() => {
     return () => {
@@ -218,12 +260,15 @@ export default function FuturesLive() {
       .then((data) => {
         setLiveStatus(data || null);
         loadLiveDecisions(data || null);
+        loadLiveThinking(data || null);
       })
       .catch((error) => {
         noteBackendError("Error loading live status:", error);
         if (isApiNetworkError(error)) {
           setLiveStatus(null);
           setLiveDecisions([]);
+          setLiveThinking([]);
+          setLiveThinkingStatus("idle");
         }
       });
   }
@@ -263,6 +308,30 @@ export default function FuturesLive() {
       .catch((error) => {
         noteBackendError("Error loading live decisions:", error);
         setLiveDecisions([]);
+      });
+  }
+
+  function loadLiveThinking(status = liveStatus) {
+    const sessionId = Number(status?.running ? status?.sessionId || 0 : 0);
+    if (!sessionId) {
+      setLiveThinking([]);
+      setLiveThinkingStatus("idle");
+      return;
+    }
+    apiFetch(`/api/futures/live/thinking?sessionId=${sessionId}&limit=1000`)
+      .then((response) => {
+        if (response.status === 404) {
+          setLiveThinkingStatus("observed");
+          return [];
+        }
+        setLiveThinkingStatus("ready");
+        return noteBackendResponse(response).json();
+      })
+      .then((data) => setLiveThinking(Array.isArray(data) ? data : []))
+      .catch((error) => {
+        if (isApiNetworkError(error)) noteBackendError("Error loading live thinking:", error);
+        setLiveThinkingStatus("observed");
+        setLiveThinking([]);
       });
   }
 
@@ -482,7 +551,7 @@ export default function FuturesLive() {
           <div className={activeSnapshot ? "futures-launch-chip ready" : "futures-launch-chip"}>
             <span>Live Strategy</span>
             <strong>{activeSnapshot ? "Live Slot" : "Not Set"}</strong>
-            <small>{activeSnapshot?.updatedAt ? `Updated ${shortTime(activeSnapshot.updatedAt)}` : "Copy backtest first"}</small>
+            <small>{liveStrategySlotSummary}</small>
           </div>
 
           <div className="futures-launch-chip">
@@ -503,42 +572,12 @@ export default function FuturesLive() {
 
       </section>
 
+      <FuturesThinkingLog entries={thinkingEntries} onRefresh={refreshLiveData} />
+
       <section className="app-panel futures-monitor-panel">
         <div className="d-flex align-items-start justify-content-between gap-2 flex-wrap">
           <div className="fw-bold app-kicker">Live Market Monitor</div>
         </div>
-
-        {marketIdle && !backendOffline && (
-          <div className="futures-live-data-notice idle">
-            Market data feed is idle. The monitor will reopen automatically when ProjectX realtime data starts again.
-          </div>
-        )}
-
-        {monitorDataActive && marketSession && !marketSession.entryWindowOpen && (
-          <div className="futures-live-data-notice">
-            {marketSession.label}: {marketSession.detail} Market data stays visible while the ProjectX feed is still running; new practice entries remain blocked.
-          </div>
-        )}
-
-        {graphBuilding && (
-          <div className="futures-live-data-notice">
-            {graphReadiness?.message || "Currently building futures graph history for every symbol and timeframe."}
-            {" "}
-            {Number(graphReadiness?.totalItems || 0) > 0 ? `${Number(graphReadiness?.readyItems || 0)}/${Number(graphReadiness?.totalItems || 0)} graph sets ready.` : "Graph sets are queued."}
-          </div>
-        )}
-
-        {monitorDataActive && graphReady && !selectedHasLiveCandles && (
-          <div className="futures-live-data-notice">
-            Give it a bit. The futures graph engine is syncing ProjectX candles for {selectedChartSymbol} and will open the chart as soon as the monitor feed returns a valid candle.
-          </div>
-        )}
-
-        {monitorDataActive && selectedHasLiveCandles && feedStaleSeconds >= 180 && (
-          <div className="futures-live-data-notice">
-            ProjectX has not emitted a fresh tick for {formatDuration(feedStaleSeconds)}. The chart is preserving minute snapshots from the last known price until the feed moves again.
-          </div>
-        )}
 
         <div className="futures-market-layout">
           <FuturesMarketChart
@@ -550,7 +589,6 @@ export default function FuturesLive() {
             timeframe={selectedTimeframe}
             onSymbolChange={selectChartSymbol}
             onTimeframeChange={changeTimeframe}
-            marketSession={marketSession}
             trades={chartTrades}
             lastRefreshAt={lastMonitorRefreshAt}
             serverTime={liveMonitor?.serverTime}
@@ -581,6 +619,7 @@ export default function FuturesLive() {
       </section>
 
       <section className="app-live-grid futures-live-summary-grid">
+        <MetricCard label="Current Balance" value={formatAccountCurrency(Number(metrics?.currentBalance ?? Number(metrics?.accountSize || 0) + Number(metrics?.currentPnl || 0)))} />
         <MetricCard label="Current PnL" value={formatCurrency(metrics?.currentPnl)} accent={Number(metrics?.currentPnl || 0)} />
         <MetricCard label="Drawdown" value={formatCurrency(-Math.abs(Number(metrics?.drawdown || 0)))} accent={-Math.abs(Number(metrics?.drawdown || 0))} />
         <MetricCard label="Return %" value={formatPct(metrics?.returnPct)} accent={Number(metrics?.returnPct || 0)} />
@@ -652,6 +691,262 @@ function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
   );
 }
 
+function FuturesThinkingLog({ entries, onRefresh }) {
+  const rows = Array.isArray(entries) ? entries.slice(0, 1000) : [];
+  const pageSize = 10;
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pageStart = (safePage - 1) * pageSize;
+  const visibleRows = rows.slice(pageStart, pageStart + pageSize);
+  const visibleStart = rows.length ? pageStart + 1 : 0;
+  const visibleEnd = Math.min(pageStart + pageSize, rows.length);
+  useEffect(() => {
+    setPage((current) => Math.min(Math.max(1, current), totalPages));
+  }, [totalPages]);
+  return (
+    <section className="app-panel futures-thinking-panel">
+      <div className="futures-thinking-header">
+        <div>
+          <div className="fw-bold app-kicker">Currently Thinking</div>
+        </div>
+        <div className="futures-thinking-actions">
+          <span className="app-badge app-neutral-badge">{rows.length} logs</span>
+          <div className="futures-thinking-pager" aria-label="Thinking log pages">
+            <button type="button" className="app-btn app-btn-small" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={safePage <= 1}>
+              Prev
+            </button>
+            <span>{visibleStart}-{visibleEnd} / {rows.length}</span>
+            <button type="button" className="app-btn app-btn-small" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={safePage >= totalPages}>
+              Next
+            </button>
+          </div>
+          <button type="button" className="app-btn app-btn-small px-3" onClick={onRefresh}>
+            Refresh
+          </button>
+        </div>
+      </div>
+      <div className="futures-thinking-log" role="log" aria-label="Live bot decision log">
+        {visibleRows.length > 0 && (
+          <div className="futures-thinking-log-head">
+            <span>Date / Time</span>
+            <span>Decision</span>
+          </div>
+        )}
+        {visibleRows.length ? (
+          visibleRows.map((entry, index) => (
+            <div className="futures-thinking-row" key={entry.id || `${entry.createdAt}-${index}`}>
+              <time>{formatEstTime(entry.createdAt || entry.barTime)}</time>
+              <span>{thinkingDecisionLine(entry)}</span>
+            </div>
+          ))
+        ) : (
+          <div className="app-empty">Waiting for Live Bot log events.</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function buildObservedLiveBotLogEntries({
+  backendOffline,
+  botStarted,
+  feedRunning,
+  liveStatus,
+  realtimeStatus,
+  liveMonitor,
+  liveDecisions,
+  symbolStates,
+}) {
+  const entries = [];
+  const sessionId = Number(liveStatus?.sessionId || 0);
+  const sessionKey = sessionId > 0 ? sessionId : "current";
+  const observedAt = liveMonitor?.serverTime || liveStatus?.lastUpdatedAt || liveLogNow();
+  if (backendOffline) {
+    entries.push(observedLogEntry({
+      key: "backend-offline",
+      sessionId,
+      createdAt: observedAt,
+      phase: "Backend",
+      tone: "blocked",
+      summary: "Backend API is not responding.",
+      detail: "Live Bot status cannot be refreshed until the API responds again.",
+    }));
+    return entries;
+  }
+
+  if (botStarted) {
+    entries.push(observedLogEntry({
+      key: `bot-running|${sessionKey}|${liveStatus?.startedAt || ""}`,
+      sessionId,
+      createdAt: liveStatus?.startedAt || liveStatus?.lastUpdatedAt || observedAt,
+      phase: "Started",
+      tone: "active",
+      summary: `${String(liveStatus?.executionMode || "Live").replaceAll("_", " ")} runner is on.`,
+      detail: `Session ${sessionId || "--"}; tracking ${cleanLogText(liveStatus?.symbols || DEFAULT_SYMBOLS.join(", "))}; account ${cleanLogText(liveStatus?.fundedProfile || "practice")}.`,
+    }));
+  } else if (liveStatus) {
+    entries.push(observedLogEntry({
+      key: `bot-idle|${sessionKey}|${liveStatus?.lastDecision || ""}`,
+      sessionId,
+      createdAt: liveStatus?.lastUpdatedAt || observedAt,
+      phase: "Stopped",
+      tone: "closed",
+      summary: "Live runner is idle.",
+      detail: "No signal scans or broker submissions are running.",
+    }));
+  }
+
+  if (feedRunning) {
+    const states = Array.isArray(symbolStates) ? symbolStates : [];
+    const trackedSymbols = states.map((state) => state?.symbol).filter(Boolean);
+    entries.push(observedLogEntry({
+      key: `feed-running|${sessionKey}|${liveMonitor?.dataSource || realtimeStatus?.dataMode || "feed"}`,
+      sessionId,
+      createdAt: realtimeStatus?.lastEventAt || liveMonitor?.realtimeLastEventAt || liveMonitor?.serverTime || observedAt,
+      phase: "Market Data",
+      tone: "active",
+      summary: "Tracking ProjectX prices.",
+      detail: `${trackedSymbols.length || DEFAULT_SYMBOLS.length} symbols are being monitored. ${cleanLogText(realtimeStatus?.lastMessage || liveMonitor?.realtimeMessage || "Price feed is active.")}`,
+    }));
+  }
+
+  const marketSession = liveStatus?.marketSession || liveMonitor?.marketSession || null;
+  if (marketSession) {
+    entries.push(observedLogEntry({
+      key: `entry-gate|${sessionKey}|${marketSession.code || ""}|${marketSession.marketDate || ""}|${Boolean(marketSession.entryWindowOpen)}`,
+      sessionId,
+      createdAt: marketSession.now || liveStatus?.lastUpdatedAt || observedAt,
+      phase: "Entry Gate",
+      tone: marketSession.entryWindowOpen ? "active" : "closed",
+      summary: cleanLogText(marketSession.label || "Trading gate checked."),
+      detail: `${cleanLogText(marketSession.detail || "")}${marketSession.entryWindowOpen ? " Strategy entries can be evaluated." : " New entries are blocked while this gate is closed."}`,
+    }));
+  }
+
+  const lastProcessed = liveStatus?.lastProcessedLiveBarTime || liveStatus?.lastBarTime || "";
+  if (botStarted && lastProcessed) {
+    const decisions = Number(liveStatus?.decisionCount || 0);
+    entries.push(observedLogEntry({
+      key: `scan|${sessionKey}|${lastProcessed}|${decisions}`,
+      sessionId,
+      createdAt: liveStatus?.lastUpdatedAt || observedAt,
+      phase: "Signal Scan",
+      tone: decisions > 0 ? "active" : "info",
+      barTime: lastProcessed,
+      summary: decisions > 0 ? `${decisions} live decision(s) recorded.` : "No trade decision recorded for the latest processed bar.",
+      detail: `Processed ${formatInteger(liveStatus?.automationCycles || 0)} automation cycle(s). ${cleanLogText(liveStatus?.lastDecision || "")}`,
+    }));
+  }
+
+  (Array.isArray(symbolStates) ? symbolStates : []).forEach((state) => {
+    const symbol = String(state?.symbol || "").toUpperCase();
+    if (!symbol) return;
+    if (feedRunning && state?.analysisStatus) {
+      entries.push(observedLogEntry({
+        key: `tracker|${sessionKey}|${symbol}|${state.analysisStatus}`,
+        sessionId,
+        createdAt: state?.lastBarTime || observedAt,
+        phase: "Tracker",
+        tone: "active",
+        symbol,
+        barTime: state?.lastBarTime || "",
+        summary: `${symbol} ${cleanLogText(state.analysisStatus)}.`,
+        detail: `Last price ${formatPrice(state.lastPrice)}; enabled strategies ${Number(state.enabledStrategies || 0)}; active signals ${Number(state.activeSignalCount || 0)}.`,
+      }));
+    }
+    const latestSignal = currentTrackerSignal(state);
+    if (latestSignal?.strategyCode) {
+      entries.push(observedLogEntry({
+        key: `potential|${sessionKey}|${symbol}|${latestSignal.strategyCode}|${latestSignal.side || ""}|${latestSignal.entryTime || latestSignal.time || state.currentSignalTime || state.lastSignalTime || ""}`,
+        sessionId,
+        createdAt: latestSignal.entryTime || latestSignal.time || state.currentSignalTime || state.lastSignalTime || observedAt,
+        phase: "Potential Trade",
+        tone: "setup",
+        symbol,
+        barTime: latestSignal.entryTime || latestSignal.time || state.currentSignalTime || state.lastSignalTime || "",
+        summary: `${symbol} ${latestSignal.strategyCode} ${String(latestSignal.side || "").toUpperCase()} signal appeared.`,
+        detail: `Entry ${formatPrice(latestSignal.entryPrice)}; stop ${formatPrice(latestSignal.stopPrice)}; target ${formatPrice(latestSignal.targetPrice)}. Waiting for live candidate/risk validation.`,
+      }));
+    }
+  });
+
+  (Array.isArray(liveDecisions) ? liveDecisions : []).slice(0, 40).forEach((decision) => {
+    const event = observedDecisionLogEntry(decision, sessionId, observedAt);
+    if (event) entries.push(event);
+  });
+
+  return entries;
+}
+
+function observedDecisionLogEntry(decision, sessionId, fallbackTime) {
+  const id = decision?.id || `${decision?.symbol || ""}-${decision?.strategyCode || ""}-${decision?.signalTime || ""}-${decision?.status || ""}`;
+  const status = String(decision?.status || "").toUpperCase();
+  const symbol = String(decision?.symbol || "").toUpperCase();
+  let phase = "Live Decision";
+  let tone = "info";
+  if (status.includes("SUBMITTED") || status.includes("ACCEPTED")) {
+    phase = "Trade Entry";
+    tone = "accepted";
+  } else if (status.includes("REJECTED")) {
+    phase = "Risk Gate";
+    tone = "blocked";
+  } else if (status.includes("BLOCK")) {
+    phase = "TopstepX";
+    tone = "blocked";
+  } else if (status.includes("EXIT") || status.includes("CLOSED") || status.includes("FLAT") || status.includes("SOLD")) {
+    phase = "Trade Exit";
+    tone = "closed";
+  }
+  return observedLogEntry({
+    key: `decision|${id}|${status}`,
+    sessionId,
+    createdAt: decision?.createdAt || decision?.entryTime || decision?.signalTime || fallbackTime,
+    phase,
+    tone,
+    symbol,
+    barTime: decision?.entryTime || decision?.signalTime || "",
+    summary: `${symbol || "Signal"} ${cleanLogText(decision?.strategyCode || "strategy")} ${cleanLogText(decision?.side || "")} ${cleanLogText(decision?.status || "decision")}`.trim(),
+    detail: cleanLogText(decision?.reason || "Decision recorded by the Live Bot."),
+  });
+}
+
+function observedLogEntry({ key, sessionId, createdAt, phase, tone, symbol = "", barTime = "", summary, detail }) {
+  return {
+    id: `observed-${key}`,
+    observedKey: key,
+    sessionId,
+    createdAt: createdAt || liveLogNow(),
+    phase,
+    tone,
+    symbol,
+    barTime,
+    summary,
+    detail,
+  };
+}
+
+function cleanLogText(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function thinkingDecisionLine(entry) {
+  const phase = String(entry?.phase || "Live Bot").trim();
+  const symbol = String(entry?.symbol || "").trim();
+  const barTime = String(entry?.barTime || "").trim();
+  const summary = String(entry?.summary || "--").trim();
+  const detail = String(entry?.detail || "").trim();
+  const context = [
+    symbol,
+    barTime ? `bar ${formatEstTime(barTime)}` : "",
+  ].filter(Boolean).join(", ");
+  let reason = detail;
+  if (summary && detail.toLowerCase().startsWith(`${summary.toLowerCase()}:`)) {
+    reason = detail.slice(summary.length + 1).trim();
+  }
+  return `${phase}${context ? ` (${context})` : ""}: ${summary}${reason ? ` - ${reason}` : ""}`;
+}
+
 function reservedTrackerTile(symbol, detail) {
   return {
     symbol,
@@ -676,7 +971,6 @@ function FuturesMarketChart({
   onTimeframeChange,
   botStarted,
   isTransitioning,
-  marketSession,
   trades = [],
   lastRefreshAt,
   serverTime,
@@ -939,20 +1233,7 @@ function FuturesMarketChart({
     const graphReadyItems = Number(graphReadiness?.readyItems || 0);
     const graphTotalItems = Number(graphReadiness?.totalItems || 0);
     const graphIsBuilding = botStarted && graphReadiness && !graphReadiness.ready;
-    const emptyTitle = backendOffline
-      ? "Feed paused."
-      : marketIdle ? "Feed stopped." : graphIsBuilding ? "Currently building." : botStarted ? "Waiting for data." : "Start the live bot.";
-    const emptyMessage = graphIsBuilding
-      ? "The graph will stay hidden until ProjectX history is ready for every tracked futures symbol and every timeframe."
-      : backendOffline
-      ? "The chart will resume when live futures data is available."
-      : marketIdle
-      ? "ProjectX realtime data is not running right now. The monitor will open again when the feed starts."
-      : botStarted
-      ? marketSession && !marketSession.entryWindowOpen
-        ? `${marketSession.label}: entries are blocked, but the chart will stay open while ProjectX continues sending candles.`
-        : `The ${symbol} graph infrastructure is syncing ProjectX candle data and will update here automatically.`
-      : "The futures graph will begin building after the live feed starts.";
+    const emptyTitle = graphIsBuilding ? "Graph Sync" : botStarted || marketIdle || backendOffline ? "Chart Pending" : "Chart Idle";
     return (
       <div
         ref={chartShellRef}
@@ -1003,7 +1284,6 @@ function FuturesMarketChart({
 
         <div className="app-chart-empty futures-chart-sync-empty">
           <strong>{emptyTitle}</strong>
-          <span>{emptyMessage}</span>
           <div className="futures-chart-sync-grid">
             <span>{symbol}</span>
             <span>{timeframeLabel(timeframe)}</span>
@@ -1366,7 +1646,7 @@ function buildSymbolTrackers({ symbols, states, decisions, marketData, botStarte
       liveTrades: liveTrades.length,
       signal: signal.label,
       signalTone: signal.tone,
-      detail: botStarted ? state?.analysisStatus || (lastPrice > 0 ? "Tracking market data" : "Waiting for data") : "Not started",
+      detail: trackerDetail(state, signal, botStarted, lastPrice),
     };
   });
 }
@@ -1374,17 +1654,65 @@ function buildSymbolTrackers({ symbols, states, decisions, marketData, botStarte
 function trackerSignalLabel(state, liveTrades, botStarted) {
   if (!botStarted) return { label: "Idle", tone: "idle" };
   if (liveTrades > 0) return { label: "Trading", tone: "trading" };
-  const latestSignal = Array.isArray(state?.latestSignals) ? state.latestSignals[0] : null;
-  if (latestSignal?.strategyCode) {
-    return { label: `${latestSignal.strategyCode} ${String(latestSignal.side || "").toUpperCase()}`, tone: "setup" };
+  const currentSignal = currentTrackerSignal(state);
+  if (currentSignal?.strategyCode) {
+    return {
+      label: `${currentSignal.strategyCode} ${String(currentSignal.side || "").toUpperCase()}`,
+      tone: "setup",
+      currentSignal,
+    };
   }
-  if (Number(state?.activeSignalCount || 0) > 0) {
+  if (Number(state?.currentSignalCount || 0) > 0) {
     return { label: "Setup", tone: "setup" };
   }
   if (Number(state?.enabledStrategies || 0) > 0) {
     return { label: "Looking", tone: "looking" };
   }
   return { label: "Idle", tone: "idle" };
+}
+
+function trackerDetail(state, signal, botStarted, lastPrice) {
+  if (!botStarted) return "Not started";
+  if (signal?.tone === "trading") return "In trade; PnL updates with current mark price.";
+  if (signal?.currentSignal?.strategyCode) {
+    const entryTime = signal.currentSignal.entryTime || signal.currentSignal.time || signal.currentSignal.signalTime || state?.currentSignalTime || "";
+    return `Potential trade at ${formatEstTime(entryTime)}; waiting for live validation.`;
+  }
+  const latestCode = state?.lastSignalCode || (Array.isArray(state?.latestSignals) ? state.latestSignals[0]?.strategyCode : "");
+  const latestSide = state?.lastSignalSide || (Array.isArray(state?.latestSignals) ? state.latestSignals[0]?.side : "");
+  const latestTime = state?.lastSignalTime || (Array.isArray(state?.latestSignals) ? state.latestSignals[0]?.time : "");
+  if (latestCode && latestTime) {
+    return `${state?.analysisStatus || "Tracking market data"}; last signal ${latestCode} ${String(latestSide || "").toUpperCase()} at ${formatEstTime(latestTime)}.`;
+  }
+  return botStarted ? state?.analysisStatus || (lastPrice > 0 ? "Tracking market data" : "Waiting for data") : "Not started";
+}
+
+function currentTrackerSignal(state) {
+  const explicitCurrent = Array.isArray(state?.currentSignals) ? state.currentSignals[0] : null;
+  if (explicitCurrent?.strategyCode) return explicitCurrent;
+  if (state?.currentSignalCode) {
+    return {
+      strategyCode: state.currentSignalCode,
+      strategyName: state.currentSignalName,
+      side: state.currentSignalSide,
+      entryTime: state.currentSignalTime,
+      time: state.currentSignalTime,
+    };
+  }
+  const latestSignal = Array.isArray(state?.latestSignals) ? state.latestSignals[0] : null;
+  const latestTime = latestSignal?.time || state?.lastSignalTime || "";
+  if (latestSignal?.strategyCode && isFreshPotentialSignal(latestTime, state?.lastBarTime)) {
+    return latestSignal;
+  }
+  return null;
+}
+
+function isFreshPotentialSignal(signalTime, lastBarTime) {
+  const signalMs = parseChartTime(signalTime);
+  const barMs = parseChartTime(lastBarTime);
+  if (!signalMs || !barMs) return false;
+  const diffMinutes = Math.abs(barMs - signalMs) / 60000;
+  return diffMinutes <= 2;
 }
 
 function chartVolumeForCandle(candle) {
@@ -1813,10 +2141,46 @@ function formatCurrency(value) {
   return `${sign}$${Math.abs(numeric).toFixed(2)}`;
 }
 
+function formatAccountCurrency(value) {
+  const numeric = Number(value || 0);
+  return `$${numeric.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 function formatCompactCurrency(value) {
   const numeric = Number(value || 0);
   if (numeric >= 1000) return `$${Math.round(numeric / 1000)}K`;
   return `$${numeric.toFixed(0)}`;
+}
+
+function formatCompactSignedCurrency(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "";
+  const sign = numeric > 0 ? "+" : numeric < 0 ? "-" : "";
+  const abs = Math.abs(numeric);
+  if (abs >= 1000) {
+    return `${sign}$${(abs / 1000).toFixed(abs >= 100000 ? 0 : 1)}k`;
+  }
+  return `${sign}$${abs.toFixed(0)}`;
+}
+
+function formatStrategySlotSummary(metrics) {
+  const sourceMetrics = metrics || {};
+  const profit = firstFiniteMetric(sourceMetrics, ["totalProfit", "resultTotalProfit", "profit"]);
+  const winRate = firstFiniteMetric(sourceMetrics, ["winRate"]);
+  const tradeCount = firstFiniteMetric(sourceMetrics, ["trades", "numTrades", "resultTrades"]);
+  const parts = [];
+  if (Number.isFinite(winRate)) parts.push(`${winRate.toFixed(2)}% win`);
+  if (Number.isFinite(profit)) parts.push(`${formatCompactSignedCurrency(profit)} PnL`);
+  if (Number.isFinite(tradeCount)) parts.push(`${formatInteger(tradeCount)} trades`);
+  return parts.length ? parts.join(" | ") : "Copy backtest first";
+}
+
+function firstFiniteMetric(metrics, keys) {
+  for (const key of keys) {
+    const numeric = Number(metrics?.[key]);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return Number.NaN;
 }
 
 function formatPct(value) {
@@ -1847,11 +2211,21 @@ function formatInteger(value) {
   return Number.isFinite(numeric) ? numeric.toLocaleString("en-US", { maximumFractionDigits: 0 }) : "--";
 }
 
+function liveLogNow() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${lookup.year}-${lookup.month}-${lookup.day} ${lookup.hour}:${lookup.minute}`;
+}
+
 function formatIndicator(value) {
   const numeric = Number(value || 0);
   return numeric > 0 ? numeric.toFixed(1) : "--";
-}
-
-function shortTime(value) {
-  return formatEstTime(value);
 }

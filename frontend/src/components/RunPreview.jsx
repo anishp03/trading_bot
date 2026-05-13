@@ -12,6 +12,8 @@ export default function RunPreview({
   const [sideFilter, setSideFilter] = useState("all");
   const [strategyFilter, setStrategyFilter] = useState("all");
   const [tradeSort, setTradeSort] = useState("largestWin");
+  const [startDateFilter, setStartDateFilter] = useState("");
+  const [endDateFilter, setEndDateFilter] = useState("");
 
   const strategies = useMemo(() => uniqueTradeValues(trades, "strategyName"), [trades]);
 
@@ -25,6 +27,7 @@ export default function RunPreview({
       if (outcomeFilter === "flat" && pnl !== 0) return false;
       if (sideFilter !== "all" && normalizeSide(trade?.side) !== sideFilter) return false;
       if (strategyFilter !== "all" && String(trade?.strategyName || "") !== strategyFilter) return false;
+      if (!isTradeWithinDateRange(trade, startDateFilter, endDateFilter)) return false;
       return true;
     });
 
@@ -38,7 +41,7 @@ export default function RunPreview({
     });
 
     return nextTrades;
-  }, [outcomeFilter, sideFilter, strategyFilter, tradeSort, trades]);
+  }, [endDateFilter, outcomeFilter, sideFilter, startDateFilter, strategyFilter, tradeSort, trades]);
 
   const filteredPnl = filteredTrades.reduce((total, trade) => total + Number(trade?.pnl ?? 0), 0);
   const filteredWins = filteredTrades.filter((trade) => Number(trade?.pnl ?? 0) > 0).length;
@@ -124,6 +127,28 @@ export default function RunPreview({
                     <option value="largestWin">Largest Win</option>
                     <option value="largestLoss">Largest Loss</option>
                   </select>
+                </label>
+                <label className="d-grid gap-1">
+                  <span className="app-label">Start Date</span>
+                  <input
+                    className="form-control app-input"
+                    type="date"
+                    value={startDateFilter}
+                    max={endDateFilter || undefined}
+                    onInput={(event) => setStartDateFilter(event.target.value)}
+                    onChange={(event) => setStartDateFilter(event.target.value)}
+                  />
+                </label>
+                <label className="d-grid gap-1">
+                  <span className="app-label">End Date</span>
+                  <input
+                    className="form-control app-input"
+                    type="date"
+                    value={endDateFilter}
+                    min={startDateFilter || undefined}
+                    onInput={(event) => setEndDateFilter(event.target.value)}
+                    onChange={(event) => setEndDateFilter(event.target.value)}
+                  />
                 </label>
               </div>
 
@@ -218,6 +243,41 @@ function normalizeSide(value) {
   return normalized === "short" || normalized === "sell" ? "short" : "long";
 }
 
+function isTradeWithinDateRange(trade, startDate, endDate) {
+  if (!startDate && !endDate) return true;
+
+  const tradeDate = extractTradeDate(trade?.time ?? trade?.openedAt ?? trade?.closedAt);
+  if (!tradeDate) return false;
+  if (startDate && tradeDate < startDate) return false;
+  if (endDate && tradeDate > endDate) return false;
+  return true;
+}
+
+function extractTradeDate(value) {
+  if (value == null || value === "") return "";
+
+  const raw = String(value).trim();
+  const isoDate = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoDate) {
+    const [, year, month, day] = isoDate;
+    return `${year}-${month}-${day}`;
+  }
+
+  const usDate = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (usDate) {
+    const [, month, day, year] = usDate;
+    return `${year}-${pad2(month)}-${pad2(day)}`;
+  }
+
+  const parsed = new Date(raw.replace(/\s+(ET|EST|EDT)\b/i, ""));
+  if (Number.isNaN(parsed.getTime())) return "";
+
+  const year = parsed.getFullYear();
+  const month = pad2(parsed.getMonth() + 1);
+  const day = pad2(parsed.getDate());
+  return `${year}-${month}-${day}`;
+}
+
 function calculateFilteredTotalReturn(run, filteredTrades, filteredPnl) {
   const startingCapital = Number(run?.startingCapital ?? run?.startingEquity ?? 0);
   if (Number.isFinite(startingCapital) && startingCapital > 0) {
@@ -249,4 +309,8 @@ function formatMoney(value) {
 function formatSignedMoney(value) {
   const amount = Number(value || 0);
   return `${amount > 0 ? "+" : ""}${formatMoney(amount)}`;
+}
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
 }

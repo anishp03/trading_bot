@@ -1,57 +1,79 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiFetch } from "../utils/api.js";
+import { API_BASE_URL, apiFetch } from "../utils/api.js";
 
-const TOPSTEP_PROFILE_CODE = "TOPSTEP_50K_COMBINE";
+const TOPSTEP_RESEARCH_PROFILE = "TOPSTEP_50K_RESEARCH";
+const MAIN_PORTFOLIO_SYMBOLS = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K"];
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MGC"]);
 
 const DEFAULT_CONFIG = {
-  symbol: "MNQ",
-  fundedProfile: TOPSTEP_PROFILE_CODE,
-  startDate: defaultStartDate(),
-  endDate: defaultEndDate(),
+  sourcePortfolioBacktestId: "3154",
+  referenceSymbol: "MNQ",
+  fundedProfile: TOPSTEP_RESEARCH_PROFILE,
+  startDate: "2025-05-01",
+  endDate: "2026-05-04",
   accountSize: "50000",
   maxTrailingDrawdown: "2000",
   dailyLossLimit: "1000",
-  maxRiskPerTrade: "400",
+  maxRiskPerTrade: "700",
   maxContracts: "50",
   commissionPerContract: "1.24",
   slippageTicks: "1",
-  profitTarget: "3000",
-  maxOpenPositions: "2",
+  profitTarget: "0",
+  maxOpenPositions: "3",
   maxAggregateContracts: "50",
   maxAggregateMiniUnits: "5",
+  useSavedRisk: "true",
+};
+
+const DEFAULT_SOURCE_SUMMARY = {
+  totalProfit: 80249.81,
+  trades: 999,
+  winRate: 75.28,
+  profitFactor: 2.9,
+};
+
+const DEFAULT_DATA_CONFIG = {
+  startDate: DEFAULT_CONFIG.startDate,
+  endDate: defaultEndDate(),
+  schema: "ohlcv-1m",
 };
 
 export default function FuturesBacktest() {
   const navigate = useNavigate();
   const [config, setConfig] = useState(DEFAULT_CONFIG);
+  const [sourceSummary, setSourceSummary] = useState(DEFAULT_SOURCE_SUMMARY);
+  const [dataConfig, setDataConfig] = useState(DEFAULT_DATA_CONFIG);
   const [instruments, setInstruments] = useState([]);
   const [marketData, setMarketData] = useState({ symbols: [], rowsBySymbol: {}, message: "", storagePath: "" });
   const [isMarketDataLoading, setIsMarketDataLoading] = useState(true);
+  const [isUpdatingData, setIsUpdatingData] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [feedback, setFeedback] = useState("");
-  const [importConfig, setImportConfig] = useState({
-    symbol: DEFAULT_CONFIG.symbol,
-    startDate: DEFAULT_CONFIG.startDate,
-    endDate: DEFAULT_CONFIG.endDate,
-    schema: "ohlcv-1m",
-  });
-  const [isImporting, setIsImporting] = useState(false);
-  const [isRebuildingDerived, setIsRebuildingDerived] = useState(false);
-  const [importFeedback, setImportFeedback] = useState("");
-  const [batchSymbols, setBatchSymbols] = useState(["MNQ"]);
+  const [dataFeedback, setDataFeedback] = useState("");
+  const [batchSymbols, setBatchSymbols] = useState(MAIN_PORTFOLIO_SYMBOLS);
   const [fundedProfiles, setFundedProfiles] = useState([]);
 
   useEffect(() => {
     loadInstruments();
-    loadMarketDataStatus();
+    loadMarketDataStatus(true);
     loadFundedProfiles();
+    loadPortfolioDefaults();
+    // The initial page bootstrap should run once; each loader owns its own state updates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    loadRiskSettings(config.symbol);
-  }, [config.symbol]);
+  const selectedSymbols = useMemo(() => {
+    const available = new Set((instruments.length ? instruments : MAIN_PORTFOLIO_SYMBOLS.map((symbol) => ({ symbol }))).map((instrument) => instrument.symbol));
+    const filtered = batchSymbols.map((symbol) => symbol.toUpperCase()).filter((symbol) => available.has(symbol));
+    return filtered.length ? filtered : MAIN_PORTFOLIO_SYMBOLS;
+  }, [batchSymbols, instruments]);
+
+  const selectedRows = selectedSymbols.reduce((total, symbol) => total + Number(marketData.rowsBySymbol?.[symbol] || 0), 0);
+  const missingDataSymbols = selectedSymbols.filter((symbol) => Number(marketData.rowsBySymbol?.[symbol] || 0) <= 0);
+  const selectedInstrument = instruments.find((instrument) => instrument.symbol === config.referenceSymbol) || instruments[0] || null;
+  const canRun = Boolean(config.startDate && config.endDate && selectedSymbols.length > 0 && missingDataSymbols.length === 0);
+  const canUpdateData = Boolean(dataConfig.startDate && dataConfig.endDate && selectedSymbols.length > 0);
 
   function loadInstruments() {
     apiFetch("/api/futures/instruments")
@@ -59,31 +81,27 @@ export default function FuturesBacktest() {
         if (!response.ok) throw new Error("Failed to load futures instruments.");
         return response.json();
       })
-      .then((data) => {
-        const nextInstruments = Array.isArray(data) ? data : [];
-        setInstruments(nextInstruments);
-        if (nextInstruments.length) {
-          setConfig((current) => ({
-            ...current,
-            symbol: nextInstruments.some((instrument) => instrument.symbol === current.symbol)
-              ? current.symbol
-              : nextInstruments[0].symbol,
-          }));
-          setImportConfig((current) => ({
-            ...current,
-            symbol: nextInstruments.some((instrument) => instrument.symbol === current.symbol)
-              ? current.symbol
-              : nextInstruments[0].symbol,
-          }));
-        }
-      })
+      .then((data) => setInstruments(Array.isArray(data) ? data : []))
       .catch((error) => {
         console.error("Error loading futures instruments:", error);
         setInstruments([]);
       });
   }
 
-  function loadMarketDataStatus() {
+  function loadPortfolioDefaults() {
+    apiFetch("/api/futures/portfolio-backtests/default-config")
+      .then((response) => {
+        if (!response.ok) throw new Error("Failed to load portfolio defaults.");
+        return response.json();
+      })
+      .then((data) => applyPortfolioDefaults(data))
+      .catch((error) => {
+        console.error("Error loading futures portfolio defaults:", error);
+        applyPortfolioDefaults(null);
+      });
+  }
+
+  function loadMarketDataStatus(syncDateRange = false) {
     setIsMarketDataLoading(true);
     apiFetch("/api/futures/market-data")
       .then((response) => {
@@ -91,13 +109,24 @@ export default function FuturesBacktest() {
         return response.json();
       })
       .then((data) => {
-        setMarketData({
+        const nextMarketData = {
           symbols: Array.isArray(data.symbols) ? data.symbols : [],
           rowsBySymbol: data.rowsBySymbol || {},
+          rawRowsBySymbol: data.rawRowsBySymbol || {},
+          firstDateBySymbol: data.firstDateBySymbol || {},
+          lastDateBySymbol: data.lastDateBySymbol || {},
+          overallStartDate: data.overallStartDate || "",
+          overallEndDate: data.overallEndDate || "",
+          commonStartDate: data.commonStartDate || "",
+          commonEndDate: data.commonEndDate || "",
           message: data.message || "",
           storagePath: data.storagePath || "market_data/futures",
           timeframe: data.timeframe || "1Min",
-        });
+        };
+        setMarketData(nextMarketData);
+        if (syncDateRange) {
+          applyMarketDateRangeToData(nextMarketData);
+        }
       })
       .catch((error) => {
         console.error("Error loading futures market data:", error);
@@ -109,158 +138,49 @@ export default function FuturesBacktest() {
   function loadFundedProfiles() {
     apiFetch("/api/futures/funded-rule-profiles")
       .then((response) => response.json())
-      .then((data) => {
-        const nextProfiles = Array.isArray(data) ? data : [];
-        setFundedProfiles(nextProfiles);
-        const topstepProfile = nextProfiles.find((profile) => profile.code === TOPSTEP_PROFILE_CODE);
-        if (topstepProfile) {
-          setConfig((current) => applyFundedProfile(current, topstepProfile));
-        }
-      })
+      .then((data) => setFundedProfiles(Array.isArray(data) ? data : []))
       .catch((error) => {
         console.error("Error loading funded rule profiles:", error);
         setFundedProfiles([]);
       });
   }
 
-  async function fetchRiskSettings(symbol) {
-    const response = await apiFetch(`/api/futures/risk?symbol=${encodeURIComponent(symbol)}`);
-    if (!response.ok) throw new Error(`Failed to load ${symbol} futures risk profile.`);
-    return response.json();
-  }
-
-  function loadRiskSettings(symbol) {
-    fetchRiskSettings(symbol)
-      .then((data) => {
-        setConfig((current) => {
-          if (current.symbol !== symbol) return current;
-          const activeProfile = fundedProfiles.find((profile) => profile.code === current.fundedProfile);
-          if (activeProfile && activeProfile.code !== "CUSTOM") {
-            return {
-              ...applyFundedProfile(current, activeProfile),
-              maxRiskPerTrade: String(data.maxRiskPerTrade ?? current.maxRiskPerTrade),
-              commissionPerContract: String(data.commissionPerContract ?? current.commissionPerContract),
-              slippageTicks: String(data.slippageTicks ?? current.slippageTicks),
-            };
-          }
-          return {
-            ...current,
-            accountSize: String(data.accountSize ?? current.accountSize),
-            maxTrailingDrawdown: String(data.maxTrailingDrawdown ?? current.maxTrailingDrawdown),
-            dailyLossLimit: String(data.dailyLossLimit ?? current.dailyLossLimit),
-            maxRiskPerTrade: String(data.maxRiskPerTrade ?? current.maxRiskPerTrade),
-            maxContracts: String(data.maxContracts ?? current.maxContracts),
-            commissionPerContract: String(data.commissionPerContract ?? current.commissionPerContract),
-            slippageTicks: String(data.slippageTicks ?? current.slippageTicks),
-            profitTarget: String(data.profitTarget ?? current.profitTarget),
-          };
-        });
-      })
-      .catch((error) => {
-        console.error("Error loading futures risk profile:", error);
-      });
-  }
-
-  async function runBacktest() {
-    setIsRunning(true);
-    setFeedback("");
-
-    const params = new URLSearchParams(config);
-
-    try {
-      const response = await apiFetch(`/api/futures/backtests/generate?${params.toString()}`, {
-        method: "POST",
-      });
-      const payload = await readApiResponse(response);
-      if (!response.ok) {
-        throw new Error(payload.message || payload.text || "Failed to generate futures backtest.");
-      }
-      navigate("/futures-backtest-history");
-    } catch (error) {
-      console.error("Error generating futures backtest:", error);
-      setFeedback(error.message || "Failed to generate futures backtest.");
-    } finally {
-      setIsRunning(false);
-    }
-  }
-
-  async function runBatchBacktests() {
-    const symbolsToRun = batchSymbols.filter((symbol) => Number(marketData.rowsBySymbol?.[symbol] || 0) > 0);
-    if (!symbolsToRun.length) {
-      setFeedback("Import native futures bars for at least one selected contract before batch testing.");
-      return;
-    }
-
-    setIsRunning(true);
-    setFeedback(`Running ${symbolsToRun.length} contract batch...`);
-
-    try {
-      for (const symbol of symbolsToRun) {
-        const riskProfile = await fetchRiskSettings(symbol);
-        const activeProfile = fundedProfiles.find((profile) => profile.code === config.fundedProfile);
-        const baseConfig = activeProfile && activeProfile.code !== "CUSTOM"
-          ? applyFundedProfile({ ...config, symbol }, activeProfile)
-          : { ...config, symbol };
-        const params = new URLSearchParams({
-          ...baseConfig,
-          symbol,
-          accountSize: activeProfile && activeProfile.code !== "CUSTOM" ? baseConfig.accountSize : String(riskProfile.accountSize ?? config.accountSize),
-          maxTrailingDrawdown: activeProfile && activeProfile.code !== "CUSTOM" ? baseConfig.maxTrailingDrawdown : String(riskProfile.maxTrailingDrawdown ?? config.maxTrailingDrawdown),
-          dailyLossLimit: activeProfile && activeProfile.code !== "CUSTOM" ? baseConfig.dailyLossLimit : String(riskProfile.dailyLossLimit ?? config.dailyLossLimit),
-          maxRiskPerTrade: String(riskProfile.maxRiskPerTrade ?? config.maxRiskPerTrade),
-          maxContracts: activeProfile && activeProfile.code !== "CUSTOM" ? baseConfig.maxContracts : String(riskProfile.maxContracts ?? config.maxContracts),
-          commissionPerContract: String(riskProfile.commissionPerContract ?? config.commissionPerContract),
-          slippageTicks: String(riskProfile.slippageTicks ?? config.slippageTicks),
-          profitTarget: activeProfile && activeProfile.code !== "CUSTOM" ? baseConfig.profitTarget : String(riskProfile.profitTarget ?? config.profitTarget),
-        });
-        const response = await apiFetch(`/api/futures/backtests/generate?${params.toString()}`, {
-          method: "POST",
-        });
-        const payload = await readApiResponse(response);
-        if (!response.ok) {
-          throw new Error(payload.message || payload.text || `Failed to generate ${symbol} futures backtest.`);
-        }
-      }
-      navigate("/futures-backtest-history");
-    } catch (error) {
-      console.error("Error generating futures batch:", error);
-      setFeedback(error.message || "Failed to generate futures batch.");
-    } finally {
-      setIsRunning(false);
-    }
-  }
-
-  async function runPortfolioBacktest() {
-    const symbolsToRun = batchSymbols.filter((symbol) => Number(marketData.rowsBySymbol?.[symbol] || 0) > 0);
-    if (!symbolsToRun.length) {
-      setFeedback("Import native futures bars for at least one selected contract before portfolio testing.");
-      return;
-    }
-
-    setIsRunning(true);
-    setFeedback(`Running portfolio test for ${symbolsToRun.join(", ")}...`);
-
-    const params = new URLSearchParams({
-      ...config,
-      symbols: symbolsToRun.join(","),
-      useSavedRisk: "true",
+  function applyPortfolioDefaults(payload) {
+    const symbolList = parseSymbols(payload?.symbolList || payload?.symbols || MAIN_PORTFOLIO_SYMBOLS.join(","));
+    const nextSymbols = symbolList.length ? symbolList : MAIN_PORTFOLIO_SYMBOLS;
+    const nextConfig = {
+      sourcePortfolioBacktestId: String(payload?.sourcePortfolioBacktestId || DEFAULT_CONFIG.sourcePortfolioBacktestId),
+      referenceSymbol: nextSymbols.includes(DEFAULT_CONFIG.referenceSymbol) ? DEFAULT_CONFIG.referenceSymbol : nextSymbols[0],
+      fundedProfile: String(payload?.fundedProfile || DEFAULT_CONFIG.fundedProfile),
+      startDate: String(payload?.startDate || DEFAULT_CONFIG.startDate),
+      endDate: String(payload?.endDate || DEFAULT_CONFIG.endDate),
+      accountSize: String(payload?.accountSize ?? DEFAULT_CONFIG.accountSize),
+      maxTrailingDrawdown: String(payload?.maxTrailingDrawdown ?? DEFAULT_CONFIG.maxTrailingDrawdown),
+      dailyLossLimit: String(payload?.dailyLossLimit ?? DEFAULT_CONFIG.dailyLossLimit),
+      maxRiskPerTrade: String(payload?.maxRiskPerTrade ?? DEFAULT_CONFIG.maxRiskPerTrade),
+      maxContracts: String(payload?.maxContracts ?? DEFAULT_CONFIG.maxContracts),
+      commissionPerContract: String(payload?.commissionPerContract ?? DEFAULT_CONFIG.commissionPerContract),
+      slippageTicks: String(payload?.slippageTicks ?? DEFAULT_CONFIG.slippageTicks),
+      profitTarget: String(payload?.profitTarget ?? DEFAULT_CONFIG.profitTarget),
+      maxOpenPositions: String(payload?.maxOpenPositions ?? DEFAULT_CONFIG.maxOpenPositions),
+      maxAggregateContracts: String(payload?.maxAggregateContracts ?? DEFAULT_CONFIG.maxAggregateContracts),
+      maxAggregateMiniUnits: String(payload?.maxAggregateMiniUnits ?? DEFAULT_CONFIG.maxAggregateMiniUnits),
+      useSavedRisk: String(payload?.useSavedRisk ?? DEFAULT_CONFIG.useSavedRisk),
+    };
+    setConfig(nextConfig);
+    setBatchSymbols(nextSymbols);
+    setSourceSummary({
+      totalProfit: Number(payload?.sourceMetrics?.totalProfit ?? DEFAULT_SOURCE_SUMMARY.totalProfit),
+      trades: Number(payload?.sourceMetrics?.trades ?? DEFAULT_SOURCE_SUMMARY.trades),
+      winRate: Number(payload?.sourceMetrics?.winRate ?? DEFAULT_SOURCE_SUMMARY.winRate),
+      profitFactor: Number(payload?.sourceMetrics?.profitFactor ?? DEFAULT_SOURCE_SUMMARY.profitFactor),
     });
+  }
 
-    try {
-      const response = await apiFetch(`/api/futures/portfolio-backtests/generate?${params.toString()}`, {
-        method: "POST",
-      });
-      const payload = await readApiResponse(response);
-      if (!response.ok) {
-        throw new Error(payload.message || payload.text || "Failed to generate futures portfolio backtest.");
-      }
-      navigate("/futures-backtest-history");
-    } catch (error) {
-      console.error("Error generating futures portfolio backtest:", error);
-      setFeedback(error.message || "Failed to generate futures portfolio backtest.");
-    } finally {
-      setIsRunning(false);
-    }
+  function applyMarketDateRangeToData(data) {
+    const startDate = data.commonStartDate || data.overallStartDate || DEFAULT_DATA_CONFIG.startDate;
+    const endDate = data.commonEndDate || data.overallEndDate || DEFAULT_DATA_CONFIG.endDate;
+    setDataConfig((current) => ({ ...current, startDate, endDate }));
   }
 
   function updateConfig(field, value) {
@@ -270,95 +190,146 @@ export default function FuturesBacktest() {
         const selectedProfile = fundedProfiles.find((profile) => profile.code === value);
         return selectedProfile ? applyFundedProfile(next, selectedProfile) : next;
       }
-      if (field === "symbol" && next.fundedProfile !== "CUSTOM") {
-        const activeProfile = fundedProfiles.find((profile) => profile.code === next.fundedProfile);
-        return activeProfile ? applyFundedProfile(next, activeProfile) : next;
-      }
       return next;
     });
   }
 
-  function updateImportConfig(field, value) {
-    setImportConfig((current) => ({ ...current, [field]: value }));
+  function updateDataConfig(field, value) {
+    setDataConfig((current) => ({ ...current, [field]: value }));
   }
 
   function toggleBatchSymbol(symbol) {
     setBatchSymbols((current) => {
       if (current.includes(symbol)) {
-        return current.filter((item) => item !== symbol);
+        const next = current.filter((item) => item !== symbol);
+        return next.length ? next : current;
       }
       return [...current, symbol];
     });
   }
 
-  async function importDatabentoBars() {
-    setIsImporting(true);
-    setImportFeedback("");
+  async function updateBacktestData() {
+    if (!canUpdateData) {
+      setDataFeedback("Select at least one contract and a valid date range.");
+      return;
+    }
 
-    const params = new URLSearchParams(importConfig);
+    setIsUpdatingData(true);
+    setDataFeedback(`Updating portfolio data for ${selectedSymbols.join(", ")}...`);
+
+    const endpoint = "/api/futures/market-data/update-backtest-data";
+    const params = new URLSearchParams({
+      ...dataConfig,
+      symbols: selectedSymbols.join(","),
+    });
+
     try {
-      const response = await apiFetch(`/api/futures/market-data/databento/import?${params.toString()}`, {
+      const response = await apiFetch(`${endpoint}?${params.toString()}`, {
         method: "POST",
       });
       const payload = await readApiResponse(response);
       if (!response.ok || payload.json?.success === false) {
-        throw new Error(payload.json?.message || payload.text || "Databento import failed.");
+        throw new Error(formatUpdateErrorMessage(response, payload, {
+          endpoint,
+          symbols: selectedSymbols,
+          startDate: dataConfig.startDate,
+          endDate: dataConfig.endDate,
+        }));
       }
-      setImportFeedback(payload.json?.message || "Databento import completed.");
-      loadMarketDataStatus();
+      setDataFeedback(formatDataUpdateMessage(payload.json));
+      loadMarketDataStatus(true);
     } catch (error) {
-      console.error("Error importing Databento bars:", error);
-      setImportFeedback(error.message || "Databento import failed.");
+      console.error("Error updating futures backtest data:", error);
+      setDataFeedback(error.message || "Backtest data update failed.");
     } finally {
-      setIsImporting(false);
+      setIsUpdatingData(false);
     }
   }
 
-  async function rebuildDerivedBars() {
-    setIsRebuildingDerived(true);
-    setImportFeedback("");
+  async function startRun() {
+    if (!canRun) {
+      const missing = missingDataSymbols.length ? ` Missing data: ${missingDataSymbols.join(", ")}.` : "";
+      setFeedback(`Portfolio run needs every selected contract to have data.${missing}`);
+      return;
+    }
 
-    const params = new URLSearchParams({ symbol: config.symbol || importConfig.symbol || "MNQ" });
+    setIsRunning(true);
+    setFeedback(`Starting portfolio run for ${selectedSymbols.join(", ")}...`);
+
+    const params = new URLSearchParams({
+      sourcePortfolioBacktestId: config.sourcePortfolioBacktestId,
+      symbols: selectedSymbols.join(","),
+      startDate: config.startDate,
+      endDate: config.endDate,
+      fundedProfile: config.fundedProfile,
+      accountSize: config.accountSize,
+      maxTrailingDrawdown: config.maxTrailingDrawdown,
+      dailyLossLimit: config.dailyLossLimit,
+      maxRiskPerTrade: config.maxRiskPerTrade,
+      maxContracts: config.maxContracts,
+      commissionPerContract: config.commissionPerContract,
+      slippageTicks: config.slippageTicks,
+      profitTarget: config.profitTarget,
+      maxOpenPositions: config.maxOpenPositions,
+      maxAggregateContracts: config.maxAggregateContracts,
+      maxAggregateMiniUnits: config.maxAggregateMiniUnits,
+      useSavedRisk: config.useSavedRisk,
+    });
+
     try {
-      const response = await apiFetch(`/api/futures/market-data/rebuild-derived?${params.toString()}`, {
+      const response = await apiFetch(`/api/futures/portfolio-backtests/generate?${params.toString()}`, {
         method: "POST",
       });
       const payload = await readApiResponse(response);
-      if (!response.ok || payload.json?.success === false) {
-        throw new Error(payload.json?.message || payload.text || "Derived futures rebuild failed.");
+      if (!response.ok) {
+        throw new Error(payload.json?.message || payload.text || "Failed to generate futures portfolio run.");
       }
-      setImportFeedback(payload.json?.message || "Derived futures files rebuilt.");
-      loadMarketDataStatus();
+      navigate("/futures-backtest-history");
     } catch (error) {
-      console.error("Error rebuilding derived futures bars:", error);
-      setImportFeedback(error.message || "Derived futures rebuild failed.");
+      console.error("Error generating futures portfolio run:", error);
+      setFeedback(error.message || "Failed to generate futures portfolio run.");
     } finally {
-      setIsRebuildingDerived(false);
+      setIsRunning(false);
     }
   }
-
-  const selectedInstrument = instruments.find((instrument) => instrument.symbol === config.symbol) || instruments[0] || null;
-  const canRun = Boolean(config.symbol && config.startDate && config.endDate);
-  const batchRunnableCount = batchSymbols.filter((symbol) => Number(marketData.rowsBySymbol?.[symbol] || 0) > 0).length;
 
   return (
     <div className="app-page futures-config-page">
-      <h2 className="app-title">Futures Backtest</h2>
+      <div className="d-flex align-items-start justify-content-between gap-3 flex-wrap mb-3">
+        <div>
+          <div className="app-kicker">Futures</div>
+          <h2 className="app-title mb-0">Portfolio Backtest</h2>
+        </div>
+        <button type="button" className="app-btn px-3" onClick={loadPortfolioDefaults}>
+          Reset Strategy Slot
+        </button>
+      </div>
 
       <div className="app-panel">
         <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
-          <div className="fw-bold app-kicker">Market Data</div>
-          <div className="d-flex gap-2 flex-wrap">
-            <button type="button" className="app-btn app-btn-small px-3" onClick={loadMarketDataStatus} disabled={isMarketDataLoading}>
-              {isMarketDataLoading ? "Refreshing..." : "Refresh"}
-            </button>
-            <button type="button" className="app-btn app-btn-small px-3" onClick={rebuildDerivedBars} disabled={isRebuildingDerived}>
-              {isRebuildingDerived ? "Rebuilding..." : "Rebuild Derived"}
-            </button>
-          </div>
+          <div className="fw-bold app-kicker">Backtest Strategy Slot</div>
+        </div>
+        <div className="app-data-toolbar futures-strategy-slot-toolbar">
+          <Metric label="Win" value={`${formatNumber(sourceSummary.winRate, 2)}%`} />
+          <Metric label="PnL" value={formatCurrency(sourceSummary.totalProfit)} tone="pos" />
+          <Metric label="Trades" value={formatNumber(sourceSummary.trades, 0)} />
+        </div>
+      </div>
+
+      <div className="app-panel">
+        <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
+          <div className="fw-bold app-kicker">Portfolio Market Data</div>
+          <button
+            type="button"
+            className="app-btn app-btn-primary px-3"
+            onClick={updateBacktestData}
+            disabled={isUpdatingData || !canUpdateData}
+          >
+            {isUpdatingData ? "Updating..." : "Update Data"}
+          </button>
         </div>
 
-        <div className="app-data-toolbar">
+        <div className="app-data-toolbar futures-data-toolbar">
           <div className="app-data-chip">
             <span className="app-label">Storage</span>
             <strong>{marketData.storagePath || "market_data/futures"}</strong>
@@ -369,85 +340,53 @@ export default function FuturesBacktest() {
           </div>
           <div className="app-data-chip">
             <span className="app-label">Selected Rows</span>
-            <strong>{isMarketDataLoading ? "Loading..." : formatNumber(marketData.rowsBySymbol?.[config.symbol] || 0, 0)}</strong>
+            <strong>{isMarketDataLoading ? "Loading..." : formatNumber(selectedRows, 0)}</strong>
           </div>
+          <Field label="Update Start" className="futures-data-field">
+            <input
+              type="date"
+              value={dataConfig.startDate}
+              max={dataConfig.endDate || undefined}
+              onChange={(event) => updateDataConfig("startDate", event.target.value)}
+              className="form-control app-input"
+            />
+          </Field>
+          <Field label="Update End" className="futures-data-field">
+            <input
+              type="date"
+              value={dataConfig.endDate}
+              min={dataConfig.startDate || undefined}
+              onChange={(event) => updateDataConfig("endDate", event.target.value)}
+              className="form-control app-input"
+            />
+          </Field>
         </div>
+        {dataFeedback && (
+          <div
+            className={`${dataFeedback.startsWith("Backtest data update failed") ? "app-pnl-neg" : "app-muted"} app-kicker mt-3`}
+            style={{ whiteSpace: "pre-line" }}
+          >
+            {dataFeedback}
+          </div>
+        )}
       </div>
 
       <div className="app-panel">
         <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
-          <div className="fw-bold app-kicker">Databento Import</div>
-          <button
-            type="button"
-            className="app-btn app-btn-primary px-3"
-            onClick={importDatabentoBars}
-            disabled={isImporting}
-          >
-            {isImporting ? "Importing..." : "Import Bars"}
+          <div className="fw-bold app-kicker">Portfolio Run Builder</div>
+          <button type="button" className="app-btn app-btn-primary px-3" onClick={startRun} disabled={isRunning || !canRun}>
+            {isRunning ? "Running..." : "Start Portfolio Run"}
           </button>
         </div>
 
         <div className="row g-3">
-          <Field label="Contract" className="col-12 col-md-4">
-            <select
-              value={importConfig.symbol}
-              onChange={(event) => updateImportConfig("symbol", event.target.value)}
-              className="form-select app-input"
-            >
-              {(instruments.length ? instruments : [{ symbol: "MNQ", name: "Micro E-mini Nasdaq-100" }]).map((instrument) => (
-                <option key={instrument.symbol} value={instrument.symbol}>
-                  {instrument.symbol} - {instrument.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          <Field label="Start Date" className="col-12 col-md-4">
-            <input
-              type="date"
-              value={importConfig.startDate}
-              onChange={(event) => updateImportConfig("startDate", event.target.value)}
-              className="form-control app-input"
-            />
-          </Field>
-
-          <Field label="End Date" className="col-12 col-md-4">
-            <input
-              type="date"
-              value={importConfig.endDate}
-              onChange={(event) => updateImportConfig("endDate", event.target.value)}
-              className="form-control app-input"
-            />
-          </Field>
-
-          {importFeedback && <div className="col-12 app-muted app-kicker">{importFeedback}</div>}
-        </div>
-      </div>
-
-      <div className="app-panel">
-        <div className="fw-bold app-kicker mb-3">Backtest Settings</div>
-        <div className="row g-3">
-          <Field label="Contract" className="col-12 col-md-4 col-xl-3">
-            <select
-              value={config.symbol}
-              onChange={(event) => updateConfig("symbol", event.target.value)}
-              className="form-select app-input"
-            >
-              {(instruments.length ? instruments : [{ symbol: "MNQ", name: "Micro E-mini Nasdaq-100" }]).map((instrument) => (
-                <option key={instrument.symbol} value={instrument.symbol}>
-                  {instrument.symbol} - {instrument.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-
           <Field label="Topstep Account" className="col-12 col-md-4 col-xl-3">
             <select
               value={config.fundedProfile}
               onChange={(event) => updateConfig("fundedProfile", event.target.value)}
               className="form-select app-input"
             >
-              {(fundedProfiles.length ? fundedProfiles : [{ code: TOPSTEP_PROFILE_CODE, name: "Topstep 50K Combine" }]).map((profile) => (
+              {(fundedProfiles.length ? fundedProfiles : [{ code: TOPSTEP_RESEARCH_PROFILE, name: "Topstep 50K Research" }]).map((profile) => (
                 <option key={profile.code} value={profile.code}>
                   {profile.name}
                 </option>
@@ -455,11 +394,11 @@ export default function FuturesBacktest() {
             </select>
           </Field>
 
-          <Field label="Start Date" className="col-12 col-md-4 col-xl-3">
+          <Field label="Run Start" className="col-12 col-md-4 col-xl-3">
             <input type="date" value={config.startDate} onChange={(event) => updateConfig("startDate", event.target.value)} className="form-control app-input" />
           </Field>
 
-          <Field label="End Date" className="col-12 col-md-4 col-xl-3">
+          <Field label="Run End" className="col-12 col-md-4 col-xl-3">
             <input type="date" value={config.endDate} onChange={(event) => updateConfig("endDate", event.target.value)} className="form-control app-input" />
           </Field>
 
@@ -495,57 +434,65 @@ export default function FuturesBacktest() {
             <input type="number" value={config.profitTarget} onChange={(event) => updateConfig("profitTarget", event.target.value)} className="form-control app-input" />
           </Field>
 
+          <Field label="Max Open Positions" className="col-12 col-md-4 col-xl-3">
+            <input type="number" min="1" value={config.maxOpenPositions} onChange={(event) => updateConfig("maxOpenPositions", event.target.value)} className="form-control app-input" />
+          </Field>
+
+          <Field label="Max Aggregate Contracts" className="col-12 col-md-4 col-xl-3">
+            <input type="number" min="1" value={config.maxAggregateContracts} onChange={(event) => updateConfig("maxAggregateContracts", event.target.value)} className="form-control app-input" />
+          </Field>
+
+          <Field label="Funded Contract Units" className="col-12 col-md-4 col-xl-3">
+            <input type="number" min="0" step="0.1" value={config.maxAggregateMiniUnits} onChange={(event) => updateConfig("maxAggregateMiniUnits", event.target.value)} className="form-control app-input" />
+          </Field>
+
+          <Field label="Reference Contract" className="col-12 col-md-4 col-xl-3">
+            <select
+              value={config.referenceSymbol}
+              onChange={(event) => updateConfig("referenceSymbol", event.target.value)}
+              className="form-select app-input"
+            >
+              {(instruments.length ? instruments : MAIN_PORTFOLIO_SYMBOLS.map((symbol) => ({ symbol, name: symbol }))).map((instrument) => (
+                <option key={instrument.symbol} value={instrument.symbol}>
+                  {instrument.symbol} - {instrument.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+
           <div className="col-12 col-md-4 col-xl-3">
             <div className="app-data-chip h-100">
-              <span className="app-label">Contract Specs</span>
+              <span className="app-label">Template Specs</span>
               <strong>{selectedInstrument ? `${selectedInstrument.tickSize} tick / $${selectedInstrument.tickValue}` : "Loading"}</strong>
             </div>
           </div>
 
           <div className="col-12">
-            <div className="app-subpanel">
+            <div className="app-subpanel futures-run-builder">
               <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap">
-                <div className="fw-bold app-kicker">Selected Contract Tests</div>
-                <div className="d-flex gap-2 flex-wrap">
-                  <button type="button" className="app-btn px-3" onClick={runBatchBacktests} disabled={isRunning || !canRun || batchRunnableCount === 0}>
-                    Run Selected Separately
-                  </button>
-                  <button type="button" className="app-btn app-btn-primary px-3" onClick={runPortfolioBacktest} disabled={isRunning || !canRun || batchRunnableCount === 0}>
-                    Start Portfolio Backtest
-                  </button>
+                <div>
+                  <div className="fw-bold app-kicker">Contracts in Portfolio</div>
+                  <div className={missingDataSymbols.length ? "app-pnl-neg app-kicker" : "app-muted app-kicker"}>
+                    {selectedSymbols.length} selected{missingDataSymbols.length ? `, missing data for ${missingDataSymbols.join(", ")}` : ""}
+                  </div>
                 </div>
               </div>
-              <div className="d-flex gap-3 flex-wrap mt-3">
-                {(instruments.length ? instruments : [{ symbol: "MNQ", name: "Micro E-mini Nasdaq-100" }]).map((instrument) => {
+
+              <div className="futures-contract-selector">
+                {(instruments.length ? instruments : MAIN_PORTFOLIO_SYMBOLS.map((symbol) => ({ symbol }))).map((instrument) => {
                   const rows = Number(marketData.rowsBySymbol?.[instrument.symbol] || 0);
                   return (
                     <label className="app-toggle-row" key={instrument.symbol}>
-                      <input type="checkbox" checked={batchSymbols.includes(instrument.symbol)} onChange={() => toggleBatchSymbol(instrument.symbol)} />
+                      <input type="checkbox" checked={selectedSymbols.includes(instrument.symbol)} onChange={() => toggleBatchSymbol(instrument.symbol)} />
                       {instrument.symbol} ({isMarketDataLoading ? "..." : formatNumber(rows, 0)})
                     </label>
                   );
                 })}
               </div>
-              <div className="row g-3 mt-1">
-                <Field label="Max Open Positions" className="col-12 col-md-4">
-                  <input type="number" min="1" value={config.maxOpenPositions} onChange={(event) => updateConfig("maxOpenPositions", event.target.value)} className="form-control app-input" />
-                </Field>
-                <Field label="Max Aggregate Contracts" className="col-12 col-md-4">
-                  <input type="number" min="1" value={config.maxAggregateContracts} onChange={(event) => updateConfig("maxAggregateContracts", event.target.value)} className="form-control app-input" />
-                </Field>
-                <Field label="Funded Contract Units" className="col-12 col-md-4">
-                  <input type="number" min="0" step="0.1" value={config.maxAggregateMiniUnits} onChange={(event) => updateConfig("maxAggregateMiniUnits", event.target.value)} className="form-control app-input" />
-                </Field>
-              </div>
             </div>
           </div>
 
-          <div className="col-12 d-flex justify-content-between align-items-center gap-2 flex-wrap pt-1">
-            <div className="app-muted app-kicker">{feedback}</div>
-            <button type="button" className="app-btn app-btn-primary app-btn-run" onClick={runBacktest} disabled={isRunning || !canRun}>
-              {isRunning ? "Running..." : "Run Futures Backtest"}
-            </button>
-          </div>
+          {feedback && <div className="col-12 app-muted app-kicker">{feedback}</div>}
         </div>
       </div>
     </div>
@@ -563,6 +510,16 @@ function Field({ label, children, className = "col" }) {
   );
 }
 
+function Metric({ label, value, tone = "" }) {
+  const toneClass = tone === "pos" ? "app-pnl-pos" : tone === "neg" ? "app-pnl-neg" : "";
+  return (
+    <div className="app-data-chip">
+      <span className="app-label">{label}</span>
+      <strong className={toneClass}>{value}</strong>
+    </div>
+  );
+}
+
 async function readApiResponse(response) {
   const text = await response.text();
   if (!text) return { json: null, text: "" };
@@ -573,24 +530,51 @@ async function readApiResponse(response) {
   }
 }
 
-function defaultStartDate() {
-  const date = new Date();
-  date.setDate(date.getDate() - 2);
-  date.setFullYear(date.getFullYear() - 1);
-  return formatIsoDate(date);
+function formatUpdateErrorMessage(response, payload, request) {
+  const serverMessage = cleanErrorText(payload.json?.message || payload.json?.error || payload.text);
+  const statusLine = response.ok
+    ? "Backtest data update failed."
+    : `Backtest data update failed: HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}.`;
+  const details = [
+    statusLine,
+    `Endpoint: POST ${request.endpoint}`,
+    `Backend: ${API_BASE_URL}`,
+    `Symbols: ${request.symbols.join(", ")}`,
+    `Range: ${request.startDate} to ${request.endDate}`,
+  ];
+  if (serverMessage) {
+    details.push(`Server said: ${serverMessage}`);
+  }
+  if (response.status === 404) {
+    details.push("Likely cause: this frontend is pointed at a backend that does not have the update-backtest-data route yet.");
+  } else if (response.status === 401 || response.status === 403) {
+    details.push("Likely cause: the backend rejected the request because the current session or credentials are not allowed.");
+  } else if (response.status >= 500) {
+    details.push("Likely cause: the backend hit an internal error while pulling or merging futures data.");
+  } else if (payload.json?.success === false && !serverMessage) {
+    details.push("Likely cause: the backend returned success=false without a message.");
+  }
+  return details.join("\n");
+}
+
+function cleanErrorText(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return text.length > 500 ? `${text.slice(0, 500)}...` : text;
 }
 
 function defaultEndDate() {
   const date = new Date();
-  date.setDate(date.getDate() - 2);
-  return formatIsoDate(date);
-}
-
-function formatIsoDate(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function formatCurrency(value) {
+  const numeric = Number(value || 0);
+  const sign = numeric > 0 ? "+" : "";
+  return `${sign}$${numeric.toFixed(2)}`;
 }
 
 function formatNumber(value, decimals = 2) {
@@ -598,6 +582,17 @@ function formatNumber(value, decimals = 2) {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
+}
+
+function formatDataUpdateMessage(payload) {
+  if (!payload || !Array.isArray(payload.symbols)) {
+    return payload?.message || "Backtest data updated.";
+  }
+  const updated = payload.symbols
+    .filter((symbol) => symbol?.success)
+    .map((symbol) => `${symbol.symbol}: ${formatNumber(symbol.finalRows, 0)} rows`)
+    .join(", ");
+  return updated ? `${payload.message} ${updated}.` : payload.message || "Backtest data updated.";
 }
 
 function applyFundedProfile(config, profile) {
@@ -611,7 +606,7 @@ function applyFundedProfile(config, profile) {
     maxTrailingDrawdown: String(profile.maxTrailingDrawdown ?? config.maxTrailingDrawdown),
     dailyLossLimit: String(profile.dailyLossLimit ?? config.dailyLossLimit),
     maxRiskPerTrade: String(profile.maxRiskPerTrade ?? config.maxRiskPerTrade),
-    maxContracts: String(contractLimitForProfile(profile, config.symbol)),
+    maxContracts: String(contractLimitForProfile(profile, config.referenceSymbol)),
     profitTarget: String(profile.profitTarget ?? config.profitTarget),
     maxOpenPositions: String(profile.maxOpenPositions ?? config.maxOpenPositions),
     maxAggregateContracts: String(profile.maxAggregateContracts ?? config.maxAggregateContracts),
@@ -622,4 +617,14 @@ function applyFundedProfile(config, profile) {
 function contractLimitForProfile(profile, symbol) {
   if (!profile) return "1";
   return MICRO_SYMBOLS.has(symbol) ? profile.maxMicroContracts || profile.maxAggregateContracts || 50 : profile.maxContracts || 5;
+}
+
+function parseSymbols(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim().toUpperCase()).filter(Boolean);
+  }
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim().toUpperCase())
+    .filter(Boolean);
 }
