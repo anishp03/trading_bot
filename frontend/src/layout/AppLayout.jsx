@@ -1,5 +1,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { apiFetch } from "../utils/api.js";
+import { formatEstTime } from "../utils/time.js";
 
 const marketSections = {
   stocks: {
@@ -30,6 +32,7 @@ const navItems = [
   ...marketSections.futures.items,
   ...systemItems,
 ];
+const FUTURES_STATUS_REFRESH_MS = 30000;
 
 function navClassName({ isActive }) {
   return isActive ? "app-nav-link active" : "app-nav-link";
@@ -40,6 +43,8 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
   const navigate = useNavigate();
   const routeMarket = marketForPath(location.pathname);
   const [selectedMarket, setSelectedMarket] = useState(routeMarket || "stocks");
+  const [futuresSidebarStatus, setFuturesSidebarStatus] = useState(null);
+  const [futuresSidebarOnline, setFuturesSidebarOnline] = useState(backendMode !== "offline");
   const activeMarket = marketSections[selectedMarket] || marketSections.stocks;
   const currentPage = navItems.find((item) => item.to === location.pathname)?.label || "Trading Bot";
 
@@ -53,6 +58,39 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
     setSelectedMarket(market);
     navigate(marketSections[market].defaultPath);
   }
+
+  const loadFuturesSidebarStatus = useCallback(() => {
+    return apiFetch("/api/futures/live/sidebar-status")
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Backend returned ${response.status}`);
+        }
+        return response.json();
+      })
+      .then((data) => {
+        setFuturesSidebarOnline(true);
+        setFuturesSidebarStatus(data || null);
+        return data || null;
+      })
+      .catch((error) => {
+        console.error("Error loading futures sidebar status:", error);
+        setFuturesSidebarOnline(false);
+        setFuturesSidebarStatus(null);
+        return null;
+      });
+  }, []);
+
+  useEffect(() => {
+    if (selectedMarket !== "futures") {
+      return undefined;
+    }
+
+    loadFuturesSidebarStatus();
+    const intervalId = window.setInterval(loadFuturesSidebarStatus, FUTURES_STATUS_REFRESH_MS);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [loadFuturesSidebarStatus, selectedMarket]);
 
   return (
     <div className="app-shell">
@@ -74,6 +112,12 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
                 </NavLink>
               ))}
             </div>
+            {selectedMarket === "futures" && (
+              <FuturesSidebarStatus
+                backendOnline={backendMode !== "offline" && futuresSidebarOnline}
+                status={futuresSidebarStatus}
+              />
+            )}
           </div>
         </nav>
 
@@ -130,7 +174,13 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
         </header>
 
         <section className="app-content">
-          <Outlet />
+          <Outlet
+            context={{
+              futuresSidebarOnline,
+              futuresSidebarStatus,
+              refreshFuturesSidebarStatus: loadFuturesSidebarStatus,
+            }}
+          />
         </section>
       </main>
     </div>
@@ -145,4 +195,93 @@ function marketForPath(pathname) {
     return "stocks";
   }
   return "";
+}
+
+function FuturesSidebarStatus({ backendOnline, status }) {
+  const backendOn = Boolean(backendOnline && status?.backend?.online !== false);
+  const botOn = Boolean(backendOn && status?.bot?.running);
+  const marketDataOn = Boolean(backendOn && status?.marketData?.receiving);
+  const topstepApiOn = Boolean(backendOn && status?.topstepApi?.ready);
+  const tradingOn = Boolean(backendOn && status?.trading?.enabled);
+  const strategyOn = Boolean(backendOn && status?.strategyConfig?.active);
+  const strategy = status?.strategyConfig || {};
+  const strategyResult = strategyOn
+    ? `${formatSidebarCurrency(strategy.totalProfit)} | ${formatSidebarPercent(strategy.winRate)} | ${Number(strategy.trades || 0).toLocaleString()} trades`
+    : "Copy Backtest Strategy";
+  const cards = [
+    {
+      label: "Backend Status",
+      value: backendOn ? "ON" : "OFF",
+      tone: backendOn ? "on" : "off",
+      detail: backendOn ? "API live" : "API offline",
+    },
+    {
+      label: "Bot Status",
+      value: botOn ? "ON" : "OFF",
+      tone: botOn ? "on" : "off",
+      detail: botOn ? "Live runner active" : "Runner stopped",
+    },
+    {
+      label: "Market Data",
+      value: marketDataOn ? "ON" : "OFF",
+      tone: marketDataOn ? "on" : "off",
+      detail: marketDataOn ? `Fresh ${shortSidebarTime(status?.marketData?.lastEventAt)}` : status?.marketData?.running ? "Feed waiting" : "Feed stopped",
+    },
+    {
+      label: "TopStep API",
+      value: topstepApiOn ? "ON" : "OFF",
+      tone: topstepApiOn ? "on" : "off",
+      detail: topstepApiOn ? `Acct ${status?.topstepApi?.accountId || "--"}` : "Needs test",
+    },
+    {
+      label: "Trading Enabled",
+      value: tradingOn ? "ON" : "OFF",
+      tone: tradingOn ? "on" : "off",
+      detail: status?.trading?.marketSession?.entryWindowOpen ? "9:35-3:45 ET" : status?.trading?.marketSession?.label || "Session closed",
+    },
+    {
+      label: "Strategy Config",
+      value: strategyOn ? "ON" : "OFF",
+      tone: strategyOn ? "on" : "off",
+      detail: strategyOn ? `${shortSidebarTime(strategy.updatedAt)} | ${strategyResult}` : strategyResult,
+    },
+  ];
+
+  return (
+    <div className="app-sidebar-status-grid" aria-label="Futures live status">
+      {cards.map((card) => (
+        <div className={`app-sidebar-status-card ${card.tone}`} key={card.label}>
+          <div>
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+          </div>
+          <small>{card.detail}</small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function shortSidebarTime(value) {
+  const formatted = formatEstTime(value);
+  if (!formatted || formatted === "--") {
+    return "--";
+  }
+  return formatted.replace(/\s+(EST|EDT|ET)$/i, "");
+}
+
+function formatSidebarCurrency(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return "$0";
+  const abs = Math.abs(number);
+  if (abs >= 1000) {
+    return `${number < 0 ? "-" : ""}$${(abs / 1000).toFixed(abs >= 100000 ? 0 : 1)}k`;
+  }
+  return `${number < 0 ? "-" : ""}$${abs.toFixed(0)}`;
+}
+
+function formatSidebarPercent(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return "0.00%";
+  return `${number.toFixed(2)}%`;
 }

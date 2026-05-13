@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useOutletContext } from "react-router-dom";
 import { apiFetch, isApiNetworkError } from "../utils/api.js";
 import { EASTERN_TIME_LABEL, formatEstTime } from "../utils/time.js";
 
@@ -43,7 +44,6 @@ export default function FuturesLive() {
   const [liveMetrics, setLiveMetrics] = useState(null);
   const [liveMonitor, setLiveMonitor] = useState(null);
   const [monitorCache, setMonitorCache] = useState({});
-  const [readiness, setReadiness] = useState(null);
   const [feedback, setFeedback] = useState("");
   const [busyAction, setBusyAction] = useState("");
   const [chartTransitioning, setChartTransitioning] = useState(false);
@@ -51,6 +51,11 @@ export default function FuturesLive() {
   const [backendOnline, setBackendOnline] = useState(true);
   const chartTransitionTimer = useRef(null);
   const botStartedRef = useRef(false);
+  const {
+    futuresSidebarOnline = true,
+    futuresSidebarStatus = null,
+    refreshFuturesSidebarStatus = null,
+  } = useOutletContext() || {};
 
   const selectedProfile = useMemo(() => {
     return fundedProfiles.find((profile) => profile.code === selectedProfileCode) || FALLBACK_PROFILE;
@@ -62,10 +67,11 @@ export default function FuturesLive() {
   const monitorSymbols = DEFAULT_SYMBOLS;
   const accountPreset = PROFILE_ACCOUNTS[selectedProfileCode] || PROFILE_ACCOUNTS[DEFAULT_PROFILE];
   const symbolsCsv = monitorSymbols.join(",");
-  const backendOffline = backendOnline === false;
+  const backendOffline = backendOnline === false || futuresSidebarOnline === false || futuresSidebarStatus?.backend?.online === false;
   const botStarted = !backendOffline && Boolean(liveStatus?.running);
   const feedRunning = !backendOffline && Boolean(realtimeStatus?.running || liveMonitor?.realtimeRunning);
-  const monitorDataActive = !backendOffline && Boolean(botStarted || feedRunning);
+  const monitorFeedOpen = !backendOffline && Boolean(feedRunning || liveMonitor?.historyPolling);
+  const monitorDataActive = monitorFeedOpen;
   const graphReadiness = liveMonitor?.graphReadiness || null;
   const graphReady = monitorDataActive && Boolean(graphReadiness?.ready);
   const graphBuilding = monitorDataActive && !graphReady;
@@ -101,20 +107,10 @@ export default function FuturesLive() {
   );
   const selectedChartMarkPrice = Number(selectedSymbolState?.lastPrice || latestChartPrice(chartDisplayCandles));
   const feedStaleSeconds = Number(liveMonitor?.feedStaleSeconds ?? -1);
-  const activeSignalCount = monitorDataActive ? symbolStates.reduce((total, state) => total + Number(state.activeSignalCount || 0), 0) : 0;
-  const enabledStrategyCount = monitorDataActive ? symbolStates.reduce((total, state) => total + Number(state.enabledStrategies || 0), 0) : 0;
   const marketSession = liveMonitor?.marketSession || liveStatus?.marketSession || estimateFuturesMarketSession();
   const marketIdle = !backendOffline && !monitorDataActive;
-  const feedStatus = backendOffline
-    ? "Backend Offline"
-    : monitorDataActive ? (feedRunning ? "ProjectX Live" : dataSourceLabel(liveMonitor?.dataSource)) : "Idle / No Pull";
-  const lastRealtimeEventDisplay = shortTime(liveMonitor?.lastRealtimeEventAt || realtimeStatus?.lastEventAt);
-  const feedDetail = backendOffline
-    ? "API unreachable"
-    : monitorDataActive && feedRunning
-    ? lastRealtimeEventDisplay === "--" ? "No live data yet" : lastRealtimeEventDisplay
-    : monitorDataActive ? `${monitorSymbols.length} futures tracked` : marketSession?.detail || "No live data is being pulled";
   const metrics = botStarted ? liveMetrics : null;
+  const sidebarStartReady = Boolean(futuresSidebarStatus?.strategyConfig?.active && futuresSidebarStatus?.topstepApi?.ready);
   const realChartTrades = useMemo(
     () => buildChartTrades(displayedDecisions, selectedChartSymbol, selectedChartMarkPrice),
     [displayedDecisions, selectedChartMarkPrice, selectedChartSymbol]
@@ -130,14 +126,12 @@ export default function FuturesLive() {
     }),
     [botStarted, displayedDecisions, liveMonitor?.marketData, monitorSymbols, symbolStates]
   );
-  const canStartLiveBot = !backendOffline && Boolean(readiness?.canStartRealOrders && activeSnapshot && !liveStatus?.running);
+  const canStartLiveBot = !backendOffline && Boolean(sidebarStartReady && activeSnapshot && !liveStatus?.running);
   const controlMessage = backendOffline
     ? "Frontend is online, but the backend API is not reachable. Live data, login, and order controls will reconnect automatically when the backend comes back."
     : feedback || (botStarted ? liveStatus?.lastDecision || realtimeStatus?.lastMessage : feedRunning ? realtimeStatus?.lastMessage || liveMonitor?.realtimeMessage : "");
-  const readinessChecks = Array.isArray(readiness?.checks) ? readiness.checks : [];
-  const readyCheckCount = readinessChecks.filter((check) => check.status === "pass").length;
-  const launchTone = backendOffline ? "offline" : botControlActive ? "live" : readiness?.ready ? "ready" : "pending";
-  const launchLabel = backendOffline ? "Offline" : botStarted ? "Running" : feedRunning ? "Feed Live" : readiness?.ready ? "Ready" : marketIdle && !marketSession?.entryWindowOpen ? "Closed" : "Setup";
+  const launchTone = backendOffline ? "offline" : botControlActive ? "live" : sidebarStartReady ? "ready" : "pending";
+  const launchLabel = backendOffline ? "Offline" : botStarted ? "Running" : feedRunning ? "Feed Live" : sidebarStartReady ? "Ready" : marketIdle && !marketSession?.entryWindowOpen ? "Closed" : "Setup";
 
   useEffect(() => {
     loadFundedProfiles();
@@ -183,7 +177,6 @@ export default function FuturesLive() {
     loadLiveSnapshot();
     loadLiveMetrics();
     loadLiveMonitor();
-    loadReadiness();
   }
 
   function noteBackendResponse(response) {
@@ -318,23 +311,6 @@ export default function FuturesLive() {
       });
   }
 
-  function loadReadiness() {
-    const params = new URLSearchParams({ symbols: symbolsCsv || DEFAULT_SYMBOLS.join(","), fundedProfile: selectedProfileCode });
-    apiFetch(`/api/futures/live/readiness?${params.toString()}`)
-      .then(noteBackendResponse)
-      .then((response) => response.json())
-      .then((data) => setReadiness(data || null))
-      .catch((error) => {
-        noteBackendError("Error loading live readiness:", error);
-        setReadiness({
-          canStartSimulated: false,
-          ready: false,
-          message: isApiNetworkError(error) ? "Backend API is offline. The frontend can stay open, but live trading controls are paused." : "Readiness check is unavailable.",
-          checks: [{ key: "readiness-api", label: "Backend API", status: "fail", detail: isApiNetworkError(error) ? "No backend response at the configured API URL." : "Backend readiness endpoint did not respond.", blocking: true }],
-        });
-      });
-  }
-
   function selectChartSymbol(symbol) {
     if (symbol === selectedChartSymbol) return;
     transitionChart(() => setSelectedChartSymbol(symbol));
@@ -364,6 +340,7 @@ export default function FuturesLive() {
       }
       setSnapshotState(payload.json || null);
       setFeedback(payload.json?.message || "Live Strategy updated.");
+      refreshFuturesSidebarStatus?.();
       refreshLiveData();
     });
   }
@@ -373,9 +350,10 @@ export default function FuturesLive() {
       if (!activeSnapshot) {
         throw new Error("Copy the Backtest Strategy into the Live Strategy slot before starting the live bot.");
       }
-      if (!readiness?.canStartRealOrders) {
-        throw new Error(readiness?.message || "Resolve pre-flight checks before starting the live bot.");
-      }
+      const freshSidebarStatus = typeof refreshFuturesSidebarStatus === "function"
+        ? await refreshFuturesSidebarStatus()
+        : futuresSidebarStatus;
+      validateSidebarStartStatus(freshSidebarStatus);
       const openingSymbol = monitorSymbols[0] || "MNQ";
       setMonitorCache({});
       setLiveMonitor(null);
@@ -399,6 +377,7 @@ export default function FuturesLive() {
       }
       setLiveStatus(payload.json?.status || null);
       setFeedback(payload.json?.message || "Live bot started with TopstepX 150K practice order automation.");
+      refreshFuturesSidebarStatus?.();
       refreshLiveData();
     });
   }
@@ -419,8 +398,21 @@ export default function FuturesLive() {
         }
       }
       setFeedback(payload.json?.message || "Live bot stopped.");
+      refreshFuturesSidebarStatus?.();
       refreshLiveData();
     });
+  }
+
+  function validateSidebarStartStatus(status) {
+    if (!status?.backend?.online) {
+      throw new Error("Backend Status is OFF in the sidebar. Start Live Bot will unlock when the backend status is back on.");
+    }
+    if (!status?.strategyConfig?.active) {
+      throw new Error("Strategy Config is OFF in the sidebar. Copy Backtest Strategy into the Live Strategy slot first.");
+    }
+    if (!status?.topstepApi?.ready) {
+      throw new Error("TopStep API is OFF in the sidebar. Save and test the TopStep API connection first.");
+    }
   }
 
   async function runAction(action, handler) {
@@ -457,9 +449,6 @@ export default function FuturesLive() {
             </div>
             <div className="futures-launch-title-row">
               <div className="fw-bold app-kicker">Live Controls</div>
-              <span className={readiness?.ready ? "futures-launch-count ready" : "futures-launch-count"}>
-                {readinessChecks.length ? `${readyCheckCount}/${readinessChecks.length}` : "Checking"}
-              </span>
             </div>
             {controlMessage && <div className="app-muted app-kicker mt-1">{controlMessage}</div>}
           </div>
@@ -512,7 +501,6 @@ export default function FuturesLive() {
           </div>
         </div>
 
-        <ReadinessPanel readiness={readiness} />
       </section>
 
       <section className="app-panel futures-monitor-panel">
@@ -536,13 +524,13 @@ export default function FuturesLive() {
 
         {marketIdle && !backendOffline && (
           <div className="futures-live-data-notice idle">
-            {marketSession?.entryWindowOpen ? "Live bot is idle." : `${marketSession?.label || "Market Closed"}: ${marketSession?.detail || "No live data is being pulled."}`}
+            Market data feed is idle. The monitor will reopen automatically when ProjectX realtime data starts again.
           </div>
         )}
 
-        {botStarted && marketSession && !marketSession.entryWindowOpen && (
+        {monitorDataActive && marketSession && !marketSession.entryWindowOpen && (
           <div className="futures-live-data-notice">
-            {marketSession.label}: {marketSession.detail} New practice entries are blocked until the regular session is open.
+            {marketSession.label}: {marketSession.detail} Market data stays visible while the ProjectX feed is still running; new practice entries remain blocked.
           </div>
         )}
 
@@ -606,16 +594,11 @@ export default function FuturesLive() {
         <TradesTable trades={liveTrades} mode="live" />
       </section>
 
-      <section className="app-live-grid">
+      <section className="app-live-grid futures-live-summary-grid">
         <MetricCard label="Current PnL" value={formatCurrency(metrics?.currentPnl)} accent={Number(metrics?.currentPnl || 0)} />
-        <MetricCard label="Return %" value={formatPct(metrics?.returnPct)} accent={Number(metrics?.returnPct || 0)} />
-        <MetricCard label="Win Rate" value={formatPct(metrics?.winRate)} />
-        <MetricCard label="Trades" value={String(metrics?.numberOfTrades || 0)} detail={`${metrics?.openTrades || 0} open`} />
         <MetricCard label="Drawdown" value={formatCurrency(-Math.abs(Number(metrics?.drawdown || 0)))} accent={-Math.abs(Number(metrics?.drawdown || 0))} />
-        <MetricCard label="Decisions" value={`${metrics?.accepted || 0}/${metrics?.decisions || 0}`} detail={`${metrics?.rejected || 0} rejected`} />
-        <MetricCard label="Account" value={formatCompactCurrency(metrics?.accountSize || selectedProfile.accountSize)} detail={accountPreset.label} />
-        <MetricCard label="Feed Status" value={feedStatus} detail={feedDetail} />
-        <MetricCard label="Active Signals" value={String(activeSignalCount)} detail={`${enabledStrategyCount} enabled strategies`} />
+        <MetricCard label="Return %" value={formatPct(metrics?.returnPct)} accent={Number(metrics?.returnPct || 0)} />
+        <MetricCard label="Trades" value={String(metrics?.numberOfTrades || 0)} />
       </section>
 
       <section className="app-panel">
@@ -631,63 +614,14 @@ export default function FuturesLive() {
   );
 }
 
-function ReadinessPanel({ readiness }) {
-  const checks = Array.isArray(readiness?.checks) ? readiness.checks : [];
-  const blockingChecks = checks.filter((check) => check.blocking && check.status !== "pass");
-  const readyChecks = checks.filter((check) => check.status === "pass").length;
-  const title = readiness?.liveRunning ? "Live bot running" : readiness?.ready ? "Ready to start" : "Pre-flight needed";
-  const detail = readiness?.message || "Checking live bot readiness.";
-
-  return (
-    <div className={readiness?.ready ? "futures-readiness-panel ready" : "futures-readiness-panel"}>
-      <div className="futures-readiness-header">
-        <div className="futures-readiness-copy">
-          <span>Start Readiness</span>
-          <strong>{title}</strong>
-          <small>{detail}</small>
-        </div>
-        <span className={readiness?.ready ? "futures-readiness-total ready" : "futures-readiness-total"}>
-          {checks.length ? `${readyChecks}/${checks.length} ready` : "Checking"}
-        </span>
-      </div>
-      <div className="futures-readiness-list">
-        {checks.map((check) => (
-          <div className={`futures-readiness-item ${check.status || "pending"}`} key={check.key || check.label}>
-            <span className="futures-readiness-dot" aria-hidden="true" />
-            <div className="futures-readiness-item-copy">
-              <div className="futures-readiness-item-line">
-                <strong>{check.label}</strong>
-                <em>{readinessStatusLabel(check.status)}</em>
-              </div>
-              <small>{check.detail}</small>
-            </div>
-          </div>
-        ))}
-      </div>
-      {blockingChecks.length > 0 && (
-        <div className="futures-readiness-blocker">
-          {blockingChecks[0].detail || "Resolve blocking checks before starting."}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
   const activeCount = trackers.filter((tracker) => tracker.liveTrades > 0).length;
   const totalPnl = trackers.reduce((total, tracker) => total + Number(tracker.pnl || 0), 0);
-  const trackerTiles = [...trackers, {
-    symbol: "NEXT",
-    reserved: true,
-    lastPrice: 0,
-    pnl: 0,
-    changePct: 0,
-    totalTrades: 0,
-    liveTrades: 0,
-    signal: "Reserved",
-    signalTone: "idle",
-    detail: "Future equity slot",
-  }];
+  const trackerTiles = [
+    ...trackers,
+    reservedTrackerTile("NEXT", "Future equity slot"),
+    reservedTrackerTile("NEXT 2", "Future equity slot"),
+  ];
   return (
     <div className="futures-bot-tracker-panel">
       <div className="futures-bot-tracker-header">
@@ -730,6 +664,21 @@ function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
       </div>
     </div>
   );
+}
+
+function reservedTrackerTile(symbol, detail) {
+  return {
+    symbol,
+    reserved: true,
+    lastPrice: 0,
+    pnl: 0,
+    changePct: 0,
+    totalTrades: 0,
+    liveTrades: 0,
+    signal: "Reserved",
+    signalTone: "idle",
+    detail,
+  };
 }
 
 function FuturesMarketChart({
@@ -1006,16 +955,16 @@ function FuturesMarketChart({
     const graphIsBuilding = botStarted && graphReadiness && !graphReadiness.ready;
     const emptyTitle = backendOffline
       ? "Backend offline."
-      : marketIdle ? (marketSession?.entryWindowOpen ? "Feed idle." : "Market closed.") : graphIsBuilding ? "Currently building." : botStarted ? "Give it a bit." : "Start the live bot.";
+      : marketIdle ? "Feed stopped." : graphIsBuilding ? "Currently building." : botStarted ? "Waiting for data." : "Start the live bot.";
     const emptyMessage = graphIsBuilding
       ? "The graph will stay hidden until ProjectX history is ready for every tracked futures symbol and every timeframe."
       : backendOffline
-      ? "No backend API is reachable right now, so live candles, trades, and readiness checks are paused while the frontend remains available."
+      ? "No backend API is reachable right now, so live candles, trades, and controls are paused while the frontend remains available."
       : marketIdle
-      ? `${marketSession?.label || "Market Closed"}: ${marketSession?.detail || "No live data is being pulled while the bot is idle."}`
+      ? "ProjectX realtime data is not running right now. The monitor will open again when the feed starts."
       : botStarted
       ? marketSession && !marketSession.entryWindowOpen
-        ? `${marketSession.label}: live candles will sync when the entry window opens.`
+        ? `${marketSession.label}: entries are blocked, but the chart will stay open while ProjectX continues sending candles.`
         : `The ${symbol} graph infrastructure is syncing ProjectX candle data and will update here automatically.`
       : "The futures graph will begin building after the live feed starts.";
     return (
@@ -1073,7 +1022,7 @@ function FuturesMarketChart({
             <span>{symbol}</span>
             <span>{timeframeLabel(timeframe)}</span>
             {graphTotalItems > 0 && <span>{graphReadyItems}/{graphTotalItems} ready</span>}
-            <span>{backendOffline ? "Backend offline" : marketIdle ? "No live pull" : warmupPending ? "Warmup syncing" : botStarted ? "Feed active" : "Feed idle"}</span>
+            <span>{backendOffline ? "Backend offline" : marketIdle ? "Feed stopped" : warmupPending ? "Warmup syncing" : botStarted ? "Feed active" : "Feed idle"}</span>
           </div>
         </div>
       </div>
@@ -1760,20 +1709,25 @@ function estimateFuturesMarketSession(now = new Date()) {
   const weekendClosed = weekday === 6 || (weekday === 5 && minuteOfDay >= 17 * 60) || (weekday === 0 && minuteOfDay < 18 * 60);
   const globexOpen = !dailyBreak && !weekendClosed;
   const regularSessionOpen = weekday >= 1 && weekday <= 5 && minuteOfDay >= 9 * 60 + 30 && minuteOfDay < 16 * 60;
+  const entryWindowOpen = weekday >= 1 && weekday <= 5 && minuteOfDay >= 9 * 60 + 35 && minuteOfDay < 15 * 60 + 45;
 
   if (!globexOpen) {
     return {
       label: "Market Closed",
       detail: "Futures are outside the normal Globex availability window, so the 24/7 frontend is idle.",
       entryWindowOpen: false,
+      tradingEnabled: false,
     };
   }
 
-  if (!regularSessionOpen) {
+  if (!entryWindowOpen) {
     return {
-      label: "Entry Window Closed",
-      detail: "Futures may be trading, but the live bot is outside its regular-session entry window and should sit idle.",
+      label: regularSessionOpen ? "Entry Window Closed" : "Market Closed",
+      detail: regularSessionOpen
+        ? "New entries are disabled outside the 9:35 AM-3:45 PM ET NY-session trade window."
+        : "Futures may be trading, but the live bot is outside its regular-session entry window and should sit idle.",
       entryWindowOpen: false,
+      tradingEnabled: false,
     };
   }
 
@@ -1781,6 +1735,7 @@ function estimateFuturesMarketSession(now = new Date()) {
     label: "Market Open",
     detail: "Regular session is open. Live data appears once the backend feed is running.",
     entryWindowOpen: true,
+    tradingEnabled: true,
   };
 }
 
@@ -1799,13 +1754,6 @@ function easternDateParts(date) {
     hour: Number(values.hour === "24" ? 0 : values.hour || 0),
     minute: Number(values.minute || 0),
   };
-}
-
-function readinessStatusLabel(value) {
-  if (value === "pass") return "Ready";
-  if (value === "warn") return "Watch";
-  if (value === "fail") return "Block";
-  return "Check";
 }
 
 function monitorLimitForTimeframe(value) {
