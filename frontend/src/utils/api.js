@@ -48,11 +48,6 @@ export function apiUrl(path) {
 
 export function apiFetch(path, options = {}) {
   const headers = new Headers(options.headers || {});
-  const auth = readStoredAuth();
-
-  if (auth?.token && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${auth.token}`);
-  }
 
   return fetch(apiUrl(path), {
     ...options,
