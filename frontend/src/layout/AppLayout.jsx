@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "../utils/api.js";
+import { apiFetch, readApiErrorMessage } from "../utils/api.js";
 import { formatEstTime } from "../utils/time.js";
 
 const marketSections = {
@@ -45,6 +45,7 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
   const [selectedMarket, setSelectedMarket] = useState(routeMarket || "stocks");
   const [futuresSidebarStatus, setFuturesSidebarStatus] = useState(null);
   const [futuresSidebarOnline, setFuturesSidebarOnline] = useState(backendMode !== "offline");
+  const [backendUpdate, setBackendUpdate] = useState({ busy: false, message: "" });
   const activeMarket = marketSections[selectedMarket] || marketSections.stocks;
   const currentPage = navItems.find((item) => item.to === location.pathname)?.label || "Trading Bot";
 
@@ -92,10 +93,35 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
     };
   }, [loadFuturesSidebarStatus, selectedMarket]);
 
-  function handleUpdateBackendClick() {
+  async function handleUpdateBackendClick() {
+    if (backendUpdate.busy) return;
+
     const confirmed = window.confirm("Run the backend update now?");
     if (!confirmed) return;
-    window.alert("Backend update confirmed. The update command is not connected yet.");
+
+    setBackendUpdate({
+      busy: true,
+      message: "Starting update...",
+    });
+
+    try {
+      const response = await apiFetch("/api/system/backend-update", { method: "POST" });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        throw new Error(payload.json?.message || payload.text || "Backend update failed to start.");
+      }
+
+      setBackendUpdate({
+        busy: false,
+        message: payload.json?.message || "Backend update started. The API may briefly disconnect.",
+      });
+    } catch (error) {
+      console.error("Error starting backend update:", error);
+      setBackendUpdate({
+        busy: false,
+        message: error.message || "Backend update failed to start.",
+      });
+    }
   }
 
   return (
@@ -138,9 +164,15 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
               ))}
             </div>
           </div>
-          <button type="button" className="app-update-backend-btn" onClick={handleUpdateBackendClick}>
-            Update Backend
+          <button
+            type="button"
+            className="app-update-backend-btn"
+            onClick={handleUpdateBackendClick}
+            disabled={backendUpdate.busy}
+          >
+            {backendUpdate.busy ? "Updating..." : "Update Backend"}
           </button>
+          {backendUpdate.message && <div className="app-update-backend-status">{backendUpdate.message}</div>}
         </div>
       </aside>
 
@@ -195,6 +227,23 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
   );
 }
 
+async function readJsonResponse(response) {
+  if (!response.ok) {
+    return { json: null, text: await readApiErrorMessage(response, "Backend update failed to start.") };
+  }
+
+  const text = await response.text();
+  if (!text) {
+    return { json: null, text: "" };
+  }
+
+  try {
+    return { json: JSON.parse(text), text };
+  } catch {
+    return { json: null, text };
+  }
+}
+
 function marketForPath(pathname) {
   if (marketSections.futures.items.some((item) => item.to === pathname)) {
     return "futures";
@@ -233,7 +282,7 @@ function FuturesSidebarStatus({ backendOnline, status }) {
       label: "Strategy Config",
       value: strategyOn ? "ON" : "OFF",
       tone: strategyOn ? "on" : "off",
-      detail: strategyOn ? `${shortSidebarTime(strategy.updatedAt)} | ${strategyResult}` : strategyResult,
+      detail: strategyResult,
     },
     {
       label: "Bot Status",

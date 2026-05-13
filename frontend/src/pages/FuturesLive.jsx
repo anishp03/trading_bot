@@ -12,24 +12,23 @@ const TIMEFRAME_OPTIONS = [
 ];
 const LIVE_MONITOR_REFRESH_MS = 30000;
 const MIN_OPENING_CHART_BARS = 24;
-const DEFAULT_PROFILE = "TOPSTEP_50K_RESEARCH";
+const DEFAULT_PROFILE = "TOPSTEP_150K_PRACTICE";
 const PROFILE_ACCOUNTS = {
-  TOPSTEP_50K_RESEARCH: { label: "50K Research Paper", accountId: "22539378" },
   TOPSTEP_150K_PRACTICE: { label: "150K Practice", accountId: "22539378" },
   TOPSTEP_50K_COMBINE: { label: "50K Combine", accountId: "22529998" },
 };
 const FALLBACK_PROFILE = {
-  code: "TOPSTEP_50K_RESEARCH",
-  name: "Topstep 50K Research",
-  accountSize: 50000,
-  maxTrailingDrawdown: 2000,
-  dailyLossLimit: 1000,
-  maxRiskPerTrade: 700,
-  maxContracts: 5,
-  maxMicroContracts: 50,
+  code: "TOPSTEP_150K_PRACTICE",
+  name: "Topstep 150K Practice",
+  accountSize: 150000,
+  maxTrailingDrawdown: 4500,
+  dailyLossLimit: 3000,
+  maxRiskPerTrade: 900,
+  maxContracts: 15,
+  maxMicroContracts: 150,
   maxOpenPositions: 3,
-  maxAggregateContracts: 50,
-  maxAggregateMiniUnits: 5,
+  maxAggregateContracts: 150,
+  maxAggregateMiniUnits: 15,
 };
 
 export default function FuturesLive() {
@@ -77,7 +76,8 @@ export default function FuturesLive() {
   const graphBuilding = monitorDataActive && !graphReady;
   const botControlActive = Boolean(liveStatus?.running || realtimeStatus?.running || liveMonitor?.realtimeRunning);
   const displayedDecisions = useMemo(() => (botStarted ? liveDecisions : []), [botStarted, liveDecisions]);
-  const liveTrades = displayedDecisions.filter((decision) => isEntryDecision(decision));
+  const displayTradeRows = useMemo(() => mergeLiveTradeDecisions(displayedDecisions), [displayedDecisions]);
+  const liveTrades = displayTradeRows.filter((decision) => isEntryDecision(decision) && !isClosedTradeDecision(decision));
   const symbolStates = useMemo(() => (Array.isArray(liveMonitor?.symbolStates) ? liveMonitor.symbolStates : []), [liveMonitor?.symbolStates]);
   const displayMonitor = useMemo(
     () => resolveDisplayMonitor(liveMonitor, monitorCache, selectedTimeframe, monitorDataActive),
@@ -112,19 +112,19 @@ export default function FuturesLive() {
   const metrics = botStarted ? liveMetrics : null;
   const sidebarStartReady = Boolean(futuresSidebarStatus?.strategyConfig?.active && futuresSidebarStatus?.topstepApi?.ready);
   const realChartTrades = useMemo(
-    () => buildChartTrades(displayedDecisions, selectedChartSymbol, selectedChartMarkPrice),
-    [displayedDecisions, selectedChartMarkPrice, selectedChartSymbol]
+    () => buildChartTrades(displayTradeRows, selectedChartSymbol, selectedChartMarkPrice),
+    [displayTradeRows, selectedChartMarkPrice, selectedChartSymbol]
   );
   const chartTrades = realChartTrades;
   const botTrackers = useMemo(
     () => buildSymbolTrackers({
       symbols: monitorSymbols,
       states: symbolStates,
-      decisions: displayedDecisions,
+      decisions: displayTradeRows,
       marketData: liveMonitor?.marketData || {},
       botStarted,
     }),
-    [botStarted, displayedDecisions, liveMonitor?.marketData, monitorSymbols, symbolStates]
+    [botStarted, displayTradeRows, liveMonitor?.marketData, monitorSymbols, symbolStates]
   );
   const canStartLiveBot = !backendOffline && Boolean(sidebarStartReady && activeSnapshot && !liveStatus?.running);
   const controlMessage = feedback || (botStarted ? liveStatus?.lastDecision || realtimeStatus?.lastMessage : feedRunning ? realtimeStatus?.lastMessage || liveMonitor?.realtimeMessage : "");
@@ -201,7 +201,7 @@ export default function FuturesLive() {
       .then((response) => response.json())
       .then((data) => {
         const topstepProfiles = Array.isArray(data)
-          ? data.filter((profile) => profile.code === "TOPSTEP_50K_RESEARCH" || profile.code === "TOPSTEP_150K_PRACTICE" || profile.code === "TOPSTEP_50K_COMBINE")
+          ? data.filter((profile) => profile.code === "TOPSTEP_150K_PRACTICE" || profile.code === "TOPSTEP_50K_COMBINE")
           : [];
         setFundedProfiles(topstepProfiles.length ? topstepProfiles : [FALLBACK_PROFILE]);
       })
@@ -592,9 +592,9 @@ export default function FuturesLive() {
           <div>
             <div className="fw-bold app-kicker">All Trades</div>
           </div>
-          <span className="app-badge app-neutral-badge">{displayedDecisions.length} rows</span>
+          <span className="app-badge app-neutral-badge">{displayTradeRows.length} rows</span>
         </div>
-        <TradesTable trades={displayedDecisions} mode="all" />
+        <TradesTable trades={displayTradeRows} mode="all" />
       </section>
     </div>
   );
@@ -1487,6 +1487,60 @@ function quantileSorted(values, quantile) {
   return values[lowerIndex] * (1 - weight) + values[upperIndex] * weight;
 }
 
+function mergeLiveTradeDecisions(decisions) {
+  const rows = Array.isArray(decisions) ? decisions : [];
+  const exitsByEntryKey = new Map();
+  rows.forEach((decision) => {
+    if (!isClosedTradeDecision(decision)) return;
+    exitsByEntryKey.set(tradeEntryKey(decision), decision);
+  });
+
+  const usedExitIds = new Set();
+  const mergedRows = rows
+    .filter((decision) => !isClosedTradeDecision(decision))
+    .map((decision) => {
+      if (!isEntryDecision(decision)) return decision;
+      const exit = exitsByEntryKey.get(tradeExitLookupKey(decision));
+      if (!exit) return decision;
+      usedExitIds.add(exit.id);
+      return {
+        ...decision,
+        status: exit.status || decision.status,
+        exitPrice: exit.exitPrice,
+        pnl: exit.pnl,
+        mfe: exit.mfe,
+        mae: exit.mae,
+        exitReason: exit.exitReason || exit.reason,
+        reason: exit.reason || decision.reason,
+        exitTime: exit.entryTime || exit.createdAt,
+        closedDecisionId: exit.id,
+      };
+    });
+
+  rows.forEach((decision) => {
+    if (isClosedTradeDecision(decision) && !usedExitIds.has(decision.id)) {
+      mergedRows.push(decision);
+    }
+  });
+  return mergedRows;
+}
+
+function tradeEntryKey(decision) {
+  return [
+    String(decision?.symbol || "").toUpperCase(),
+    String(decision?.strategyCode || "").toUpperCase(),
+    String(decision?.signalTime || decision?.entryTime || ""),
+  ].join("|");
+}
+
+function tradeExitLookupKey(decision) {
+  return [
+    String(decision?.symbol || "").toUpperCase(),
+    String(decision?.strategyCode || "").toUpperCase(),
+    String(decision?.entryTime || decision?.signalTime || ""),
+  ].join("|");
+}
+
 function buildChartTrades(decisions, symbol, latestPrice) {
   const selectedSymbol = String(symbol || "").toUpperCase();
   const entries = (Array.isArray(decisions) ? decisions : [])
@@ -1671,7 +1725,7 @@ async function readApiResponse(response) {
 
 function statusClass(status) {
   const value = String(status || "");
-  if (value.includes("ACCEPTED") || value.includes("EXIT") || value.includes("FLAT")) return "app-badge app-positive-badge";
+  if (value.includes("ACCEPTED") || value.includes("SUBMITTED") || value.includes("EXIT") || value.includes("FLAT")) return "app-badge app-positive-badge";
   if (value.includes("REJECTED") || value.includes("BLOCK")) return "app-badge app-risk-badge";
   return "app-badge app-neutral-badge";
 }
