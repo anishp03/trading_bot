@@ -380,13 +380,16 @@ export default function FuturesBacktest() {
         </div>
 
         <div className="row g-3">
-          <Field label="Topstep Account" className="col-12 col-md-4 col-xl-3">
+          <Field label="Funded Rule Template" className="col-12 col-md-4 col-xl-3">
             <select
               value={config.fundedProfile}
               onChange={(event) => updateConfig("fundedProfile", event.target.value)}
               className="form-select app-input"
             >
-              {(fundedProfiles.length ? fundedProfiles : [{ code: TOPSTEP_RESEARCH_PROFILE, name: "Topstep 50K Research" }]).map((profile) => (
+              {(fundedProfiles.length ? fundedProfiles : [
+                { code: "TOPSTEP_150K_RESEARCH", name: "Topstep 150K Research" },
+                { code: TOPSTEP_RESEARCH_PROFILE, name: "Topstep 50K Research" },
+              ]).map((profile) => (
                 <option key={profile.code} value={profile.code}>
                   {profile.name}
                 </option>
@@ -430,7 +433,7 @@ export default function FuturesBacktest() {
             <input type="number" step="0.25" value={config.slippageTicks} onChange={(event) => updateConfig("slippageTicks", event.target.value)} className="form-control app-input" />
           </Field>
 
-          <Field label="Profit Target ($)" className="col-12 col-md-4 col-xl-3">
+          <Field label="Profit Target Stop ($)" className="col-12 col-md-4 col-xl-3">
             <input type="number" value={config.profitTarget} onChange={(event) => updateConfig("profitTarget", event.target.value)} className="form-control app-input" />
           </Field>
 
@@ -596,7 +599,7 @@ function formatDataUpdateMessage(payload) {
 }
 
 function applyFundedProfile(config, profile) {
-  if (!profile || profile.code === "CUSTOM") {
+  if (!profile) {
     return config;
   }
   return {

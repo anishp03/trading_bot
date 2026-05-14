@@ -240,6 +240,8 @@ function toPreviewRun(run) {
     trades: run.trades,
     profitFactor: run.profitFactor,
     drawdown: run.maxDrawdownPct,
+    ruleViolation: run.ruleViolation,
+    ruleMessage: run.ruleMessage,
   };
 }
 

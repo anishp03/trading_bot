@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatEstTime } from "../utils/time.js";
 
 export default function RunPreview({
@@ -14,6 +14,22 @@ export default function RunPreview({
   const [tradeSort, setTradeSort] = useState("largestWin");
   const [startDateFilter, setStartDateFilter] = useState("");
   const [endDateFilter, setEndDateFilter] = useState("");
+  const activeFilterCount = [
+    outcomeFilter !== "all",
+    sideFilter !== "all",
+    strategyFilter !== "all",
+    startDateFilter,
+    endDateFilter,
+  ].filter(Boolean).length;
+
+  useEffect(() => {
+    setOutcomeFilter("all");
+    setSideFilter("all");
+    setStrategyFilter("all");
+    setTradeSort("largestWin");
+    setStartDateFilter("");
+    setEndDateFilter("");
+  }, [run?.id]);
 
   const strategies = useMemo(() => uniqueTradeValues(trades, "strategyName"), [trades]);
 
@@ -76,6 +92,11 @@ export default function RunPreview({
           <MetricCard title="Trades" value={run?.trades ?? "--"} />
           <MetricCard title="Profit Factor" value={run?.profitFactor ?? "--"} />
           <MetricCard title="Drawdown" value={run?.drawdown == null ? "--" : `${formatNumber(run.drawdown)}%`} />
+          <MetricCard
+            title="Rule Status"
+            value={formatRuleStatus(run)}
+            accent={run?.ruleViolation ? -1 : 0}
+          />
         </div>
       </div>
 
@@ -87,9 +108,20 @@ export default function RunPreview({
               <div className="app-muted app-kicker">
                 {Array.isArray(trades)
                   ? `Showing ${filteredTrades.length} of ${trades.length} trades.`
-                  : "No per-trade data attached to this run yet."}
+                : "No per-trade data attached to this run yet."}
               </div>
             </div>
+            {activeFilterCount > 0 && (
+              <button type="button" className="app-btn app-btn-small px-3" onClick={() => {
+                setOutcomeFilter("all");
+                setSideFilter("all");
+                setStrategyFilter("all");
+                setStartDateFilter("");
+                setEndDateFilter("");
+              }}>
+                Clear Filters
+              </button>
+            )}
           </div>
 
           {Array.isArray(trades) && (
@@ -231,6 +263,12 @@ function MetricCard({ title, value, accent = 0 }) {
       </div>
     </div>
   );
+}
+
+function formatRuleStatus(run) {
+  const message = String(run?.ruleMessage || "").trim();
+  if (!message) return "--";
+  return message.length > 34 ? `${message.slice(0, 31)}...` : message;
 }
 
 function uniqueTradeValues(trades, key) {
