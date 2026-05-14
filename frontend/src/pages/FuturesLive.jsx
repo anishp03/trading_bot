@@ -42,6 +42,7 @@ export default function FuturesLive() {
   const [snapshotState, setSnapshotState] = useState(null);
   const [liveDecisions, setLiveDecisions] = useState([]);
   const [liveDecisionHistory, setLiveDecisionHistory] = useState([]);
+  const [liveOrders, setLiveOrders] = useState([]);
   const [liveThinking, setLiveThinking] = useState([]);
   const [, setLiveThinkingStatus] = useState("idle");
   const [observedThinking, setObservedThinking] = useState([]);
@@ -56,7 +57,6 @@ export default function FuturesLive() {
   const [backendOnline, setBackendOnline] = useState(true);
   const chartTransitionTimer = useRef(null);
   const botStartedRef = useRef(false);
-  const observedThinkingKeys = useRef(new Set());
   const observedThinkingSession = useRef(0);
   const requestControllers = useRef(new Map());
   const decisionSidecarSignature = useRef("");
@@ -81,6 +81,7 @@ export default function FuturesLive() {
   const liveStrategySymbols = snapshotSymbols.length ? snapshotSymbols : DEFAULT_SYMBOLS;
   const monitorSymbols = DEFAULT_SYMBOLS;
   const accountPreset = PROFILE_ACCOUNTS[selectedProfile.code] || PROFILE_ACCOUNTS[DEFAULT_PROFILE];
+  const accountScopeId = String(accountPreset.accountId || activeSnapshot?.practiceAccountId || "").trim();
   const symbolsCsv = monitorSymbols.join(",");
   const backendOffline = backendOnline === false || futuresSidebarOnline === false || futuresSidebarStatus?.backend?.online === false;
   const botStarted = !backendOffline && Boolean(liveStatus?.running);
@@ -98,15 +99,23 @@ export default function FuturesLive() {
     () => augmentTopstepMetricsWithMarks(liveMetrics, symbolStates),
     [liveMetrics, symbolStates]
   );
-  const brokerSnapshot = augmentedLiveMetrics?.broker?.success ? augmentedLiveMetrics.broker : null;
+  const accountScopedMetrics = useMemo(
+    () => scopeBrokerMetricsToAccount(augmentedLiveMetrics, accountScopeId, selectedProfile.accountSize),
+    [accountScopeId, augmentedLiveMetrics, selectedProfile.accountSize]
+  );
+  const brokerSnapshot = accountScopedMetrics?.broker?.success ? accountScopedMetrics.broker : null;
   const brokerAuthoritative = Boolean(brokerSnapshot);
+  const localTradeProvenance = useMemo(
+    () => buildLocalTradeProvenance(liveDecisionHistory, liveOrders, accountScopeId),
+    [accountScopeId, liveDecisionHistory, liveOrders]
+  );
   const brokerOpenTradeRows = useMemo(
-    () => buildBrokerOpenTradeRows(brokerSnapshot?.positions, liveDecisionHistory),
-    [brokerSnapshot, liveDecisionHistory]
+    () => buildBrokerOpenTradeRows(brokerSnapshot?.positions, localTradeProvenance),
+    [brokerSnapshot, localTradeProvenance]
   );
   const brokerClosedTradeRows = useMemo(
-    () => buildBrokerClosedTradeRows(brokerSnapshot?.trades, liveDecisionHistory),
-    [brokerSnapshot, liveDecisionHistory]
+    () => buildBrokerClosedTradeRows(brokerSnapshot?.trades, localTradeProvenance),
+    [brokerSnapshot, localTradeProvenance]
   );
   const localLiveTrades = displayTradeRows.filter((decision) => isEntryDecision(decision) && !isClosedTradeDecision(decision));
   const liveTrades = brokerAuthoritative ? brokerOpenTradeRows : localLiveTrades;
@@ -141,7 +150,7 @@ export default function FuturesLive() {
   const feedStaleSeconds = Number(liveMonitor?.feedStaleSeconds ?? -1);
   const marketSession = liveMonitor?.marketSession || liveStatus?.marketSession || estimateFuturesMarketSession();
   const marketIdle = !backendOffline && !monitorDataActive;
-  const metrics = brokerAuthoritative ? augmentedLiveMetrics : (botStarted ? liveMetrics : null);
+  const metrics = accountScopedMetrics;
   const sidebarStartReady = Boolean(futuresSidebarStatus?.strategyConfig?.active && futuresSidebarStatus?.topstepApi?.ready);
   const brokerChartTradeRows = useMemo(
     () => brokerAuthoritative ? [...brokerClosedTradeRows, ...brokerOpenTradeRows] : [],
@@ -220,24 +229,23 @@ export default function FuturesLive() {
 
   useEffect(() => {
     refreshLiveData();
-  }, [symbolsCsv, selectedTimeframe, selectedProfileCode]);
+  }, [symbolsCsv, selectedTimeframe, selectedProfileCode, accountScopeId]);
 
   useEffect(() => {
     loadLiveMarks();
     const intervalId = window.setInterval(loadLiveMarks, LIVE_MARKS_REFRESH_MS);
     return () => window.clearInterval(intervalId);
-  }, [symbolsCsv, selectedTimeframe]);
+  }, [accountScopeId, symbolsCsv, selectedTimeframe]);
 
   useEffect(() => {
     const intervalId = window.setInterval(refreshLiveReconciliation, LIVE_RECONCILE_REFRESH_MS);
     return () => window.clearInterval(intervalId);
-  }, [symbolsCsv, selectedTimeframe]);
+  }, [accountScopeId, symbolsCsv, selectedTimeframe]);
 
   useEffect(() => {
     const sessionId = Number(liveStatus?.sessionId || 0);
     if (sessionId > 0 && observedThinkingSession.current !== sessionId) {
       observedThinkingSession.current = sessionId;
-      observedThinkingKeys.current = new Set();
       setObservedThinking([]);
     }
   }, [liveStatus?.sessionId]);
@@ -252,19 +260,14 @@ export default function FuturesLive() {
       liveMonitor,
       liveMarks,
       liveDecisions,
+      brokerOpenTradeRows,
+      brokerClosedTradeRows,
+      accountScopeId,
       liveMetrics,
       symbolStates,
     });
-    if (!observedEntries.length) return;
-    const additions = [];
-    observedEntries.forEach((entry) => {
-      if (!entry?.observedKey || observedThinkingKeys.current.has(entry.observedKey)) return;
-      observedThinkingKeys.current.add(entry.observedKey);
-      additions.push(entry);
-    });
-    if (!additions.length) return;
-    setObservedThinking((current) => additions.concat(current).slice(0, 1000));
-  }, [backendOffline, botStarted, feedRunning, liveStatus, realtimeStatus, liveMonitor, liveMarks, liveDecisions, liveMetrics, symbolStates]);
+    setObservedThinking(observedEntries.slice(0, 1000));
+  }, [accountScopeId, backendOffline, botStarted, brokerClosedTradeRows, brokerOpenTradeRows, feedRunning, liveStatus, realtimeStatus, liveMonitor, liveMarks, liveDecisions, liveMetrics, symbolStates]);
 
   useEffect(() => {
     return () => {
@@ -280,6 +283,7 @@ export default function FuturesLive() {
     loadLiveStatus({ forceSidecars: true });
     loadRealtimeStatus();
     loadLiveSnapshot();
+    loadLiveOrders();
     loadLiveMetrics();
     loadLiveMonitor();
     loadLiveMarks();
@@ -288,6 +292,7 @@ export default function FuturesLive() {
   function refreshLiveReconciliation() {
     loadLiveStatus();
     loadRealtimeStatus();
+    loadLiveOrders();
     loadLiveMetrics();
     loadLiveMonitor();
   }
@@ -344,6 +349,7 @@ export default function FuturesLive() {
     loadLiveDecisions(status);
     loadLiveThinking(status);
     loadLiveDecisionHistory();
+    loadLiveOrders();
   }
 
   function loadFundedProfiles() {
@@ -393,16 +399,29 @@ export default function FuturesLive() {
       setLiveDecisions([]);
       return;
     }
-    requestJson("liveDecisions", `/api/futures/live/decisions?sessionId=${sessionId}&limit=160`, (data) => setLiveDecisions(Array.isArray(data) ? data : []), (error) => {
+    const params = new URLSearchParams({ sessionId: String(sessionId), limit: "160" });
+    if (accountScopeId) params.set("accountId", accountScopeId);
+    requestJson("liveDecisions", `/api/futures/live/decisions?${params.toString()}`, (data) => setLiveDecisions(Array.isArray(data) ? data : []), (error) => {
         noteBackendError("Error loading live decisions:", error);
         setLiveDecisions([]);
       });
   }
 
   function loadLiveDecisionHistory() {
-    requestJson("liveDecisionHistory", "/api/futures/live/decisions?limit=500", (data) => setLiveDecisionHistory(Array.isArray(data) ? data : []), (error) => {
+    const params = new URLSearchParams({ limit: "1000" });
+    if (accountScopeId) params.set("accountId", accountScopeId);
+    requestJson("liveDecisionHistory", `/api/futures/live/decisions?${params.toString()}`, (data) => setLiveDecisionHistory(Array.isArray(data) ? data : []), (error) => {
         noteBackendError("Error loading live decision history:", error);
         if (isApiNetworkError(error)) setLiveDecisionHistory([]);
+      });
+  }
+
+  function loadLiveOrders() {
+    const params = new URLSearchParams({ limit: "1000" });
+    if (accountScopeId) params.set("accountId", accountScopeId);
+    requestJson("liveOrders", `/api/futures/live/orders?${params.toString()}`, (data) => setLiveOrders(Array.isArray(data) ? data : []), (error) => {
+        noteBackendError("Error loading live order ledger:", error);
+        if (isApiNetworkError(error)) setLiveOrders([]);
       });
   }
 
@@ -454,6 +473,7 @@ export default function FuturesLive() {
       symbols: symbolsCsv || DEFAULT_SYMBOLS.join(","),
       timeframe: selectedTimeframe,
     });
+    if (accountScopeId) params.set("accountId", accountScopeId);
     requestJson("liveMarks", `/api/futures/live/marks?${params.toString()}`, (data) => {
         if (!data?.success) return;
         setLiveMarks(data);
@@ -896,6 +916,9 @@ function buildObservedLiveBotLogEntries({
   liveMonitor,
   liveMarks,
   liveDecisions,
+  brokerOpenTradeRows,
+  brokerClosedTradeRows,
+  accountScopeId,
   symbolStates,
 }) {
   const entries = [];
@@ -953,11 +976,27 @@ function buildObservedLiveBotLogEntries({
 
   appendLiveMarksCheckLogEntries(entries, {
     liveMarks,
+    botStarted,
     feedRunning,
     sessionId,
     sessionKey,
     observedAt,
   });
+
+  const untrackedBrokerRows = [...(Array.isArray(brokerOpenTradeRows) ? brokerOpenTradeRows : []), ...(Array.isArray(brokerClosedTradeRows) ? brokerClosedTradeRows : [])]
+    .filter((trade) => String(trade?.strategyCode || "").toUpperCase() === "UNTRACKED");
+  if (untrackedBrokerRows.length > 0) {
+    const symbols = Array.from(new Set(untrackedBrokerRows.map((trade) => String(trade?.symbol || "").toUpperCase()).filter(Boolean))).join(", ");
+    entries.push(observedLogEntry({
+      key: `provenance|${sessionKey}|${accountScopeId || "account"}|${untrackedBrokerRows.length}|${symbols}`,
+      sessionId,
+      createdAt: observedAt,
+      phase: "Trade Provenance",
+      tone: "warn",
+      summary: `${untrackedBrokerRows.length} broker trade row(s) are missing local strategy provenance.`,
+      detail: `Account ${cleanLogText(accountScopeId || "unknown")} broker rows ${cleanLogText(symbols || "unknown")} are marked UNTRACKED until a local decision/order-ledger record can be matched.`,
+    }));
+  }
 
   const marketSession = liveStatus?.marketSession || liveMonitor?.marketSession || null;
   if (marketSession) {
@@ -1027,7 +1066,7 @@ function buildObservedLiveBotLogEntries({
   return entries;
 }
 
-function appendLiveMarksCheckLogEntries(entries, { liveMarks, feedRunning, sessionId, sessionKey, observedAt }) {
+function appendLiveMarksCheckLogEntries(entries, { liveMarks, botStarted, feedRunning, sessionId, sessionKey, observedAt }) {
   if (!liveMarks && feedRunning) {
     entries.push(observedLogEntry({
       key: `marks-missing|${sessionKey}`,
@@ -1044,6 +1083,9 @@ function appendLiveMarksCheckLogEntries(entries, { liveMarks, feedRunning, sessi
   const checks = liveMarks.checks || {};
   const counts = checks.counts || {};
   const overall = checks.overall || {};
+  const needsOperationalChecks = Boolean(botStarted || feedRunning);
+  const actionableOverall = overall.ok === false && (String(overall.severity || "").toLowerCase() === "error" || needsOperationalChecks);
+  if (!actionableOverall) return;
   entries.push(observedLogEntry({
     key: `marks-overall|${sessionKey}|${overall.severity || "unknown"}|${Boolean(overall.ok)}`,
     sessionId,
@@ -1062,6 +1104,8 @@ function appendLiveMarksCheckLogEntries(entries, { liveMarks, feedRunning, sessi
   ].forEach(([key, phase]) => {
     const check = checks[key];
     if (!check || check.ok) return;
+    const severity = String(check.severity || "").toLowerCase();
+    if (severity !== "error" && !needsOperationalChecks) return;
     entries.push(observedLogEntry({
       key: `marks-check|${sessionKey}|${key}|${check.severity || "warn"}|${cleanLogText(check.message)}`,
       sessionId,
@@ -1175,6 +1219,7 @@ function equityReviewCode(entry) {
   const tone = String(entry?.tone || "").toUpperCase();
   if (phase.includes("MARKET") || phase.includes("TRACKER") || phase.includes("MISSING") || phase.includes("CANDLE")) return tone === "ERROR" ? "DATA_ERROR" : "DATA_CHECK";
   if (phase.includes("METRIC")) return tone === "ERROR" ? "METRIC_ERROR" : tone === "WARN" ? "METRIC_WARN" : "METRIC_CHECK";
+  if (phase.includes("PROVENANCE")) return tone === "ERROR" ? "PROVENANCE_ERROR" : tone === "WARN" ? "PROVENANCE_WARN" : "PROVENANCE_CHECK";
   if (phase.includes("BROKER")) return tone === "ERROR" ? "BROKER_ERROR" : tone === "WARN" ? "BROKER_WARN" : "BROKER_CHECK";
   if (phase.includes("RISK")) return tone === "ERROR" || tone === "BLOCKED" ? "RISK_BLOCK" : "RISK_CHECK";
   if (phase.includes("TOPSTEP") || phase.includes("ORDER")) return tone === "ERROR" || tone === "BLOCKED" ? "ORDER_ERROR" : "ORDER_CHECK";
@@ -2016,9 +2061,16 @@ function mergeMetricsWithMarks(metrics, marks) {
   const account = marks.account || {};
   const current = metrics || {};
   const currentBroker = current.broker || {};
-  const positions = Array.isArray(marks.positions) ? marks.positions : (Array.isArray(currentBroker.positions) ? currentBroker.positions : []);
-  const trades = Array.isArray(marks.trades) ? marks.trades : (Array.isArray(currentBroker.trades) ? currentBroker.trades : []);
-  const orders = Array.isArray(marks.orders) ? marks.orders : (Array.isArray(currentBroker.orders) ? currentBroker.orders : []);
+  const hasBrokerSnapshot = Boolean(marks.lastBrokerSyncAt || marks.lastBrokerEventAt || marks.brokerAccountMatched === false || finiteNumberOrNull(account.currentBalance) != null);
+  const previousPositions = Array.isArray(currentBroker.positions) ? currentBroker.positions : [];
+  const previousTrades = Array.isArray(currentBroker.trades) ? currentBroker.trades : [];
+  const previousOrders = Array.isArray(currentBroker.orders) ? currentBroker.orders : [];
+  const marksPositions = Array.isArray(marks.positions) ? marks.positions : null;
+  const marksTrades = Array.isArray(marks.trades) ? marks.trades : null;
+  const marksOrders = Array.isArray(marks.orders) ? marks.orders : null;
+  const positions = hasBrokerSnapshot && marksPositions ? marksPositions : previousPositions;
+  const trades = hasBrokerSnapshot && marksTrades ? marksTrades : previousTrades;
+  const orders = hasBrokerSnapshot && marksOrders ? marksOrders : previousOrders;
   const accountSize = finiteNumber(account.accountSize, current.accountSize || currentBroker.accountSize || 0);
   const currentPnl = finiteNumber(account.currentPnl, current.currentPnl || 0);
   const currentBalance = finiteNumber(account.currentBalance, current.currentBalance || (accountSize + currentPnl));
@@ -2045,6 +2097,8 @@ function mergeMetricsWithMarks(metrics, marks) {
       ...currentBroker,
       success: currentBroker.success || positions.length > 0 || trades.length > 0 || finiteNumberOrNull(account.currentBalance) != null,
       source: currentBroker.source || "LIVE_MARKS_CACHE",
+      accountId: marks.accountId || currentBroker.accountId,
+      brokerAccountMatched: marks.brokerAccountMatched !== false,
       syncedAt: marks.lastBrokerSyncAt || currentBroker.syncedAt,
       lastEventAt: marks.lastBrokerEventAt || currentBroker.lastEventAt,
       accountSize,
@@ -2063,6 +2117,118 @@ function mergeMetricsWithMarks(metrics, marks) {
   };
 }
 
+function scopeBrokerMetricsToAccount(metrics, accountId, accountSizeFallback = 0) {
+  if (!metrics || !accountId) return metrics;
+  const cleanAccountId = String(accountId || "").trim();
+  const broker = metrics.broker || {};
+  const brokerAccountId = String(broker.accountId || metrics.accountId || "").trim();
+  const brokerReportsMismatch = broker.brokerAccountMatched === false;
+  const accountMatches = !brokerReportsMismatch && (!brokerAccountId || brokerAccountId === cleanAccountId);
+  const positions = accountMatches ? filterByAccountId(broker.positions, cleanAccountId) : [];
+  const trades = accountMatches ? filterByAccountId(broker.trades, cleanAccountId) : [];
+  const orders = accountMatches ? filterByAccountId(broker.orders, cleanAccountId) : [];
+  const scopedBrokerReady = accountMatches && Boolean(broker.success || positions.length || trades.length || orders.length);
+  if (!accountMatches) {
+    const scopedAccountSize = Number(accountSizeFallback || 0);
+    return {
+      ...metrics,
+      brokerMetricsReady: false,
+      accountSize: scopedAccountSize,
+      currentPnl: 0,
+      currentBalance: scopedAccountSize,
+      returnPct: 0,
+      realizedPnl: 0,
+      unrealizedPnl: 0,
+      drawdown: 0,
+      numberOfTrades: 0,
+      openTrades: 0,
+      broker: {
+        ...broker,
+        success: false,
+        accountId: brokerAccountId || cleanAccountId,
+        brokerAccountMatched: false,
+        positions: [],
+        trades: [],
+        orders: [],
+      },
+    };
+  }
+  return {
+    ...metrics,
+    numberOfTrades: Number.isFinite(Number(metrics.numberOfTrades)) ? metrics.numberOfTrades : trades.length,
+    openTrades: Number.isFinite(Number(metrics.openTrades)) ? metrics.openTrades : positions.length,
+    broker: {
+      ...broker,
+      success: scopedBrokerReady,
+      accountId: brokerAccountId || cleanAccountId,
+      brokerAccountMatched: true,
+      positions,
+      trades,
+      orders,
+    },
+  };
+}
+
+function filterByAccountId(rows, accountId) {
+  const cleanAccountId = String(accountId || "").trim();
+  const list = Array.isArray(rows) ? rows : [];
+  if (!cleanAccountId) return list;
+  return list.filter((row) => String(row?.accountId || "").trim() === cleanAccountId);
+}
+
+function buildLocalTradeProvenance(decisions = [], orders = [], accountId = "") {
+  const cleanAccountId = String(accountId || "").trim();
+  const provenance = [];
+  (Array.isArray(decisions) ? decisions : []).forEach((decision) => {
+    if (!accountMatches(decision, cleanAccountId)) return;
+    if (!isEntryDecision(decision)) return;
+    const strategyCode = usableStrategyCode(decision.strategyCode);
+    if (!strategyCode) return;
+    provenance.push({
+      ...decision,
+      strategyCode,
+      strategyName: decision.strategyName,
+      side: String(decision.side || "").toUpperCase(),
+      accountId: decision.accountId,
+      brokerOrderId: decision.brokerOrderId || decision.orderId || "",
+      source: "decision",
+    });
+  });
+  (Array.isArray(orders) ? orders : []).forEach((order) => {
+    if (!accountMatches(order, cleanAccountId)) return;
+    const strategyCode = usableStrategyCode(order.strategyCode);
+    if (!strategyCode) return;
+    const orderType = String(order.orderType || "").toUpperCase();
+    if (orderType.includes("CLOSE")) return;
+    const entrySide = normalizeTopstepTradeSide(order.side);
+    const side = entrySide ? positionSideFromEntrySide(entrySide) : String(order.side || "").toUpperCase();
+    provenance.push({
+      ...order,
+      strategyCode,
+      strategyName: order.strategyName,
+      side,
+      signalTime: order.signalTime || order.entryTime || order.createdAt,
+      entryTime: order.entryTime || order.createdAt,
+      brokerOrderId: order.brokerOrderId || order.orderId || "",
+      status: order.status || "SUBMITTED_TOPSTEPX",
+      source: "order",
+    });
+  });
+  return provenance;
+}
+
+function accountMatches(row, accountId) {
+  const cleanAccountId = String(accountId || "").trim();
+  if (!cleanAccountId) return true;
+  return String(row?.accountId || "").trim() === cleanAccountId;
+}
+
+function usableStrategyCode(value) {
+  const code = String(value || "").trim().toUpperCase();
+  if (!code || code === "TOPSTEP") return "";
+  return code;
+}
+
 function finiteNumber(value, fallback = 0) {
   if (value == null || value === "") return Number(fallback || 0);
   const numeric = Number(value);
@@ -2075,7 +2241,7 @@ function finiteNumberOrNull(value) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
-function buildBrokerOpenTradeRows(positions, decisions = []) {
+function buildBrokerOpenTradeRows(positions, provenance = []) {
   return (Array.isArray(positions) ? positions : [])
     .filter((position) => Number(position?.contracts || 0) > 0)
     .map((position, index) => {
@@ -2083,19 +2249,21 @@ function buildBrokerOpenTradeRows(positions, decisions = []) {
       const side = String(position.side || "").toUpperCase() === "SHORT" ? "SHORT" : "LONG";
       const contracts = Number(position.contracts || 0);
       const entryPrice = Number(position.entryPrice || position.averagePrice || 0);
-      const matchedDecision = findBrokerDecisionMeta(decisions, {
+      const matchedDecision = findBrokerDecisionMeta(provenance, {
         symbol,
         side,
         contracts,
         entryPrice,
         entryTime: position.createdAt,
         createdAt: position.createdAt,
+        orderId: position.orderId || position.brokerOrderId,
       });
       return {
-        id: `topstep-position-${position.id || position.contractId || position.symbol || index}`,
+        id: brokerStableRowId("topstep-position", position.accountId, symbol, side, position.id || position.contractId || position.createdAt || index),
         symbol,
-        strategyCode: tradeStrategyCode(matchedDecision, "Topstep"),
-        strategyName: matchedDecision?.strategyName || "Topstep Open Position",
+        accountId: position.accountId,
+        strategyCode: tradeStrategyCode(matchedDecision, "UNTRACKED"),
+        strategyName: matchedDecision?.strategyName || "Untracked Broker Position",
         side,
         contracts,
         entryPrice,
@@ -2111,7 +2279,7 @@ function buildBrokerOpenTradeRows(positions, decisions = []) {
           stopPrice: matchedDecision?.stopPrice,
           targetPrice: matchedDecision?.targetPrice,
           signalTime: matchedDecision?.signalTime,
-          fallback: "Open position from Topstep Position/searchOpen; mark PnL updates from live ProjectX price.",
+          fallback: unmatchedBrokerEntryReason("open position"),
         }),
         exitReason: "Open trade. Exit reason and fees will populate after Topstep reports the close.",
         fees: null,
@@ -2122,7 +2290,7 @@ function buildBrokerOpenTradeRows(positions, decisions = []) {
     });
 }
 
-function buildBrokerClosedTradeRows(trades, decisions = []) {
+function buildBrokerClosedTradeRows(trades, provenance = []) {
   const openLots = new Map();
   const rows = [];
   const sortedTrades = (Array.isArray(trades) ? trades : [])
@@ -2139,6 +2307,8 @@ function buildBrokerClosedTradeRows(trades, decisions = []) {
         const lots = openLots.get(key) || [];
         lots.push({
           id: trade.id || trade.orderId || `${symbol}-${index}`,
+          accountId: trade.accountId,
+          orderId: trade.orderId || trade.brokerOrderId,
           side: tradeSide,
           remaining: contracts,
           price: fillPrice,
@@ -2155,6 +2325,7 @@ function buildBrokerClosedTradeRows(trades, decisions = []) {
     let weightedEntry = 0;
     let entryTime = "";
     let entrySide = "";
+    let entryOrderId = "";
     lots.forEach((lot) => {
       if (remaining <= 0 || lot.remaining <= 0 || lot.side === tradeSide) return;
       const take = Math.min(lot.remaining, remaining);
@@ -2164,6 +2335,7 @@ function buildBrokerClosedTradeRows(trades, decisions = []) {
       weightedEntry += lot.price * take;
       entryTime = entryTime || lot.createdAt;
       entrySide = entrySide || lot.side;
+      entryOrderId = entryOrderId || lot.orderId;
     });
     openLots.set(key, lots.filter((lot) => lot.remaining > 0));
 
@@ -2171,23 +2343,25 @@ function buildBrokerClosedTradeRows(trades, decisions = []) {
     const entryPrice = matchedContracts > 0 ? weightedEntry / matchedContracts : 0;
     const rowContracts = matchedContracts || contracts;
     const positionSide = entrySide ? positionSideFromEntrySide(entrySide) : positionSideFromClosingSide(tradeSide);
-    const matchedDecision = findBrokerDecisionMeta(decisions, {
+    const matchedDecision = findBrokerDecisionMeta(provenance, {
       symbol,
       side: positionSide,
       contracts: rowContracts,
       entryPrice,
       entryTime,
       createdAt: trade.createdAt,
+      orderId: entryOrderId || trade.orderId || trade.brokerOrderId,
       closed: true,
     });
     const reason = entryPrice > 0
       ? `Topstep Trade/search paired entry and close fills${fees ? `; fees ${formatCurrency(fees)}` : ""}.`
       : `Topstep Trade/search closed fill${fees ? `; fees ${formatCurrency(fees)}` : ""}; entry fill outside current sync window.`;
     rows.push({
-      id: `topstep-trade-${trade.id || trade.orderId || index}`,
+      id: brokerStableRowId("topstep-trade", trade.accountId, symbol, positionSide, entryTime || trade.createdAt, trade.id || trade.orderId || index),
       symbol,
-      strategyCode: tradeStrategyCode(matchedDecision, "Topstep"),
-      strategyName: matchedDecision?.strategyName || "Topstep Closed Trade",
+      accountId: trade.accountId,
+      strategyCode: tradeStrategyCode(matchedDecision, "UNTRACKED"),
+      strategyName: matchedDecision?.strategyName || "Untracked Broker Trade",
       side: positionSide,
       contracts: rowContracts,
       entryPrice,
@@ -2204,7 +2378,7 @@ function buildBrokerClosedTradeRows(trades, decisions = []) {
         targetPrice: matchedDecision?.targetPrice,
         signalTime: matchedDecision?.signalTime,
         fallback: entryPrice > 0
-          ? "Topstep paired this row from broker entry and close fills. No local strategy decision matched this fill, so the exact strategy source is unavailable in this sync."
+          ? unmatchedBrokerEntryReason("closed trade")
           : "Topstep reported the close fill, but the matching entry fill is outside the current broker sync window.",
       }),
       exitReason: matchedDecision?.exitReason || `Closed by Topstep fill at ${formatPrice(fillPrice)}. Net PnL uses broker-reported fees.`,
@@ -2238,8 +2412,19 @@ function positionSideFromClosingSide(closingSide) {
   return closingSide === "BUY" ? "SHORT" : "LONG";
 }
 
-function tradeStrategyCode(decision, fallback = "Topstep") {
-  const code = String(decision?.strategyCode || "").trim();
+function brokerStableRowId(prefix, ...parts) {
+  return [prefix, ...parts]
+    .map((part) => String(part ?? "").trim().replace(/\s+/g, "_"))
+    .filter(Boolean)
+    .join("|");
+}
+
+function unmatchedBrokerEntryReason(rowType) {
+  return `Topstep supplied this ${rowType}, but no local strategy/order provenance matched the broker fill for this account. This row is marked UNTRACKED instead of pretending the broker name is a strategy.`;
+}
+
+function tradeStrategyCode(decision, fallback = "UNTRACKED") {
+  const code = usableStrategyCode(decision?.strategyCode);
   return code || fallback;
 }
 
@@ -2247,6 +2432,7 @@ function findBrokerDecisionMeta(decisions, target) {
   const symbol = String(target?.symbol || "").toUpperCase();
   const side = String(target?.side || "").toUpperCase();
   if (!symbol || !side) return null;
+  const targetOrderId = String(target?.orderId || target?.brokerOrderId || "").trim();
   const targetTime = parseChartTime(target?.entryTime || target?.createdAt);
   const targetPrice = Number(target?.entryPrice || 0);
   const targetContracts = Number(target?.contracts || 0);
@@ -2257,15 +2443,17 @@ function findBrokerDecisionMeta(decisions, target) {
     if (!isEntryDecision(decision)) return;
     if (String(decision.symbol || "").toUpperCase() !== symbol) return;
     if (String(decision.side || "").toUpperCase() !== side) return;
-    const strategyCode = String(decision.strategyCode || "").trim();
-    if (!strategyCode || strategyCode.toUpperCase() === "TOPSTEP") return;
+    const strategyCode = usableStrategyCode(decision.strategyCode);
+    if (!strategyCode) return;
+    const decisionOrderId = String(decision.brokerOrderId || decision.orderId || "").trim();
     const decisionTime = parseChartTime(decision.entryTime || decision.signalTime || decision.createdAt);
     const decisionPrice = Number(decision.entryPrice || 0);
     const decisionContracts = Number(decision.contracts || 0);
     const timeMinutes = targetTime && decisionTime ? Math.abs(targetTime - decisionTime) / 60000 : 999;
     const priceTicks = targetPrice > 0 && decisionPrice > 0 ? Math.abs(targetPrice - decisionPrice) / Math.max(tick, 0.01) : 24;
     const contractPenalty = targetContracts > 0 && decisionContracts > 0 && targetContracts !== decisionContracts ? 18 : 0;
-    const score = timeMinutes + priceTicks * 2 + contractPenalty;
+    const orderMatchBonus = targetOrderId && decisionOrderId && targetOrderId === decisionOrderId ? -10000 : 0;
+    const score = orderMatchBonus + timeMinutes + priceTicks * 2 + contractPenalty;
     if (score < bestScore) {
       bestScore = score;
       best = decision;
@@ -2349,6 +2537,7 @@ function strategyEntryThesis(strategyCode, direction) {
 
 function metricSourceDetail(metrics, type) {
   if (!metrics) return "Waiting for Topstep sync";
+  if (metrics?.broker?.brokerAccountMatched === false) return "Waiting for selected account Topstep sync";
   if (metrics?.broker?.success) {
     if (type === "pnl" && Math.abs(Number(metrics.broker.unrealizedPnl || 0)) > 0) {
       return `Topstep balance + live mark PnL ${formatCurrency(metrics.broker.unrealizedPnl)}`;
