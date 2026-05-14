@@ -14,18 +14,6 @@ export default function Settings({ accountEmail }) {
     phoneNumber: "",
     address: "",
   });
-  const [brokerSettings, setBrokerSettings] = useState({
-    broker: "Alpaca",
-    baseUrl: "https://paper-api.alpaca.markets/v2",
-    connectedAccountName: "Not connected",
-    hasApiKey: false,
-    apiKeyPreview: "",
-    hasSecretKey: false,
-    secretKeyPreview: "",
-  });
-  const [isBrokerOpen, setIsBrokerOpen] = useState(false);
-  const [brokerDraft, setBrokerDraft] = useState({ apiKey: "", secretKey: "" });
-  const [brokerError, setBrokerError] = useState("");
   const [connections, setConnections] = useState([]);
   const [futuresFeedback, setFuturesFeedback] = useState("");
   const [busyProvider, setBusyProvider] = useState("");
@@ -53,31 +41,6 @@ export default function Settings({ accountEmail }) {
       });
   }, []);
 
-  const loadBrokerSettings = useCallback((emailToLoad) => {
-    apiFetch(`/api/settings/broker?email=${encodeURIComponent(emailToLoad)}`)
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error("Failed to load broker settings.");
-        }
-
-        return response.json();
-      })
-      .then((data) => {
-        setBrokerSettings(data);
-      })
-      .catch((error) => {
-        console.error("Error loading broker settings:", error);
-        setBrokerSettings((current) => ({
-          ...current,
-          connectedAccountName: "Unavailable",
-          hasApiKey: false,
-          apiKeyPreview: "",
-          hasSecretKey: false,
-          secretKeyPreview: "",
-        }));
-      });
-  }, []);
-
   const loadFuturesConnections = useCallback(() => {
     apiFetch("/api/futures/connections")
       .then((response) => response.json())
@@ -90,42 +53,8 @@ export default function Settings({ accountEmail }) {
 
   useEffect(() => {
     loadAccountSettings(accountEmail);
-    loadBrokerSettings(accountEmail);
     loadFuturesConnections();
-  }, [accountEmail, loadAccountSettings, loadBrokerSettings, loadFuturesConnections]);
-
-  function openBrokerModal() {
-    setBrokerDraft({
-      apiKey: "",
-      secretKey: "",
-    });
-    setBrokerError("");
-    setIsBrokerOpen(true);
-  }
-
-  function saveBrokerSettings(event) {
-    event.preventDefault();
-    setBrokerError("");
-
-    apiFormFetch("/api/settings/broker", {
-      email: accountEmail || "",
-      apiKey: brokerDraft.apiKey,
-      secretKey: brokerDraft.secretKey,
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          const text = await response.text();
-          throw new Error(text || "Broker settings update failed.");
-        }
-
-        loadBrokerSettings(accountEmail);
-        setIsBrokerOpen(false);
-        setBrokerDraft({ apiKey: "", secretKey: "" });
-      })
-      .catch((error) => {
-        setBrokerError(error.message || "Broker settings update failed.");
-      });
-  }
+  }, [accountEmail, loadAccountSettings, loadFuturesConnections]);
 
   function updateFuturesConnection(provider, field, value) {
     setConnections((current) =>
@@ -206,31 +135,6 @@ export default function Settings({ accountEmail }) {
         <SettingRow label="Address" value={accountSettings.address} />
       </div>
 
-      <div className="app-panel">
-        <div className="app-service-header mb-3">
-          <div className="fw-bold app-kicker">Alpaca</div>
-          <span className="app-badge">{brokerSettings.connectedAccountName || "Not connected"}</span>
-        </div>
-
-        <SettingRow label="Current Broker" value={brokerSettings.broker} />
-        <SettingRow label="API URL" value={brokerSettings.baseUrl} />
-        <SettingRow label="Connected Account Name" value={brokerSettings.connectedAccountName} />
-        <SettingRow
-          label="API Key"
-          value={brokerSettings.hasApiKey ? brokerSettings.apiKeyPreview || "Saved" : ""}
-        />
-        <SettingRow
-          label="Secret Key"
-          value={brokerSettings.hasSecretKey ? brokerSettings.secretKeyPreview || "Saved" : ""}
-        />
-
-        <div className="d-flex justify-content-end pt-3">
-          <button type="button" className="app-btn app-btn-primary px-3" onClick={openBrokerModal}>
-            Change Broker Account
-          </button>
-        </div>
-      </div>
-
       {futuresFeedback && <div className="app-live-feedback">{futuresFeedback}</div>}
 
       {connections.map((connection) => (
@@ -245,57 +149,6 @@ export default function Settings({ accountEmail }) {
       ))}
 
       {connections.length === 0 && <div className="app-panel app-empty">No futures connections found.</div>}
-
-      {isBrokerOpen && (
-        <SettingsModal title="Change Broker Account" onClose={() => setIsBrokerOpen(false)}>
-          <form onSubmit={saveBrokerSettings} className="d-grid gap-3">
-            <label className="d-grid gap-1">
-              <span className="app-label">Broker</span>
-              <input type="text" className="form-control app-input" value={brokerSettings.broker} disabled />
-            </label>
-
-            <label className="d-grid gap-1">
-              <span className="app-label">API URL</span>
-              <input type="text" className="form-control app-input" value={brokerSettings.baseUrl} disabled />
-            </label>
-
-            <label className="d-grid gap-1">
-              <span className="app-label">API Key</span>
-              <input
-                type="password"
-                autoComplete="off"
-                className="form-control app-input"
-                value={brokerDraft.apiKey}
-                onChange={(event) => setBrokerDraft((current) => ({ ...current, apiKey: event.target.value }))}
-                placeholder={brokerSettings.hasApiKey ? "Saved; enter a new key to replace" : "Enter Alpaca API key"}
-              />
-            </label>
-
-            <label className="d-grid gap-1">
-              <span className="app-label">Secret Key</span>
-              <input
-                type="password"
-                autoComplete="off"
-                className="form-control app-input"
-                value={brokerDraft.secretKey}
-                onChange={(event) => setBrokerDraft((current) => ({ ...current, secretKey: event.target.value }))}
-                placeholder={brokerSettings.hasSecretKey ? "Saved; enter a new secret to replace" : "Enter Alpaca secret key"}
-              />
-            </label>
-
-            {brokerError && <div className="app-pnl-neg">{brokerError}</div>}
-
-            <div className="d-flex justify-content-end gap-2">
-              <button type="button" className="app-btn px-3" onClick={() => setIsBrokerOpen(false)}>
-                Cancel
-              </button>
-              <button type="submit" className="app-btn app-btn-primary px-3">
-                Save
-              </button>
-            </div>
-          </form>
-        </SettingsModal>
-      )}
     </div>
   );
 }
@@ -549,20 +402,4 @@ function maskSettingValue(value) {
   }
 
   return "*".repeat(Math.min(Math.max(safeValue.length, 8), 18));
-}
-
-function SettingsModal({ title, onClose, children }) {
-  return (
-    <div className="app-modal-backdrop">
-      <div className="app-modal-card">
-        <div className="d-flex align-items-center justify-content-between gap-2 mb-3">
-          <div className="fw-bold">{title}</div>
-          <button type="button" className="app-btn px-3" onClick={onClose}>
-            Close
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
 }

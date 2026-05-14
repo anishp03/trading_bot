@@ -26,7 +26,7 @@ export default function Login({ onLogin }) {
         if (response.ok) {
           const session = await response.json();
           onLogin(session);
-          navigate("/dashboard", { replace: true });
+          navigate("/futures-live", { replace: true });
         } else {
           setError(await readApiErrorMessage(response, "Invalid credentials."));
         }

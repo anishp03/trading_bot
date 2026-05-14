@@ -5,8 +5,8 @@ export default function NotFound() {
     <div className="app-page">
       <h2 className="app-title">404</h2>
       <div className="app-muted">That page doesn’t exist.</div>
-      <Link to="/dashboard" className="text-light">
-        Go to Live Stock
+      <Link to="/futures-live" className="text-light">
+        Go to Live Futures
       </Link>
     </div>
   );

@@ -4,16 +4,6 @@ import { apiFetch, readApiErrorMessage } from "../utils/api.js";
 import { formatEstTime } from "../utils/time.js";
 
 const marketSections = {
-  stocks: {
-    label: "Stocks",
-    defaultPath: "/dashboard",
-    items: [
-      { to: "/dashboard", label: "Live Stock" },
-      { to: "/strategy", label: "Stock Strategy" },
-      { to: "/backtest", label: "Backtest" },
-      { to: "/backtest-history", label: "Backtest History" },
-    ],
-  },
   futures: {
     label: "Futures",
     defaultPath: "/futures-live",
@@ -31,7 +21,6 @@ const systemItems = [
   { to: "/settings", label: "Settings" },
 ];
 const navItems = [
-  ...marketSections.stocks.items,
   ...marketSections.futures.items,
   ...systemItems,
 ];
@@ -45,12 +34,12 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
   const location = useLocation();
   const navigate = useNavigate();
   const routeMarket = marketForPath(location.pathname);
-  const [selectedMarket, setSelectedMarket] = useState(routeMarket || "stocks");
+  const [selectedMarket, setSelectedMarket] = useState(routeMarket || "futures");
   const [futuresSidebarStatus, setFuturesSidebarStatus] = useState(null);
   const [futuresSidebarOnline, setFuturesSidebarOnline] = useState(backendMode !== "offline");
   const [backendUpdate, setBackendUpdate] = useState({ busy: false, message: "" });
   const [backendUpdatePopup, setBackendUpdatePopup] = useState(null);
-  const activeMarket = marketSections[selectedMarket] || marketSections.stocks;
+  const activeMarket = marketSections[selectedMarket] || marketSections.futures;
   const currentPage = navItems.find((item) => item.to === location.pathname)?.label || "Trading Bot";
 
   useEffect(() => {
@@ -219,7 +208,7 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
             </div>
 
             <div className="app-topbar-account-group">
-              {backendMode === "offline" && selectedMarket !== "futures" && <span className="app-topbar-status offline">Backend Offline</span>}
+              {backendMode === "offline" && <span className="app-topbar-status offline">Backend Offline</span>}
               <span className="app-topbar-btn">{accountRole || "viewer"}</span>
               <span className="app-topbar-account">{accountEmail}</span>
               {onLogout && (
@@ -286,9 +275,6 @@ function marketForPath(pathname) {
   }
   if (marketSections.futures.items.some((item) => item.to === pathname)) {
     return "futures";
-  }
-  if (marketSections.stocks.items.some((item) => item.to === pathname)) {
-    return "stocks";
   }
   return "";
 }
