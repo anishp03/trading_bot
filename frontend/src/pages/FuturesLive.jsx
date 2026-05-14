@@ -14,8 +14,8 @@ const LIVE_MONITOR_REFRESH_MS = 30000;
 const MIN_OPENING_CHART_BARS = 24;
 const DEFAULT_PROFILE = "TOPSTEP_150K_PRACTICE";
 const PROFILE_ACCOUNTS = {
-  TOPSTEP_150K_PRACTICE: { label: "150K Combine", accountId: "22539378" },
   TOPSTEP_50K_COMBINE: { label: "50K Combine", accountId: "22529998" },
+  TOPSTEP_150K_PRACTICE: { label: "150K Combine", accountId: "22539378" },
 };
 const FALLBACK_PROFILE = {
   code: "TOPSTEP_150K_PRACTICE",
@@ -61,15 +61,21 @@ export default function FuturesLive() {
     refreshFuturesSidebarStatus = null,
   } = useOutletContext() || {};
 
+  const liveAccountProfiles = useMemo(() => {
+    const profileSource = fundedProfiles.length ? fundedProfiles : [FALLBACK_PROFILE];
+    const profiles = profileSource.filter((profile) => PROFILE_ACCOUNTS[profile.code]?.accountId);
+    return profiles.length ? profiles : [FALLBACK_PROFILE];
+  }, [fundedProfiles]);
+
   const selectedProfile = useMemo(() => {
-    return fundedProfiles.find((profile) => profile.code === selectedProfileCode) || FALLBACK_PROFILE;
-  }, [fundedProfiles, selectedProfileCode]);
+    return liveAccountProfiles.find((profile) => profile.code === selectedProfileCode) || liveAccountProfiles[0] || FALLBACK_PROFILE;
+  }, [liveAccountProfiles, selectedProfileCode]);
 
   const activeSnapshot = snapshotState?.snapshot || liveStatus?.liveStrategySnapshot || null;
   const snapshotSymbols = parseSymbolCsv(activeSnapshot?.symbols);
   const liveStrategySymbols = snapshotSymbols.length ? snapshotSymbols : DEFAULT_SYMBOLS;
   const monitorSymbols = DEFAULT_SYMBOLS;
-  const accountPreset = PROFILE_ACCOUNTS[selectedProfileCode] || PROFILE_ACCOUNTS[DEFAULT_PROFILE];
+  const accountPreset = PROFILE_ACCOUNTS[selectedProfile.code] || PROFILE_ACCOUNTS[DEFAULT_PROFILE];
   const symbolsCsv = monitorSymbols.join(",");
   const backendOffline = backendOnline === false || futuresSidebarOnline === false || futuresSidebarStatus?.backend?.online === false;
   const botStarted = !backendOffline && Boolean(liveStatus?.running);
@@ -125,6 +131,7 @@ export default function FuturesLive() {
     () => symbolStates.find((state) => String(state.symbol || "").toUpperCase() === selectedChartSymbol) || null,
     [selectedChartSymbol, symbolStates]
   );
+  const selectedAccountDisabled = Boolean(!accountPreset?.accountId);
   const selectedChartMarkPrice = Number(selectedSymbolState?.lastPrice || latestChartPrice(chartDisplayCandles));
   const feedStaleSeconds = Number(liveMonitor?.feedStaleSeconds ?? -1);
   const marketSession = liveMonitor?.marketSession || liveStatus?.marketSession || estimateFuturesMarketSession();
@@ -164,7 +171,7 @@ export default function FuturesLive() {
     [liveThinking]
   );
   const thinkingEntries = backendThinkingEntries.length > 0 ? backendThinkingEntries : observedThinking;
-  const canStartLiveBot = !backendOffline && Boolean(sidebarStartReady && activeSnapshot && !liveStatus?.running);
+  const canStartLiveBot = !backendOffline && !selectedAccountDisabled && Boolean(sidebarStartReady && activeSnapshot && !liveStatus?.running);
   const controlMessage = feedback || (botStarted ? liveStatus?.lastDecision || realtimeStatus?.lastMessage : feedRunning ? realtimeStatus?.lastMessage || liveMonitor?.realtimeMessage : "");
   const launchTone = backendOffline ? "offline" : botControlActive ? "live" : sidebarStartReady ? "ready" : "pending";
   const liveStrategySlotSummary = activeSnapshot ? formatStrategySlotSummary(activeSnapshot.sourceMetrics) : "Copy backtest first";
@@ -173,6 +180,12 @@ export default function FuturesLive() {
   useEffect(() => {
     loadFundedProfiles();
   }, []);
+
+  useEffect(() => {
+    if (!liveAccountProfiles.some((profile) => profile.code === selectedProfileCode)) {
+      setSelectedProfileCode(liveAccountProfiles[0]?.code || DEFAULT_PROFILE);
+    }
+  }, [liveAccountProfiles, selectedProfileCode]);
 
   useEffect(() => {
     if (!monitorSymbols.includes(selectedChartSymbol)) {
@@ -472,7 +485,7 @@ export default function FuturesLive() {
         throw new Error(payload.json?.message || payload.text || "Failed to start live bot.");
       }
       setLiveStatus(payload.json?.status || null);
-      setFeedback(payload.json?.message || "Live bot started with TopstepX 150K Combine order automation.");
+      setFeedback(payload.json?.message || `Live bot started with ${accountPreset.label || selectedProfile.name} order automation.`);
       refreshFuturesSidebarStatus?.();
       refreshLiveData();
     });
@@ -569,11 +582,14 @@ export default function FuturesLive() {
         <div className="futures-launch-config">
           <Field label="Topstep Account" className="futures-launch-account-field">
             <select value={selectedProfileCode} onChange={(event) => setSelectedProfileCode(event.target.value)} className="form-select app-input">
-              {(fundedProfiles.length ? fundedProfiles : [FALLBACK_PROFILE]).map((profile) => (
+              {liveAccountProfiles.map((profile) => {
+                const account = PROFILE_ACCOUNTS[profile.code] || {};
+                return (
                 <option key={profile.code} value={profile.code}>
-                  {PROFILE_ACCOUNTS[profile.code]?.label || profile.name}
+                  {account.label || profile.name}
                 </option>
-              ))}
+              );
+              })}
             </select>
           </Field>
 
@@ -585,7 +601,7 @@ export default function FuturesLive() {
 
           <div className="futures-launch-chip">
             <span>Account ID</span>
-            <strong>{accountPreset.accountId}</strong>
+            <strong>{accountPreset.accountId || "Not connected"}</strong>
             <small>{formatCompactCurrency(selectedProfile.accountSize)}</small>
           </div>
 

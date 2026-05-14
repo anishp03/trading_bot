@@ -92,11 +92,6 @@ export default function RunPreview({
           <MetricCard title="Trades" value={run?.trades ?? "--"} />
           <MetricCard title="Profit Factor" value={run?.profitFactor ?? "--"} />
           <MetricCard title="Drawdown" value={run?.drawdown == null ? "--" : `${formatNumber(run.drawdown)}%`} />
-          <MetricCard
-            title="Rule Status"
-            value={formatRuleStatus(run)}
-            accent={run?.ruleViolation ? -1 : 0}
-          />
         </div>
       </div>
 
@@ -263,12 +258,6 @@ function MetricCard({ title, value, accent = 0 }) {
       </div>
     </div>
   );
-}
-
-function formatRuleStatus(run) {
-  const message = String(run?.ruleMessage || "").trim();
-  if (!message) return "--";
-  return message.length > 34 ? `${message.slice(0, 31)}...` : message;
 }
 
 function uniqueTradeValues(trades, key) {
