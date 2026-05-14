@@ -26,16 +26,6 @@ release/
 scripts/
 docker-compose.yml
 CONTAINER_DEPLOYMENT.md
-CLOUDFLARE_FRONTEND_STOPPING_POINT.md
-BACKTEST_STRATEGY_IMPROVEMENT_HANDOFF.md
-BACKEND_24_7_LAUNCH.md
-STRATEGY_IMPROVEMENT_BASELINE.md
-FUTURES_STRATEGY_HANDOFF_SPEC.md
-LOCAL_24_7_LAUNCH_HANDOFF.md
-NEXT_STAGE_SYSTEM_ARCHITECTURE_HANDOFF.md
-OLD_PC_24_7_DEPLOYMENT.md
-TOPSTEP_PAPER_TRADING_HANDOFF.md
-WINDOWS_LIVE_BACKEND_HANDOFF.md
 
 # Backend runtime output
 backend/logs/
@@ -81,7 +71,6 @@ yarn-debug.log*
 yarn-error.log*
 
 # Local archives / export bundles
-handoff/
 *.zip
 *.tar.gz
 *.rar

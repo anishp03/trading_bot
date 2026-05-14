@@ -141,4 +141,4 @@ Keep these out of GitHub:
 - broker/API key material
 - packaged backend zips
 
-The backend zip and backend handoff instructions are generated locally and moved to the trading PC outside GitHub.
+Backend release bundles are generated locally and moved to the trading PC outside GitHub. The canonical implementation handoff lives at `../Documents/ImplementationHandoff.md`.

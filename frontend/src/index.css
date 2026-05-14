@@ -766,6 +766,12 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.app-trade-fees {
+  color: rgba(255, 255, 255, 0.74);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .app-empty {
   padding: 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
@@ -1578,9 +1584,8 @@ textarea {
 }
 
 .futures-thinking-log {
-  max-height: 260px;
   display: grid;
-  overflow-y: auto;
+  overflow: visible;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(8, 12, 18, 0.58);
@@ -1768,6 +1773,10 @@ textarea {
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.futures-bot-tracker-health.compact {
+  grid-template-columns: minmax(104px, max-content);
 }
 
 .futures-bot-tracker-health small {
@@ -2344,8 +2353,8 @@ textarea {
 
 .futures-live-trades-grid,
 .futures-live-all-trades-grid {
-  grid-template-columns: minmax(132px, 1fr) 0.46fr 0.68fr 0.46fr 0.38fr 0.58fr 0.58fr 0.62fr 0.95fr minmax(220px, 1.5fr);
-  min-width: 1120px;
+  grid-template-columns: minmax(132px, 0.9fr) 0.42fr 0.62fr 0.42fr 0.34fr 0.52fr 0.52fr 0.58fr minmax(250px, 1.45fr) minmax(230px, 1.2fr) minmax(82px, 0.36fr);
+  min-width: 1420px;
 }
 
 .app-live-value {

@@ -24,7 +24,7 @@ const navItems = [
   ...marketSections.futures.items,
   ...systemItems,
 ];
-const FUTURES_STATUS_REFRESH_MS = 30000;
+const FUTURES_STATUS_REFRESH_MS = 10000;
 
 function navClassName({ isActive }) {
   return isActive ? "app-nav-link active" : "app-nav-link";

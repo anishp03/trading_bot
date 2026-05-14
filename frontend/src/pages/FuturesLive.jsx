@@ -10,7 +10,8 @@ const TIMEFRAME_OPTIONS = [
   { value: "30m", label: "30m" },
   { value: "1h", label: "1h" },
 ];
-const LIVE_MONITOR_REFRESH_MS = 30000;
+const LIVE_MARKS_REFRESH_MS = 1000;
+const LIVE_RECONCILE_REFRESH_MS = 10000;
 const MIN_OPENING_CHART_BARS = 24;
 const DEFAULT_PROFILE = "TOPSTEP_150K_PRACTICE";
 const PROFILE_ACCOUNTS = {
@@ -40,11 +41,13 @@ export default function FuturesLive() {
   const [realtimeStatus, setRealtimeStatus] = useState(null);
   const [snapshotState, setSnapshotState] = useState(null);
   const [liveDecisions, setLiveDecisions] = useState([]);
+  const [liveDecisionHistory, setLiveDecisionHistory] = useState([]);
   const [liveThinking, setLiveThinking] = useState([]);
   const [, setLiveThinkingStatus] = useState("idle");
   const [observedThinking, setObservedThinking] = useState([]);
   const [liveMetrics, setLiveMetrics] = useState(null);
   const [liveMonitor, setLiveMonitor] = useState(null);
+  const [liveMarks, setLiveMarks] = useState(null);
   const [monitorCache, setMonitorCache] = useState({});
   const [feedback, setFeedback] = useState("");
   const [busyAction, setBusyAction] = useState("");
@@ -55,6 +58,8 @@ export default function FuturesLive() {
   const botStartedRef = useRef(false);
   const observedThinkingKeys = useRef(new Set());
   const observedThinkingSession = useRef(0);
+  const requestControllers = useRef(new Map());
+  const decisionSidecarSignature = useRef("");
   const {
     futuresSidebarOnline = true,
     futuresSidebarStatus = null,
@@ -96,12 +101,12 @@ export default function FuturesLive() {
   const brokerSnapshot = augmentedLiveMetrics?.broker?.success ? augmentedLiveMetrics.broker : null;
   const brokerAuthoritative = Boolean(brokerSnapshot);
   const brokerOpenTradeRows = useMemo(
-    () => buildBrokerOpenTradeRows(brokerSnapshot?.positions),
-    [brokerSnapshot]
+    () => buildBrokerOpenTradeRows(brokerSnapshot?.positions, liveDecisionHistory),
+    [brokerSnapshot, liveDecisionHistory]
   );
   const brokerClosedTradeRows = useMemo(
-    () => buildBrokerClosedTradeRows(brokerSnapshot?.trades),
-    [brokerSnapshot]
+    () => buildBrokerClosedTradeRows(brokerSnapshot?.trades, liveDecisionHistory),
+    [brokerSnapshot, liveDecisionHistory]
   );
   const localLiveTrades = displayTradeRows.filter((decision) => isEntryDecision(decision) && !isClosedTradeDecision(decision));
   const liveTrades = brokerAuthoritative ? brokerOpenTradeRows : localLiveTrades;
@@ -138,9 +143,13 @@ export default function FuturesLive() {
   const marketIdle = !backendOffline && !monitorDataActive;
   const metrics = brokerAuthoritative ? augmentedLiveMetrics : (botStarted ? liveMetrics : null);
   const sidebarStartReady = Boolean(futuresSidebarStatus?.strategyConfig?.active && futuresSidebarStatus?.topstepApi?.ready);
+  const brokerChartTradeRows = useMemo(
+    () => brokerAuthoritative ? [...brokerClosedTradeRows, ...brokerOpenTradeRows] : [],
+    [brokerAuthoritative, brokerClosedTradeRows, brokerOpenTradeRows]
+  );
   const realChartTrades = useMemo(
-    () => buildChartTrades(brokerAuthoritative && brokerOpenTradeRows.length ? brokerOpenTradeRows : displayTradeRows, selectedChartSymbol, selectedChartMarkPrice),
-    [brokerAuthoritative, brokerOpenTradeRows, displayTradeRows, selectedChartMarkPrice, selectedChartSymbol]
+    () => buildChartTrades(brokerChartTradeRows.length ? brokerChartTradeRows : displayTradeRows, selectedChartSymbol, selectedChartMarkPrice),
+    [brokerChartTradeRows, displayTradeRows, selectedChartMarkPrice, selectedChartSymbol]
   );
   const chartTrades = realChartTrades;
   const botTrackers = useMemo(
@@ -150,21 +159,23 @@ export default function FuturesLive() {
       decisions: displayTradeRows,
       marketData: liveMonitor?.marketData || {},
       brokerPositions: brokerSnapshot?.positions || [],
+      brokerClosedTrades: brokerClosedTradeRows,
+      brokerAuthoritative,
       botStarted,
     }),
-    [botStarted, brokerSnapshot, displayTradeRows, liveMonitor?.marketData, monitorSymbols, symbolStates]
+    [botStarted, brokerAuthoritative, brokerClosedTradeRows, brokerSnapshot, displayTradeRows, liveMonitor?.marketData, monitorSymbols, symbolStates]
   );
   const equityReviewStatus = useMemo(
     () => buildEquityReviewStatus({
       backendOffline,
       botStarted,
       feedRunning,
-      liveStatus,
       liveMonitor,
+      liveMarks,
       symbolStates,
       metrics,
     }),
-    [backendOffline, botStarted, feedRunning, liveStatus, liveMonitor, symbolStates, metrics]
+    [backendOffline, botStarted, feedRunning, liveMonitor, liveMarks, symbolStates, metrics]
   );
   const backendThinkingEntries = useMemo(
     () => Array.isArray(liveThinking) ? liveThinking.filter((entry) => entry && (entry.summary || entry.detail)).slice(0, 1000) : [],
@@ -209,9 +220,18 @@ export default function FuturesLive() {
 
   useEffect(() => {
     refreshLiveData();
-    const intervalId = window.setInterval(refreshLiveData, LIVE_MONITOR_REFRESH_MS);
-    return () => window.clearInterval(intervalId);
   }, [symbolsCsv, selectedTimeframe, selectedProfileCode]);
+
+  useEffect(() => {
+    loadLiveMarks();
+    const intervalId = window.setInterval(loadLiveMarks, LIVE_MARKS_REFRESH_MS);
+    return () => window.clearInterval(intervalId);
+  }, [symbolsCsv, selectedTimeframe]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(refreshLiveReconciliation, LIVE_RECONCILE_REFRESH_MS);
+    return () => window.clearInterval(intervalId);
+  }, [symbolsCsv, selectedTimeframe]);
 
   useEffect(() => {
     const sessionId = Number(liveStatus?.sessionId || 0);
@@ -230,6 +250,7 @@ export default function FuturesLive() {
       liveStatus,
       realtimeStatus,
       liveMonitor,
+      liveMarks,
       liveDecisions,
       liveMetrics,
       symbolStates,
@@ -243,20 +264,30 @@ export default function FuturesLive() {
     });
     if (!additions.length) return;
     setObservedThinking((current) => additions.concat(current).slice(0, 1000));
-  }, [backendOffline, botStarted, feedRunning, liveStatus, realtimeStatus, liveMonitor, liveDecisions, liveMetrics, symbolStates]);
+  }, [backendOffline, botStarted, feedRunning, liveStatus, realtimeStatus, liveMonitor, liveMarks, liveDecisions, liveMetrics, symbolStates]);
 
   useEffect(() => {
     return () => {
       if (chartTransitionTimer.current) {
         window.clearTimeout(chartTransitionTimer.current);
       }
+      requestControllers.current.forEach((controller) => controller.abort());
+      requestControllers.current.clear();
     };
   }, []);
 
   function refreshLiveData() {
-    loadLiveStatus();
+    loadLiveStatus({ forceSidecars: true });
     loadRealtimeStatus();
     loadLiveSnapshot();
+    loadLiveMetrics();
+    loadLiveMonitor();
+    loadLiveMarks();
+  }
+
+  function refreshLiveReconciliation() {
+    loadLiveStatus();
+    loadRealtimeStatus();
     loadLiveMetrics();
     loadLiveMonitor();
   }
@@ -279,32 +310,59 @@ export default function FuturesLive() {
     }
   }
 
-  function loadFundedProfiles() {
-    apiFetch("/api/futures/funded-rule-profiles")
+  function requestJson(key, path, onData, onError = null) {
+    if (requestControllers.current.has(key)) {
+      return;
+    }
+    const controller = new AbortController();
+    requestControllers.current.set(key, controller);
+    apiFetch(path, { signal: controller.signal })
       .then(noteBackendResponse)
       .then((response) => response.json())
-      .then((data) => {
+      .then((data) => onData(data))
+      .catch((error) => {
+        if (error?.name === "AbortError") return;
+        if (onError) {
+          onError(error);
+        } else {
+          noteBackendError(`Error loading ${key}:`, error);
+        }
+      })
+      .finally(() => {
+        if (requestControllers.current.get(key) === controller) {
+          requestControllers.current.delete(key);
+        }
+      });
+  }
+
+  function refreshDecisionSidecars(status, force = false) {
+    const signature = liveDecisionSidecarSignature(status);
+    if (!force && signature === decisionSidecarSignature.current) {
+      return;
+    }
+    decisionSidecarSignature.current = signature;
+    loadLiveDecisions(status);
+    loadLiveThinking(status);
+    loadLiveDecisionHistory();
+  }
+
+  function loadFundedProfiles() {
+    requestJson("fundedProfiles", "/api/futures/funded-rule-profiles", (data) => {
         const topstepProfiles = Array.isArray(data)
           ? data.filter((profile) => profile.code === "TOPSTEP_150K_PRACTICE" || profile.code === "TOPSTEP_50K_COMBINE")
           : [];
         setFundedProfiles(topstepProfiles.length ? topstepProfiles : [FALLBACK_PROFILE]);
-      })
-      .catch((error) => {
+      }, (error) => {
         noteBackendError("Error loading funded profiles:", error);
         setFundedProfiles([FALLBACK_PROFILE]);
       });
   }
 
-  function loadLiveStatus() {
-    apiFetch("/api/futures/live/status")
-      .then(noteBackendResponse)
-      .then((response) => response.json())
-      .then((data) => {
+  function loadLiveStatus(options = {}) {
+    requestJson("liveStatus", "/api/futures/live/status", (data) => {
         setLiveStatus(data || null);
-        loadLiveDecisions(data || null);
-        loadLiveThinking(data || null);
-      })
-      .catch((error) => {
+        refreshDecisionSidecars(data || null, Boolean(options.forceSidecars));
+      }, (error) => {
         noteBackendError("Error loading live status:", error);
         if (isApiNetworkError(error)) {
           setLiveStatus(null);
@@ -316,22 +374,14 @@ export default function FuturesLive() {
   }
 
   function loadRealtimeStatus() {
-    apiFetch("/api/futures/live/realtime/status")
-      .then(noteBackendResponse)
-      .then((response) => response.json())
-      .then((data) => setRealtimeStatus(data || null))
-      .catch((error) => {
+    requestJson("realtimeStatus", "/api/futures/live/realtime/status", (data) => setRealtimeStatus(data || null), (error) => {
         noteBackendError("Error loading realtime status:", error);
         if (isApiNetworkError(error)) setRealtimeStatus(null);
       });
   }
 
   function loadLiveSnapshot() {
-    apiFetch("/api/futures/live/strategy-snapshot")
-      .then(noteBackendResponse)
-      .then((response) => response.json())
-      .then((data) => setSnapshotState(data || null))
-      .catch((error) => {
+    requestJson("liveSnapshot", "/api/futures/live/strategy-snapshot", (data) => setSnapshotState(data || null), (error) => {
         noteBackendError("Error loading live strategy snapshot:", error);
         if (isApiNetworkError(error)) setSnapshotState(null);
       });
@@ -343,13 +393,16 @@ export default function FuturesLive() {
       setLiveDecisions([]);
       return;
     }
-    apiFetch(`/api/futures/live/decisions?sessionId=${sessionId}&limit=160`)
-      .then(noteBackendResponse)
-      .then((response) => response.json())
-      .then((data) => setLiveDecisions(Array.isArray(data) ? data : []))
-      .catch((error) => {
+    requestJson("liveDecisions", `/api/futures/live/decisions?sessionId=${sessionId}&limit=160`, (data) => setLiveDecisions(Array.isArray(data) ? data : []), (error) => {
         noteBackendError("Error loading live decisions:", error);
         setLiveDecisions([]);
+      });
+  }
+
+  function loadLiveDecisionHistory() {
+    requestJson("liveDecisionHistory", "/api/futures/live/decisions?limit=500", (data) => setLiveDecisionHistory(Array.isArray(data) ? data : []), (error) => {
+        noteBackendError("Error loading live decision history:", error);
+        if (isApiNetworkError(error)) setLiveDecisionHistory([]);
       });
   }
 
@@ -360,7 +413,13 @@ export default function FuturesLive() {
       setLiveThinkingStatus("idle");
       return;
     }
-    apiFetch(`/api/futures/live/thinking?sessionId=${sessionId}&limit=1000`)
+    const key = "liveThinking";
+    if (requestControllers.current.has(key)) {
+      return;
+    }
+    const controller = new AbortController();
+    requestControllers.current.set(key, controller);
+    apiFetch(`/api/futures/live/thinking?sessionId=${sessionId}&limit=1000`, { signal: controller.signal })
       .then((response) => {
         if (response.status === 404) {
           setLiveThinkingStatus("observed");
@@ -371,20 +430,54 @@ export default function FuturesLive() {
       })
       .then((data) => setLiveThinking(Array.isArray(data) ? data : []))
       .catch((error) => {
+        if (error?.name === "AbortError") return;
         if (isApiNetworkError(error)) noteBackendError("Error loading live thinking:", error);
         setLiveThinkingStatus("observed");
         setLiveThinking([]);
+      })
+      .finally(() => {
+        if (requestControllers.current.get(key) === controller) {
+          requestControllers.current.delete(key);
+        }
       });
   }
 
   function loadLiveMetrics() {
-    apiFetch("/api/futures/live/metrics")
-      .then(noteBackendResponse)
-      .then((response) => response.json())
-      .then((data) => setLiveMetrics(data || null))
-      .catch((error) => {
+    requestJson("liveMetrics", "/api/futures/live/metrics", (data) => setLiveMetrics(data || null), (error) => {
         noteBackendError("Error loading live metrics:", error);
         if (isApiNetworkError(error)) setLiveMetrics(null);
+      });
+  }
+
+  function loadLiveMarks() {
+    const params = new URLSearchParams({
+      symbols: symbolsCsv || DEFAULT_SYMBOLS.join(","),
+      timeframe: selectedTimeframe,
+    });
+    requestJson("liveMarks", `/api/futures/live/marks?${params.toString()}`, (data) => {
+        if (!data?.success) return;
+        setLiveMarks(data);
+        const normalizedTimeframe = normalizeClientTimeframe(data.timeframe || selectedTimeframe);
+        setLiveMetrics((current) => mergeMetricsWithMarks(current, data));
+        setLiveMonitor((current) => mergeMonitorWithMarks(current, data, normalizedTimeframe));
+        setMonitorCache((current) => {
+          const base = current?.[normalizedTimeframe] || null;
+          const merged = mergeMonitorWithMarks(base, data, normalizedTimeframe);
+          return merged ? { ...current, [normalizedTimeframe]: merged } : current;
+        });
+      }, (error) => {
+        noteBackendError("Error loading live marks:", error);
+        setLiveMarks({
+          success: false,
+          serverTime: new Date().toISOString(),
+          checks: {
+            overall: {
+              ok: false,
+              severity: "warn",
+              message: "Fast live marks endpoint did not respond; slower monitor and metrics polling remain active.",
+            },
+          },
+        });
       });
   }
 
@@ -394,10 +487,7 @@ export default function FuturesLive() {
       limit: String(monitorLimitForTimeframe(selectedTimeframe)),
       timeframe: selectedTimeframe,
     });
-    apiFetch(`/api/futures/live/monitor?${params.toString()}`)
-      .then(noteBackendResponse)
-      .then((response) => response.json())
-      .then((data) => {
+    requestJson("liveMonitor", `/api/futures/live/monitor?${params.toString()}`, (data) => {
         if (data) {
           const responseTimeframe = normalizeClientTimeframe(data.timeframe || selectedTimeframe);
           const monitorWithTimeframe = { ...data, timeframe: responseTimeframe };
@@ -410,8 +500,7 @@ export default function FuturesLive() {
           setLiveMonitor(null);
         }
         setLastMonitorRefreshAt(new Date().toISOString());
-      })
-      .catch((error) => {
+      }, (error) => {
         noteBackendError("Error loading live monitor:", error);
         if (isApiNetworkError(error)) {
           setLiveMonitor(null);
@@ -617,7 +706,25 @@ export default function FuturesLive() {
 
       </section>
 
-      <FuturesThinkingLog entries={thinkingEntries} status={equityReviewStatus} onRefresh={refreshLiveData} />
+      <section className="app-live-grid futures-live-summary-grid">
+        <MetricCard label="Current Balance" value={formatAccountCurrency(Number(metrics?.currentBalance ?? Number(metrics?.accountSize || 0) + Number(metrics?.currentPnl || 0)))} detail={metricSourceDetail(metrics, "balance")} />
+        <MetricCard label="Current PnL" value={formatCurrency(metrics?.currentPnl)} accent={Number(metrics?.currentPnl || 0)} detail={metricSourceDetail(metrics, "pnl")} />
+        <MetricCard label="Drawdown" value={formatCurrency(-Math.abs(Number(metrics?.drawdown || 0)))} accent={-Math.abs(Number(metrics?.drawdown || 0))} detail={metricSourceDetail(metrics, "drawdown")} />
+        <MetricCard label="Return %" value={formatPct(metrics?.returnPct)} accent={Number(metrics?.returnPct || 0)} detail={metricSourceDetail(metrics, "return")} />
+        <MetricCard label="Trades" value={String(metrics?.numberOfTrades || 0)} detail={metricSourceDetail(metrics, "trades")} />
+      </section>
+
+      <section className="app-panel">
+        <div className="d-flex align-items-start justify-content-between gap-2 flex-wrap">
+          <div>
+            <div className="fw-bold app-kicker">Live Trades</div>
+          </div>
+          <button type="button" className="app-btn app-btn-small px-3" onClick={refreshLiveData}>
+            Refresh
+          </button>
+        </div>
+        <TradesTable trades={liveTrades} mode="live" />
+      </section>
 
       <section className="app-panel futures-monitor-panel">
         <div className="d-flex align-items-start justify-content-between gap-2 flex-wrap">
@@ -654,32 +761,14 @@ export default function FuturesLive() {
       <section className="app-panel">
         <div className="d-flex align-items-start justify-content-between gap-2 flex-wrap">
           <div>
-            <div className="fw-bold app-kicker">Live Trades</div>
-          </div>
-          <button type="button" className="app-btn app-btn-small px-3" onClick={refreshLiveData}>
-            Refresh
-          </button>
-        </div>
-        <TradesTable trades={liveTrades} mode="live" />
-      </section>
-
-      <section className="app-live-grid futures-live-summary-grid">
-        <MetricCard label="Current Balance" value={formatAccountCurrency(Number(metrics?.currentBalance ?? Number(metrics?.accountSize || 0) + Number(metrics?.currentPnl || 0)))} detail={metricSourceDetail(metrics, "balance")} />
-        <MetricCard label="Current PnL" value={formatCurrency(metrics?.currentPnl)} accent={Number(metrics?.currentPnl || 0)} detail={metricSourceDetail(metrics, "pnl")} />
-        <MetricCard label="Drawdown" value={formatCurrency(-Math.abs(Number(metrics?.drawdown || 0)))} accent={-Math.abs(Number(metrics?.drawdown || 0))} detail={metricSourceDetail(metrics, "drawdown")} />
-        <MetricCard label="Return %" value={formatPct(metrics?.returnPct)} accent={Number(metrics?.returnPct || 0)} detail={metricSourceDetail(metrics, "return")} />
-        <MetricCard label="Trades" value={String(metrics?.numberOfTrades || 0)} detail={metricSourceDetail(metrics, "trades")} />
-      </section>
-
-      <section className="app-panel">
-        <div className="d-flex align-items-start justify-content-between gap-2 flex-wrap">
-          <div>
             <div className="fw-bold app-kicker">All Trades</div>
           </div>
           <span className="app-badge app-neutral-badge">{allTradeRows.length} rows</span>
         </div>
         <TradesTable trades={allTradeRows} mode="all" />
       </section>
+
+      <FuturesThinkingLog entries={thinkingEntries} status={equityReviewStatus} onRefresh={refreshLiveData} />
     </div>
   );
 }
@@ -726,9 +815,9 @@ function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
               <span><b>{tracker.liveTrades}</b> live</span>
               <span className={`futures-bot-signal ${tracker.signalTone}`}>{tracker.signal}</span>
             </div>
-            <div className="futures-bot-tracker-health">
+            <div className={`futures-bot-tracker-health ${tracker.healthDetail || tracker.errorCode ? "" : "compact"}`}>
               <span className={`futures-health-pill ${tracker.healthTone}`}>{tracker.healthLabel}</span>
-              <small>{tracker.errorCode || tracker.healthDetail || "--"}</small>
+              {(tracker.errorCode || tracker.healthDetail) && <small>{tracker.errorCode || tracker.healthDetail}</small>}
             </div>
             <div className="futures-bot-tracker-foot">
               <span>{tracker.detail}</span>
@@ -760,7 +849,6 @@ function FuturesThinkingLog({ entries, status, onRefresh }) {
           <div className="fw-bold app-kicker">Equity Review</div>
         </div>
         <div className="futures-thinking-actions">
-          <span className={`futures-review-status ${status?.tradeTone || "idle"}`}>Trade: {status?.tradeLabel || "Idle"}</span>
           <span className={`futures-review-status ${status?.healthTone || "idle"}`}>Health: {status?.healthLabel || "Waiting"}</span>
           <span className="app-badge app-neutral-badge">{rows.length} logs</span>
           <div className="futures-thinking-pager" aria-label="Thinking log pages">
@@ -806,6 +894,7 @@ function buildObservedLiveBotLogEntries({
   liveStatus,
   realtimeStatus,
   liveMonitor,
+  liveMarks,
   liveDecisions,
   symbolStates,
 }) {
@@ -861,6 +950,14 @@ function buildObservedLiveBotLogEntries({
       detail: `${trackedSymbols.length || DEFAULT_SYMBOLS.length} symbols are being monitored. ${cleanLogText(realtimeStatus?.lastMessage || liveMonitor?.realtimeMessage || "Price feed is active.")}`,
     }));
   }
+
+  appendLiveMarksCheckLogEntries(entries, {
+    liveMarks,
+    feedRunning,
+    sessionId,
+    sessionKey,
+    observedAt,
+  });
 
   const marketSession = liveStatus?.marketSession || liveMonitor?.marketSession || null;
   if (marketSession) {
@@ -930,6 +1027,72 @@ function buildObservedLiveBotLogEntries({
   return entries;
 }
 
+function appendLiveMarksCheckLogEntries(entries, { liveMarks, feedRunning, sessionId, sessionKey, observedAt }) {
+  if (!liveMarks && feedRunning) {
+    entries.push(observedLogEntry({
+      key: `marks-missing|${sessionKey}`,
+      sessionId,
+      createdAt: observedAt,
+      phase: "Metric Checks",
+      tone: "warn",
+      summary: "Fast marks have not returned yet.",
+      detail: "The page is still using slower monitor and metrics polling until the marks endpoint returns a status payload.",
+    }));
+    return;
+  }
+  if (!liveMarks) return;
+  const checks = liveMarks.checks || {};
+  const counts = checks.counts || {};
+  const overall = checks.overall || {};
+  entries.push(observedLogEntry({
+    key: `marks-overall|${sessionKey}|${overall.severity || "unknown"}|${Boolean(overall.ok)}`,
+    sessionId,
+    createdAt: liveMarks.serverTime || observedAt,
+    phase: "Metric Checks",
+    tone: checkTone(overall),
+    summary: cleanLogText(overall.message || (overall.ok ? "Fast live marks checks are healthy." : "Fast live marks need attention.")),
+    detail: metricCheckCountsDetail(counts),
+  }));
+  [
+    ["marketFeed", "Market Data"],
+    ["symbolMarks", "Missing Data"],
+    ["currentCandles", "Candle Data"],
+    ["brokerAccount", "Broker Account"],
+    ["brokerSync", "Broker Sync"],
+  ].forEach(([key, phase]) => {
+    const check = checks[key];
+    if (!check || check.ok) return;
+    entries.push(observedLogEntry({
+      key: `marks-check|${sessionKey}|${key}|${check.severity || "warn"}|${cleanLogText(check.message)}`,
+      sessionId,
+      createdAt: liveMarks.serverTime || observedAt,
+      phase,
+      tone: checkTone(check),
+      summary: cleanLogText(check.message || `${phase} check needs attention.`),
+      detail: metricCheckCountsDetail(counts),
+    }));
+  });
+}
+
+function checkTone(check) {
+  const severity = String(check?.severity || "").toLowerCase();
+  if (severity === "error") return "error";
+  if (severity === "warn") return "warn";
+  return check?.ok === false ? "warn" : "active";
+}
+
+function metricCheckCountsDetail(counts = {}) {
+  const parts = [
+    `positions ${formatInteger(counts.positions ?? 0)}`,
+    `orders ${formatInteger(counts.orders ?? 0)}`,
+    `trades ${formatInteger(counts.trades ?? 0)}`,
+  ];
+  if (Number(counts.feedStaleSeconds) >= 0) parts.push(`feed stale ${formatInteger(counts.feedStaleSeconds)}s`);
+  if (Number(counts.brokerSyncAgeSeconds) >= 0) parts.push(`broker sync age ${formatInteger(counts.brokerSyncAgeSeconds)}s`);
+  if (Number(counts.brokerEventAgeSeconds) >= 0) parts.push(`broker event age ${formatInteger(counts.brokerEventAgeSeconds)}s`);
+  return parts.join("; ");
+}
+
 function observedDecisionLogEntry(decision, sessionId, fallbackTime) {
   const id = decision?.id || `${decision?.symbol || ""}-${decision?.strategyCode || ""}-${decision?.signalTime || ""}-${decision?.status || ""}`;
   const status = String(decision?.status || "").toUpperCase();
@@ -983,33 +1146,14 @@ function cleanLogText(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
-function buildEquityReviewStatus({ backendOffline, botStarted, feedRunning, liveStatus, liveMonitor, symbolStates, metrics }) {
-  let tradeLabel = "Idle";
-  let tradeTone = "idle";
-  if (backendOffline) {
-    tradeLabel = "Blocked";
-    tradeTone = "blocked";
-  } else if (botStarted) {
-    const marketSession = liveStatus?.marketSession || liveMonitor?.marketSession || null;
-    if (marketSession && !marketSession.entryWindowOpen) {
-      tradeLabel = "Gate Closed";
-      tradeTone = "idle";
-    } else if (Number(liveStatus?.decisionCount || 0) > 0) {
-      tradeLabel = "Evaluating";
-      tradeTone = "active";
-    } else {
-      tradeLabel = "Thinking";
-      tradeTone = "thinking";
-    }
-  } else if (feedRunning) {
-    tradeLabel = "Feed Live";
-    tradeTone = "active";
-  }
-
+function buildEquityReviewStatus({ backendOffline, botStarted, feedRunning, liveMonitor, liveMarks, symbolStates, metrics }) {
   const healthIssues = [];
   if (backendOffline) healthIssues.push({ tone: "error" });
   if (botStarted && !feedRunning) healthIssues.push({ tone: "error" });
   if (Number(liveMonitor?.feedStaleSeconds ?? -1) > 180) healthIssues.push({ tone: "error" });
+  const marksSeverity = liveMarks?.checks?.overall?.severity || "";
+  if (marksSeverity === "error") healthIssues.push({ tone: "error" });
+  if (marksSeverity === "warn") healthIssues.push({ tone: "warn" });
   if (metrics && metrics.brokerMetricsReady === false) healthIssues.push({ tone: "warn" });
   (Array.isArray(symbolStates) ? symbolStates : []).forEach((state) => {
     const health = String(state?.healthStatus || "").toLowerCase();
@@ -1020,8 +1164,6 @@ function buildEquityReviewStatus({ backendOffline, botStarted, feedRunning, live
   const hasError = healthIssues.some((issue) => issue.tone === "error");
   const hasWarn = healthIssues.some((issue) => issue.tone === "warn");
   return {
-    tradeLabel,
-    tradeTone,
     healthLabel: hasError ? "Error" : hasWarn ? "Attention" : botStarted || feedRunning ? "OK" : "Idle",
     healthTone: hasError ? "error" : hasWarn ? "warn" : botStarted || feedRunning ? "ok" : "idle",
     issueCount: healthIssues.length,
@@ -1031,7 +1173,9 @@ function buildEquityReviewStatus({ backendOffline, botStarted, feedRunning, live
 function equityReviewCode(entry) {
   const phase = String(entry?.phase || "").toUpperCase();
   const tone = String(entry?.tone || "").toUpperCase();
-  if (phase.includes("MARKET") || phase.includes("TRACKER")) return tone === "ERROR" ? "DATA_ERROR" : "DATA_CHECK";
+  if (phase.includes("MARKET") || phase.includes("TRACKER") || phase.includes("MISSING") || phase.includes("CANDLE")) return tone === "ERROR" ? "DATA_ERROR" : "DATA_CHECK";
+  if (phase.includes("METRIC")) return tone === "ERROR" ? "METRIC_ERROR" : tone === "WARN" ? "METRIC_WARN" : "METRIC_CHECK";
+  if (phase.includes("BROKER")) return tone === "ERROR" ? "BROKER_ERROR" : tone === "WARN" ? "BROKER_WARN" : "BROKER_CHECK";
   if (phase.includes("RISK")) return tone === "ERROR" || tone === "BLOCKED" ? "RISK_BLOCK" : "RISK_CHECK";
   if (phase.includes("TOPSTEP") || phase.includes("ORDER")) return tone === "ERROR" || tone === "BLOCKED" ? "ORDER_ERROR" : "ORDER_CHECK";
   if (phase.includes("EXIT") || phase.includes("CLOSE") || phase.includes("POST CLOSE")) return tone === "ERROR" ? "SELL_ERROR" : "SELL_CHECK";
@@ -1161,7 +1305,8 @@ function FuturesMarketChart({
 
   const toY = (price) => priceBottom - (((Number(price || 0) - min) / range) * (priceBottom - priceTop));
   const toX = (index) => (leadingSlots + index) * slotWidth + slotWidth / 2;
-  const findVisibleIndex = (time) => findNearestCandleIndex(visibleCandles, time);
+  const visibleCandleToleranceMs = timeframeMinutesForClient(timeframe) * 60000 * 1.6;
+  const findVisibleIndex = (time) => findNearestCandleIndex(visibleCandles, time, visibleCandleToleranceMs);
   const setClampedOffset = (next) => setScrollOffset(Math.max(0, Math.min(maxOffset, next)));
   const panBy = (steps) => setClampedOffset(offset + steps);
   const zoomBy = (delta) => setVisibleBars((value) => Math.max(24, Math.min(220, value + delta)));
@@ -1567,15 +1712,20 @@ function FuturesMarketChart({
           const exitX = exitIndex == null ? null : toX(exitIndex);
           const entryY = toY(trade.entryPrice);
           const markY = toY(trade.currentPrice || latestPrice);
+          if (entryX == null && (!trade.closed || exitX == null)) {
+            return null;
+          }
           const popoverWidth = 372;
           const popoverHeight = 132;
-          const preferredPopoverX = entryX != null && entryX + popoverWidth + 34 < plotWidth ? entryX + 28 : Number(entryX || 0) - popoverWidth - 28;
+          const anchorX = entryX ?? exitX ?? 0;
+          const anchorY = entryX == null ? markY : entryY;
+          const preferredPopoverX = anchorX + popoverWidth + 34 < plotWidth ? anchorX + 28 : Number(anchorX || 0) - popoverWidth - 28;
           const popoverX = Math.max(10, Math.min(plotWidth - popoverWidth - 10, preferredPopoverX));
-          const preferredPopoverY = entryY - popoverHeight - 34 > priceTop ? entryY - popoverHeight - 34 : entryY + 38;
+          const preferredPopoverY = anchorY - popoverHeight - 34 > priceTop ? anchorY - popoverHeight - 34 : anchorY + 38;
           const popoverY = Math.max(priceTop + 8, Math.min(priceBottom - popoverHeight - 10, preferredPopoverY));
           const tradeHovered = hoveredTradeIndex === index;
           const tradeKey = `${symbol || "chart"}-${timeframe || "tf"}-${trade.id || index}-${trade.entryTime || ""}`;
-          const tradeActive = Boolean(entryX != null && selectedTradeKey === tradeKey);
+          const tradeActive = Boolean((entryX != null || exitX != null) && selectedTradeKey === tradeKey);
           const pnlClass = Number(trade.unrealizedPnl || 0) >= 0 ? "positive" : "negative";
           const statusLabel = trade.closed ? "SOLD" : "LIVE";
           const toggleTradePopover = (event) => {
@@ -1688,6 +1838,91 @@ function normalizeCandle(candle) {
   };
 }
 
+function liveDecisionSidecarSignature(status) {
+  const sessionId = Number(status?.running ? status?.sessionId || 0 : 0);
+  return [
+    sessionId,
+    Number(status?.decisionCount || 0),
+    Number(status?.acceptedDecisionCount || 0),
+    Number(status?.rejectedDecisionCount || 0),
+    status?.lastProcessedLiveBarTime || "",
+  ].join("|");
+}
+
+function mergeMonitorWithMarks(monitor, marks, timeframe) {
+  if (!monitor || !marks?.success || !marks.symbols) return monitor;
+  const normalizedTimeframe = normalizeClientTimeframe(timeframe || marks.timeframe || monitor.timeframe);
+  const marketData = { ...(monitor.marketData || {}) };
+  Object.entries(marks.symbols || {}).forEach(([rawSymbol, patch]) => {
+    const symbol = String(rawSymbol || "").toUpperCase();
+    if (!symbol || !patch?.currentCandle) return;
+    marketData[symbol] = mergeCurrentCandleIntoSeries(marketData[symbol], patch.currentCandle);
+  });
+  return {
+    ...monitor,
+    timeframe: normalizeClientTimeframe(monitor.timeframe || normalizedTimeframe),
+    realtimeRunning: monitor.realtimeRunning || Boolean(marks.feedFresh),
+    lastRealtimeEventAt: marks.lastEventAt || monitor.lastRealtimeEventAt,
+    serverTime: marks.serverTime || monitor.serverTime,
+    feedStaleSeconds: Number.isFinite(Number(marks.feedStaleSeconds)) ? Number(marks.feedStaleSeconds) : monitor.feedStaleSeconds,
+    marketData,
+    symbolStates: mergeSymbolStatesWithMarks(monitor.symbolStates, marks),
+  };
+}
+
+function mergeCurrentCandleIntoSeries(series, currentCandle) {
+  const candles = Array.isArray(series) ? [...series] : [];
+  const patch = normalizeCandle(currentCandle);
+  if (!patch.time || Number(patch.close || 0) <= 0) return candles;
+  const lastIndex = candles.length - 1;
+  if (lastIndex < 0) return [patch];
+  const last = normalizeCandle(candles[lastIndex]);
+  const lastTime = parseChartTime(last.time);
+  const patchTime = parseChartTime(patch.time);
+  if (last.time === patch.time) {
+    candles[lastIndex] = {
+      ...last,
+      ...patch,
+      high: Math.max(Number(last.high || 0), Number(patch.high || patch.close || 0)),
+      low: Math.min(Number(last.low || patch.low || patch.close || 0), Number(patch.low || patch.close || 0)),
+      volume: Math.max(Number(last.volume || 0), Number(patch.volume || 0)),
+      vwap: Number(last.vwap || 0) || Number(patch.vwap || 0),
+      ema9: Number(last.ema9 || 0) || Number(patch.ema9 || 0),
+      ema20: Number(last.ema20 || 0) || Number(patch.ema20 || 0),
+      rsi14: Number(last.rsi14 || 0) || Number(patch.rsi14 || 0),
+      live: true,
+    };
+    return candles;
+  }
+  if (patchTime && (!lastTime || patchTime > lastTime)) {
+    candles.push(patch);
+  }
+  return candles;
+}
+
+function mergeSymbolStatesWithMarks(symbolStates, marks) {
+  const bySymbol = new Map((Array.isArray(symbolStates) ? symbolStates : []).map((state) => [String(state.symbol || "").toUpperCase(), state]));
+  Object.entries(marks.symbols || {}).forEach(([rawSymbol, patch]) => {
+    const symbol = String(rawSymbol || "").toUpperCase();
+    if (!symbol) return;
+    const current = bySymbol.get(symbol) || { symbol };
+    const lastPrice = Number(patch?.lastPrice || current.lastPrice || 0);
+    const currentCandleTime = patch?.currentCandle?.time || current.lastBarTime || "";
+    bySymbol.set(symbol, {
+      ...current,
+      symbol,
+      dataSource: current.dataSource || "LIVE_MARKS_CACHE",
+      analysisStatus: current.analysisStatus || (marks.feedFresh ? "Tracking live marks" : "Waiting for live marks"),
+      healthStatus: current.healthStatus || (marks.feedFresh ? "ok" : "warn"),
+      healthDetail: current.healthDetail || (marks.feedFresh ? "Live marks are updating." : "Fast marks are waiting for a fresh ProjectX event."),
+      lastPrice,
+      lastBarTime: currentCandleTime,
+      liveEvents: Math.max(Number(current.liveEvents || 0), Number(patch?.currentCandle?.events || 0)),
+    });
+  });
+  return Array.from(bySymbol.values());
+}
+
 function latestSessionChartCandles(candles) {
   const series = Array.isArray(candles) ? candles : [];
   if (series.length <= 1) return series;
@@ -1776,27 +2011,118 @@ function augmentTopstepMetricsWithMarks(metrics, symbolStates) {
   };
 }
 
-function buildBrokerOpenTradeRows(positions) {
-  return (Array.isArray(positions) ? positions : [])
-    .filter((position) => Number(position?.contracts || 0) > 0)
-    .map((position, index) => ({
-      id: `topstep-position-${position.id || position.contractId || position.symbol || index}`,
-      symbol: String(position.symbol || "").toUpperCase(),
-      strategyCode: "Topstep",
-      strategyName: "Topstep Open Position",
-      side: String(position.side || "").toUpperCase() === "SHORT" ? "SHORT" : "LONG",
-      contracts: Number(position.contracts || 0),
-      entryPrice: Number(position.entryPrice || position.averagePrice || 0),
-      exitPrice: 0,
-      pnl: Number(position.unrealizedPnl ?? position.pnl ?? 0),
-      status: "LIVE_TOPSTEP",
-      reason: "Open position from Topstep Position/searchOpen; mark PnL updates from live ProjectX price.",
-      entryTime: position.createdAt,
-      createdAt: position.createdAt,
-    }));
+function mergeMetricsWithMarks(metrics, marks) {
+  if (!marks?.success) return metrics;
+  const account = marks.account || {};
+  const current = metrics || {};
+  const currentBroker = current.broker || {};
+  const positions = Array.isArray(marks.positions) ? marks.positions : (Array.isArray(currentBroker.positions) ? currentBroker.positions : []);
+  const trades = Array.isArray(marks.trades) ? marks.trades : (Array.isArray(currentBroker.trades) ? currentBroker.trades : []);
+  const orders = Array.isArray(marks.orders) ? marks.orders : (Array.isArray(currentBroker.orders) ? currentBroker.orders : []);
+  const accountSize = finiteNumber(account.accountSize, current.accountSize || currentBroker.accountSize || 0);
+  const currentPnl = finiteNumber(account.currentPnl, current.currentPnl || 0);
+  const currentBalance = finiteNumber(account.currentBalance, current.currentBalance || (accountSize + currentPnl));
+  const realizedPnl = finiteNumber(account.realizedPnl, currentBroker.realizedPnl ?? currentPnl);
+  const unrealizedPnl = finiteNumber(account.unrealizedPnl, currentBroker.unrealizedPnl ?? 0);
+  const returnPct = finiteNumber(account.returnPct, accountSize > 0 ? (currentPnl / accountSize) * 100 : current.returnPct || 0);
+  const drawdown = finiteNumber(account.drawdown, current.drawdown || 0);
+  const numberOfTrades = Number.isFinite(Number(account.numberOfTrades)) ? Number(account.numberOfTrades) : Number(current.numberOfTrades || trades.length || 0);
+  const openTrades = Number.isFinite(Number(account.openTrades)) ? Number(account.openTrades) : Number(current.openTrades || positions.length || 0);
+  return {
+    ...current,
+    success: true,
+    dataSource: current.dataSource === "TOPSTEPX" ? current.dataSource : "LIVE_MARKS_CACHE",
+    brokerMetricsReady: current.brokerMetricsReady || positions.length > 0 || trades.length > 0,
+    currentPnl,
+    currentBalance,
+    returnPct,
+    numberOfTrades,
+    openTrades,
+    drawdown,
+    accountSize,
+    lastUpdated: marks.serverTime || current.lastUpdated,
+    broker: {
+      ...currentBroker,
+      success: currentBroker.success || positions.length > 0 || trades.length > 0 || finiteNumberOrNull(account.currentBalance) != null,
+      source: currentBroker.source || "LIVE_MARKS_CACHE",
+      syncedAt: marks.lastBrokerSyncAt || currentBroker.syncedAt,
+      lastEventAt: marks.lastBrokerEventAt || currentBroker.lastEventAt,
+      accountSize,
+      currentPnl,
+      currentBalance,
+      realizedPnl,
+      unrealizedPnl,
+      returnPct,
+      drawdown,
+      numberOfTrades,
+      openTrades,
+      positions,
+      trades,
+      orders,
+    },
+  };
 }
 
-function buildBrokerClosedTradeRows(trades) {
+function finiteNumber(value, fallback = 0) {
+  if (value == null || value === "") return Number(fallback || 0);
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : Number(fallback || 0);
+}
+
+function finiteNumberOrNull(value) {
+  if (value == null || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function buildBrokerOpenTradeRows(positions, decisions = []) {
+  return (Array.isArray(positions) ? positions : [])
+    .filter((position) => Number(position?.contracts || 0) > 0)
+    .map((position, index) => {
+      const symbol = String(position.symbol || "").toUpperCase();
+      const side = String(position.side || "").toUpperCase() === "SHORT" ? "SHORT" : "LONG";
+      const contracts = Number(position.contracts || 0);
+      const entryPrice = Number(position.entryPrice || position.averagePrice || 0);
+      const matchedDecision = findBrokerDecisionMeta(decisions, {
+        symbol,
+        side,
+        contracts,
+        entryPrice,
+        entryTime: position.createdAt,
+        createdAt: position.createdAt,
+      });
+      return {
+        id: `topstep-position-${position.id || position.contractId || position.symbol || index}`,
+        symbol,
+        strategyCode: tradeStrategyCode(matchedDecision, "Topstep"),
+        strategyName: matchedDecision?.strategyName || "Topstep Open Position",
+        side,
+        contracts,
+        entryPrice,
+        exitPrice: 0,
+        pnl: Number(position.unrealizedPnl ?? position.pnl ?? 0),
+        status: "LIVE_TOPSTEP",
+        entryReason: buildEntryReason({
+          strategyCode: matchedDecision?.strategyCode,
+          strategyName: matchedDecision?.strategyName,
+          side,
+          contracts,
+          entryPrice,
+          stopPrice: matchedDecision?.stopPrice,
+          targetPrice: matchedDecision?.targetPrice,
+          signalTime: matchedDecision?.signalTime,
+          fallback: "Open position from Topstep Position/searchOpen; mark PnL updates from live ProjectX price.",
+        }),
+        exitReason: "Open trade. Exit reason and fees will populate after Topstep reports the close.",
+        fees: null,
+        reason: "Open position from Topstep Position/searchOpen; mark PnL updates from live ProjectX price.",
+        entryTime: position.createdAt,
+        createdAt: position.createdAt,
+      };
+    });
+}
+
+function buildBrokerClosedTradeRows(trades, decisions = []) {
   const openLots = new Map();
   const rows = [];
   const sortedTrades = (Array.isArray(trades) ? trades : [])
@@ -1845,20 +2171,44 @@ function buildBrokerClosedTradeRows(trades) {
     const entryPrice = matchedContracts > 0 ? weightedEntry / matchedContracts : 0;
     const rowContracts = matchedContracts || contracts;
     const positionSide = entrySide ? positionSideFromEntrySide(entrySide) : positionSideFromClosingSide(tradeSide);
+    const matchedDecision = findBrokerDecisionMeta(decisions, {
+      symbol,
+      side: positionSide,
+      contracts: rowContracts,
+      entryPrice,
+      entryTime,
+      createdAt: trade.createdAt,
+      closed: true,
+    });
     const reason = entryPrice > 0
       ? `Topstep Trade/search paired entry and close fills${fees ? `; fees ${formatCurrency(fees)}` : ""}.`
       : `Topstep Trade/search closed fill${fees ? `; fees ${formatCurrency(fees)}` : ""}; entry fill outside current sync window.`;
     rows.push({
       id: `topstep-trade-${trade.id || trade.orderId || index}`,
       symbol,
-      strategyCode: "Topstep",
-      strategyName: "Topstep Closed Trade",
+      strategyCode: tradeStrategyCode(matchedDecision, "Topstep"),
+      strategyName: matchedDecision?.strategyName || "Topstep Closed Trade",
       side: positionSide,
       contracts: rowContracts,
       entryPrice,
       exitPrice: fillPrice,
       pnl: Number(trade.pnl || 0),
       status: "SOLD_TOPSTEP",
+      entryReason: buildEntryReason({
+        strategyCode: matchedDecision?.strategyCode,
+        strategyName: matchedDecision?.strategyName,
+        side: positionSide,
+        contracts: rowContracts,
+        entryPrice,
+        stopPrice: matchedDecision?.stopPrice,
+        targetPrice: matchedDecision?.targetPrice,
+        signalTime: matchedDecision?.signalTime,
+        fallback: entryPrice > 0
+          ? "Topstep paired this row from broker entry and close fills. No local strategy decision matched this fill, so the exact strategy source is unavailable in this sync."
+          : "Topstep reported the close fill, but the matching entry fill is outside the current broker sync window.",
+      }),
+      exitReason: matchedDecision?.exitReason || `Closed by Topstep fill at ${formatPrice(fillPrice)}. Net PnL uses broker-reported fees.`,
+      fees,
       reason,
       entryTime: entryTime || trade.createdAt,
       createdAt: trade.createdAt,
@@ -1888,6 +2238,115 @@ function positionSideFromClosingSide(closingSide) {
   return closingSide === "BUY" ? "SHORT" : "LONG";
 }
 
+function tradeStrategyCode(decision, fallback = "Topstep") {
+  const code = String(decision?.strategyCode || "").trim();
+  return code || fallback;
+}
+
+function findBrokerDecisionMeta(decisions, target) {
+  const symbol = String(target?.symbol || "").toUpperCase();
+  const side = String(target?.side || "").toUpperCase();
+  if (!symbol || !side) return null;
+  const targetTime = parseChartTime(target?.entryTime || target?.createdAt);
+  const targetPrice = Number(target?.entryPrice || 0);
+  const targetContracts = Number(target?.contracts || 0);
+  const tick = instrumentTickSize(symbol);
+  let best = null;
+  let bestScore = Infinity;
+  (Array.isArray(decisions) ? decisions : []).forEach((decision) => {
+    if (!isEntryDecision(decision)) return;
+    if (String(decision.symbol || "").toUpperCase() !== symbol) return;
+    if (String(decision.side || "").toUpperCase() !== side) return;
+    const strategyCode = String(decision.strategyCode || "").trim();
+    if (!strategyCode || strategyCode.toUpperCase() === "TOPSTEP") return;
+    const decisionTime = parseChartTime(decision.entryTime || decision.signalTime || decision.createdAt);
+    const decisionPrice = Number(decision.entryPrice || 0);
+    const decisionContracts = Number(decision.contracts || 0);
+    const timeMinutes = targetTime && decisionTime ? Math.abs(targetTime - decisionTime) / 60000 : 999;
+    const priceTicks = targetPrice > 0 && decisionPrice > 0 ? Math.abs(targetPrice - decisionPrice) / Math.max(tick, 0.01) : 24;
+    const contractPenalty = targetContracts > 0 && decisionContracts > 0 && targetContracts !== decisionContracts ? 18 : 0;
+    const score = timeMinutes + priceTicks * 2 + contractPenalty;
+    if (score < bestScore) {
+      bestScore = score;
+      best = decision;
+    }
+  });
+  if (bestScore > 90) return null;
+  return target?.closed ? enrichBrokerDecisionWithExit(best, decisions) : best;
+}
+
+function enrichBrokerDecisionWithExit(decision, decisions) {
+  if (!decision) return null;
+  const entryKey = tradeExitLookupKey(decision);
+  const exit = (Array.isArray(decisions) ? decisions : []).find((candidate) => (
+    candidate?.id !== decision.id
+      && isClosedTradeDecision(candidate)
+      && tradeEntryKey(candidate) === entryKey
+  ));
+  if (!exit) return decision;
+  return {
+    ...decision,
+    status: exit.status || decision.status,
+    pnl: exit.pnl,
+    exitPrice: exit.exitPrice,
+    exitReason: exit.exitReason || exit.reason,
+    reason: exit.reason || decision.reason,
+    exitTime: exit.entryTime || exit.createdAt,
+    closedDecisionId: exit.id,
+  };
+}
+
+function buildEntryReason({
+  strategyCode,
+  strategyName,
+  side,
+  contracts,
+  entryPrice,
+  stopPrice,
+  targetPrice,
+  signalTime,
+  fallback,
+}) {
+  const code = String(strategyCode || "").trim();
+  if (!code || code.toUpperCase() === "TOPSTEP") {
+    return fallback || "Broker-sourced Topstep trade; no local live-strategy decision was matched.";
+  }
+  const readableName = strategyName && strategyName !== code ? `${code} (${strategyName})` : code;
+  const direction = String(side || "").toUpperCase() === "SHORT" ? "short" : "long";
+  const thesis = strategyEntryThesis(code, direction);
+  const pricePlan = [
+    Number(entryPrice || 0) > 0 ? `entry ${formatPrice(entryPrice)}` : "",
+    Number(stopPrice || 0) > 0 ? `stop ${formatPrice(stopPrice)}` : "",
+    Number(targetPrice || 0) > 0 ? `target ${formatPrice(targetPrice)}` : "",
+  ].filter(Boolean).join(", ");
+  const sizeText = Number(contracts || 0) > 0 ? `${contracts} contract${Number(contracts) === 1 ? "" : "s"}` : "live size";
+  const timeText = signalTime ? ` Signal candle: ${formatEstTime(signalTime)}.` : "";
+  return `${readableName} triggered a ${direction} setup for ${sizeText}. ${thesis}${pricePlan ? ` Plan: ${pricePlan}.` : ""}${timeText}`;
+}
+
+function strategyEntryThesis(strategyCode, direction) {
+  const code = String(strategyCode || "").toUpperCase();
+  const dir = direction === "short" ? "downside" : "upside";
+  const map = {
+    AFT: `Afternoon continuation expects the intraday trend/channel pressure to keep carrying ${dir}.`,
+    CMOM: `Close momentum expects late-session participation to continue in the trade direction before the close guard.`,
+    FVG: `Fair-value-gap continuation expects the imbalance retest to hold and release in the trade direction.`,
+    KREV: `Keltner reversion expects an extended move to mean-revert after price rejects the outer volatility band.`,
+    LORB: `Late ORB continuation expects a delayed opening-range break to keep follow-through.`,
+    MSCALP: `Micro scalp expects a short-duration impulse with tight risk and quick reward/risk completion.`,
+    OMOM: `Opening momentum expects the early range break and volume impulse to continue before the setup window decays.`,
+    ORB: `Opening range expects the session range break to attract continuation flow.`,
+    ORB2: `Second-wave opening range expects the retest/continuation leg to follow the earlier range break.`,
+    PDB: `Prior-day breakout expects yesterday's reference level break to pull in continuation flow.`,
+    SHDW: `Mini shadow follows the larger contract signal when the micro contract confirms the same directional pressure.`,
+    SWEEP: `Liquidity sweep expects the stop-run/reclaim pattern to trap the other side and continue.`,
+    VPB: `Value-area reclaim expects acceptance back through value to continue in the reclaim direction.`,
+    VRCL: `VWAP reclaim expects the move back through VWAP to hold and continue.`,
+    VWAP: `VWAP pullback expects trend participation after price respects VWAP.`,
+  };
+  return map[code] || `The live strategy rules marked the candle as having favorable ${dir} expectancy after the configured filters passed.`;
+}
+
 function metricSourceDetail(metrics, type) {
   if (!metrics) return "Waiting for Topstep sync";
   if (metrics?.broker?.success) {
@@ -1902,9 +2361,10 @@ function metricSourceDetail(metrics, type) {
   return "Local fallback until Topstep responds";
 }
 
-function buildSymbolTrackers({ symbols, states, decisions, marketData, brokerPositions, botStarted }) {
+function buildSymbolTrackers({ symbols, states, decisions, marketData, brokerPositions, brokerClosedTrades, brokerAuthoritative, botStarted }) {
   const stateBySymbol = new Map((Array.isArray(states) ? states : []).map((state) => [String(state.symbol || "").toUpperCase(), state]));
   const brokerBySymbol = buildBrokerPositionMap(brokerPositions);
+  const closedBrokerBySymbol = buildBrokerClosedTradeMap(brokerClosedTrades);
   const decisionRows = Array.isArray(decisions) ? decisions : [];
   return (Array.isArray(symbols) ? symbols : DEFAULT_SYMBOLS).map((symbol) => {
     const normalizedSymbol = String(symbol || "").toUpperCase();
@@ -1928,8 +2388,14 @@ function buildSymbolTrackers({ symbols, states, decisions, marketData, brokerPos
       return total + (closed && realizedPnl !== 0 ? realizedPnl : calculatedPnl);
     }, 0);
     const brokerLiveTrades = Number(brokerPosition?.contracts || 0) > 0 ? 1 : 0;
+    const brokerClosed = closedBrokerBySymbol.get(normalizedSymbol) || { count: 0, pnl: 0 };
     const liveTradeCount = Math.max(liveTrades.length, brokerLiveTrades);
-    const pnl = brokerLiveTrades > 0 ? Number(brokerPosition?.unrealizedPnl ?? brokerPosition?.pnl ?? 0) : localPnl;
+    const totalTrades = brokerAuthoritative
+      ? brokerClosed.count + brokerLiveTrades
+      : trades.length;
+    const pnl = brokerAuthoritative
+      ? Number(brokerClosed.pnl || 0) + Number(brokerPosition?.unrealizedPnl ?? brokerPosition?.pnl ?? 0)
+      : localPnl;
     const signal = trackerSignalLabel(state, liveTradeCount, botStarted);
     const health = trackerHealthLabel(state, botStarted);
     return {
@@ -1937,14 +2403,14 @@ function buildSymbolTrackers({ symbols, states, decisions, marketData, brokerPos
       lastPrice,
       changePct,
       pnl,
-      totalTrades: trades.length,
+      totalTrades,
       liveTrades: liveTradeCount,
       signal: signal.label,
       signalTone: signal.tone,
       healthLabel: health.label,
       healthTone: health.tone,
       errorCode: health.errorCode,
-      healthDetail: health.detail,
+      healthDetail: health.tone === "ok" ? "" : health.detail,
       detail: brokerLiveTrades > 0 ? "Topstep open position verified; PnL is marked from live price." : trackerDetail(state, signal, botStarted, lastPrice),
     };
   });
@@ -1961,6 +2427,19 @@ function buildBrokerPositionMap(positions) {
     existing.unrealizedPnl += Number(position.unrealizedPnl ?? position.pnl ?? 0);
     existing.entryPrice = Number(position.entryPrice || position.averagePrice || existing.entryPrice || 0);
     existing.side = position.side || existing.side || "LONG";
+    map.set(symbol, existing);
+  });
+  return map;
+}
+
+function buildBrokerClosedTradeMap(trades) {
+  const map = new Map();
+  (Array.isArray(trades) ? trades : []).forEach((trade) => {
+    const symbol = String(trade?.symbol || "").toUpperCase();
+    if (!symbol) return;
+    const existing = map.get(symbol) || { count: 0, pnl: 0 };
+    existing.count += 1;
+    existing.pnl += Number(trade.pnl || 0);
     map.set(symbol, existing);
   });
   return map;
@@ -2233,6 +2712,9 @@ function buildChartTrades(decisions, symbol, latestPrice) {
       currentPrice: markPrice,
       closed,
       unrealizedPnl: closed && realizedPnl !== 0 ? realizedPnl : livePnl,
+      entryReason: trade.entryReason,
+      exitReason: trade.exitReason,
+      fees: trade.fees,
     };
   });
 }
@@ -2278,7 +2760,7 @@ function instrumentTickSize(symbol) {
   return instrumentSpec(symbol).tickSize;
 }
 
-function findNearestCandleIndex(candles, targetTime) {
+function findNearestCandleIndex(candles, targetTime, maxDistanceMs = Infinity) {
   const target = parseChartTime(targetTime);
   if (!target || !Array.isArray(candles) || candles.length === 0) return null;
   let nearestIndex = null;
@@ -2292,7 +2774,15 @@ function findNearestCandleIndex(candles, targetTime) {
       nearestDistance = distance;
     }
   });
+  if (nearestDistance > maxDistanceMs) return null;
   return nearestIndex;
+}
+
+function timeframeMinutesForClient(value) {
+  if (value === "5m") return 5;
+  if (value === "30m") return 30;
+  if (value === "1h") return 60;
+  return 1;
 }
 
 function parseChartTime(value) {
@@ -2326,8 +2816,9 @@ function TradesTable({ trades, mode }) {
         <div>Entry</div>
         <div>Exit</div>
         <div>PnL</div>
-        <div>Status</div>
-        <div>Reason</div>
+        <div>Entry Reason</div>
+        <div>Exit Reason</div>
+        <div>Fees</div>
       </div>
       {trades.length ? (
         trades.map((trade) => (
@@ -2340,10 +2831,9 @@ function TradesTable({ trades, mode }) {
             <div>{formatPrice(trade.entryPrice)}</div>
             <div>{formatPrice(trade.exitPrice)}</div>
             <div className={Number(trade.pnl || 0) > 0 ? "app-pnl-pos" : Number(trade.pnl || 0) < 0 ? "app-pnl-neg" : ""}>{formatCurrency(trade.pnl)}</div>
-            <div>
-              <span className={statusClass(trade.status)}>{trade.status || "--"}</span>
-            </div>
-            <div className="app-trade-notes">{trade.exitReason || trade.reason || "--"}</div>
+            <div className="app-trade-notes">{entryReasonForTrade(trade)}</div>
+            <div className="app-trade-notes">{exitReasonForTrade(trade)}</div>
+            <div className="app-trade-fees">{formatFees(trade.fees)}</div>
           </div>
         ))
       ) : (
@@ -2351,6 +2841,36 @@ function TradesTable({ trades, mode }) {
       )}
     </div>
   );
+}
+
+function entryReasonForTrade(trade) {
+  if (trade?.entryReason) return trade.entryReason;
+  return buildEntryReason({
+    strategyCode: trade?.strategyCode,
+    strategyName: trade?.strategyName,
+    side: trade?.side,
+    contracts: trade?.contracts,
+    entryPrice: trade?.entryPrice,
+    stopPrice: trade?.stopPrice,
+    targetPrice: trade?.targetPrice,
+    signalTime: trade?.signalTime,
+    fallback: trade?.reason || "Entry source is waiting on broker or live-decision sync.",
+  });
+}
+
+function exitReasonForTrade(trade) {
+  if (trade?.exitReason) return trade.exitReason;
+  if (isClosedTradeDecision(trade)) {
+    return trade?.reason || "Closed trade; broker close fill has been reported.";
+  }
+  return "Open trade. Exit reason will populate after the trade closes.";
+}
+
+function formatFees(value) {
+  if (value == null || value === "") return "--";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "--";
+  return formatCurrency(Math.abs(numeric));
 }
 
 function MetricCard({ label, value, detail = "", accent = 0 }) {
