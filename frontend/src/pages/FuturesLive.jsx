@@ -14,12 +14,12 @@ const LIVE_MONITOR_REFRESH_MS = 30000;
 const MIN_OPENING_CHART_BARS = 24;
 const DEFAULT_PROFILE = "TOPSTEP_150K_PRACTICE";
 const PROFILE_ACCOUNTS = {
-  TOPSTEP_150K_PRACTICE: { label: "150K Practice", accountId: "22539378" },
+  TOPSTEP_150K_PRACTICE: { label: "150K Combine", accountId: "22539378" },
   TOPSTEP_50K_COMBINE: { label: "50K Combine", accountId: "22529998" },
 };
 const FALLBACK_PROFILE = {
   code: "TOPSTEP_150K_PRACTICE",
-  name: "Topstep 150K Practice",
+  name: "Topstep 150K Combine",
   accountSize: 150000,
   maxTrailingDrawdown: 4500,
   dailyLossLimit: 3000,
@@ -82,8 +82,24 @@ export default function FuturesLive() {
   const botControlActive = Boolean(liveStatus?.running || realtimeStatus?.running || liveMonitor?.realtimeRunning);
   const displayedDecisions = useMemo(() => (botStarted ? liveDecisions : []), [botStarted, liveDecisions]);
   const displayTradeRows = useMemo(() => mergeLiveTradeDecisions(displayedDecisions), [displayedDecisions]);
-  const liveTrades = displayTradeRows.filter((decision) => isEntryDecision(decision) && !isClosedTradeDecision(decision));
   const symbolStates = useMemo(() => (Array.isArray(liveMonitor?.symbolStates) ? liveMonitor.symbolStates : []), [liveMonitor?.symbolStates]);
+  const augmentedLiveMetrics = useMemo(
+    () => augmentTopstepMetricsWithMarks(liveMetrics, symbolStates),
+    [liveMetrics, symbolStates]
+  );
+  const brokerSnapshot = augmentedLiveMetrics?.broker?.success ? augmentedLiveMetrics.broker : null;
+  const brokerAuthoritative = Boolean(brokerSnapshot);
+  const brokerOpenTradeRows = useMemo(
+    () => buildBrokerOpenTradeRows(brokerSnapshot?.positions),
+    [brokerSnapshot]
+  );
+  const brokerClosedTradeRows = useMemo(
+    () => buildBrokerClosedTradeRows(brokerSnapshot?.trades),
+    [brokerSnapshot]
+  );
+  const localLiveTrades = displayTradeRows.filter((decision) => isEntryDecision(decision) && !isClosedTradeDecision(decision));
+  const liveTrades = brokerAuthoritative ? brokerOpenTradeRows : localLiveTrades;
+  const allTradeRows = brokerAuthoritative ? brokerClosedTradeRows : displayTradeRows;
   const displayMonitor = useMemo(
     () => resolveDisplayMonitor(liveMonitor, monitorCache, selectedTimeframe, monitorDataActive),
     [monitorDataActive, liveMonitor, monitorCache, selectedTimeframe]
@@ -113,11 +129,11 @@ export default function FuturesLive() {
   const feedStaleSeconds = Number(liveMonitor?.feedStaleSeconds ?? -1);
   const marketSession = liveMonitor?.marketSession || liveStatus?.marketSession || estimateFuturesMarketSession();
   const marketIdle = !backendOffline && !monitorDataActive;
-  const metrics = botStarted ? liveMetrics : null;
+  const metrics = brokerAuthoritative ? augmentedLiveMetrics : (botStarted ? liveMetrics : null);
   const sidebarStartReady = Boolean(futuresSidebarStatus?.strategyConfig?.active && futuresSidebarStatus?.topstepApi?.ready);
   const realChartTrades = useMemo(
-    () => buildChartTrades(displayTradeRows, selectedChartSymbol, selectedChartMarkPrice),
-    [displayTradeRows, selectedChartMarkPrice, selectedChartSymbol]
+    () => buildChartTrades(brokerAuthoritative && brokerOpenTradeRows.length ? brokerOpenTradeRows : displayTradeRows, selectedChartSymbol, selectedChartMarkPrice),
+    [brokerAuthoritative, brokerOpenTradeRows, displayTradeRows, selectedChartMarkPrice, selectedChartSymbol]
   );
   const chartTrades = realChartTrades;
   const botTrackers = useMemo(
@@ -126,9 +142,22 @@ export default function FuturesLive() {
       states: symbolStates,
       decisions: displayTradeRows,
       marketData: liveMonitor?.marketData || {},
+      brokerPositions: brokerSnapshot?.positions || [],
       botStarted,
     }),
-    [botStarted, displayTradeRows, liveMonitor?.marketData, monitorSymbols, symbolStates]
+    [botStarted, brokerSnapshot, displayTradeRows, liveMonitor?.marketData, monitorSymbols, symbolStates]
+  );
+  const equityReviewStatus = useMemo(
+    () => buildEquityReviewStatus({
+      backendOffline,
+      botStarted,
+      feedRunning,
+      liveStatus,
+      liveMonitor,
+      symbolStates,
+      metrics,
+    }),
+    [backendOffline, botStarted, feedRunning, liveStatus, liveMonitor, symbolStates, metrics]
   );
   const backendThinkingEntries = useMemo(
     () => Array.isArray(liveThinking) ? liveThinking.filter((entry) => entry && (entry.summary || entry.detail)).slice(0, 1000) : [],
@@ -443,7 +472,7 @@ export default function FuturesLive() {
         throw new Error(payload.json?.message || payload.text || "Failed to start live bot.");
       }
       setLiveStatus(payload.json?.status || null);
-      setFeedback(payload.json?.message || "Live bot started with TopstepX 150K practice order automation.");
+      setFeedback(payload.json?.message || "Live bot started with TopstepX 150K Combine order automation.");
       refreshFuturesSidebarStatus?.();
       refreshLiveData();
     });
@@ -572,7 +601,7 @@ export default function FuturesLive() {
 
       </section>
 
-      <FuturesThinkingLog entries={thinkingEntries} onRefresh={refreshLiveData} />
+      <FuturesThinkingLog entries={thinkingEntries} status={equityReviewStatus} onRefresh={refreshLiveData} />
 
       <section className="app-panel futures-monitor-panel">
         <div className="d-flex align-items-start justify-content-between gap-2 flex-wrap">
@@ -619,11 +648,11 @@ export default function FuturesLive() {
       </section>
 
       <section className="app-live-grid futures-live-summary-grid">
-        <MetricCard label="Current Balance" value={formatAccountCurrency(Number(metrics?.currentBalance ?? Number(metrics?.accountSize || 0) + Number(metrics?.currentPnl || 0)))} />
-        <MetricCard label="Current PnL" value={formatCurrency(metrics?.currentPnl)} accent={Number(metrics?.currentPnl || 0)} />
-        <MetricCard label="Drawdown" value={formatCurrency(-Math.abs(Number(metrics?.drawdown || 0)))} accent={-Math.abs(Number(metrics?.drawdown || 0))} />
-        <MetricCard label="Return %" value={formatPct(metrics?.returnPct)} accent={Number(metrics?.returnPct || 0)} />
-        <MetricCard label="Trades" value={String(metrics?.numberOfTrades || 0)} />
+        <MetricCard label="Current Balance" value={formatAccountCurrency(Number(metrics?.currentBalance ?? Number(metrics?.accountSize || 0) + Number(metrics?.currentPnl || 0)))} detail={metricSourceDetail(metrics, "balance")} />
+        <MetricCard label="Current PnL" value={formatCurrency(metrics?.currentPnl)} accent={Number(metrics?.currentPnl || 0)} detail={metricSourceDetail(metrics, "pnl")} />
+        <MetricCard label="Drawdown" value={formatCurrency(-Math.abs(Number(metrics?.drawdown || 0)))} accent={-Math.abs(Number(metrics?.drawdown || 0))} detail={metricSourceDetail(metrics, "drawdown")} />
+        <MetricCard label="Return %" value={formatPct(metrics?.returnPct)} accent={Number(metrics?.returnPct || 0)} detail={metricSourceDetail(metrics, "return")} />
+        <MetricCard label="Trades" value={String(metrics?.numberOfTrades || 0)} detail={metricSourceDetail(metrics, "trades")} />
       </section>
 
       <section className="app-panel">
@@ -631,9 +660,9 @@ export default function FuturesLive() {
           <div>
             <div className="fw-bold app-kicker">All Trades</div>
           </div>
-          <span className="app-badge app-neutral-badge">{displayTradeRows.length} rows</span>
+          <span className="app-badge app-neutral-badge">{allTradeRows.length} rows</span>
         </div>
-        <TradesTable trades={displayTradeRows} mode="all" />
+        <TradesTable trades={allTradeRows} mode="all" />
       </section>
     </div>
   );
@@ -681,6 +710,10 @@ function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
               <span><b>{tracker.liveTrades}</b> live</span>
               <span className={`futures-bot-signal ${tracker.signalTone}`}>{tracker.signal}</span>
             </div>
+            <div className="futures-bot-tracker-health">
+              <span className={`futures-health-pill ${tracker.healthTone}`}>{tracker.healthLabel}</span>
+              <small>{tracker.errorCode || tracker.healthDetail || "--"}</small>
+            </div>
             <div className="futures-bot-tracker-foot">
               <span>{tracker.detail}</span>
             </div>
@@ -691,7 +724,7 @@ function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
   );
 }
 
-function FuturesThinkingLog({ entries, onRefresh }) {
+function FuturesThinkingLog({ entries, status, onRefresh }) {
   const rows = Array.isArray(entries) ? entries.slice(0, 1000) : [];
   const pageSize = 10;
   const [page, setPage] = useState(1);
@@ -708,9 +741,11 @@ function FuturesThinkingLog({ entries, onRefresh }) {
     <section className="app-panel futures-thinking-panel">
       <div className="futures-thinking-header">
         <div>
-          <div className="fw-bold app-kicker">Currently Thinking</div>
+          <div className="fw-bold app-kicker">Equity Review</div>
         </div>
         <div className="futures-thinking-actions">
+          <span className={`futures-review-status ${status?.tradeTone || "idle"}`}>Trade: {status?.tradeLabel || "Idle"}</span>
+          <span className={`futures-review-status ${status?.healthTone || "idle"}`}>Health: {status?.healthLabel || "Waiting"}</span>
           <span className="app-badge app-neutral-badge">{rows.length} logs</span>
           <div className="futures-thinking-pager" aria-label="Thinking log pages">
             <button type="button" className="app-btn app-btn-small" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={safePage <= 1}>
@@ -730,18 +765,18 @@ function FuturesThinkingLog({ entries, onRefresh }) {
         {visibleRows.length > 0 && (
           <div className="futures-thinking-log-head">
             <span>Date / Time</span>
-            <span>Decision</span>
+            <span>Error Code / Status</span>
           </div>
         )}
         {visibleRows.length ? (
           visibleRows.map((entry, index) => (
             <div className="futures-thinking-row" key={entry.id || `${entry.createdAt}-${index}`}>
               <time>{formatEstTime(entry.createdAt || entry.barTime)}</time>
-              <span>{thinkingDecisionLine(entry)}</span>
+              <span><b>{equityReviewCode(entry)}</b> {thinkingDecisionLine(entry)}</span>
             </div>
           ))
         ) : (
-          <div className="app-empty">Waiting for Live Bot log events.</div>
+          <div className="app-empty">Waiting for equity review events.</div>
         )}
       </div>
     </section>
@@ -928,6 +963,64 @@ function observedLogEntry({ key, sessionId, createdAt, phase, tone, symbol = "",
 
 function cleanLogText(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function buildEquityReviewStatus({ backendOffline, botStarted, feedRunning, liveStatus, liveMonitor, symbolStates, metrics }) {
+  let tradeLabel = "Idle";
+  let tradeTone = "idle";
+  if (backendOffline) {
+    tradeLabel = "Blocked";
+    tradeTone = "blocked";
+  } else if (botStarted) {
+    const marketSession = liveStatus?.marketSession || liveMonitor?.marketSession || null;
+    if (marketSession && !marketSession.entryWindowOpen) {
+      tradeLabel = "Gate Closed";
+      tradeTone = "idle";
+    } else if (Number(liveStatus?.decisionCount || 0) > 0) {
+      tradeLabel = "Evaluating";
+      tradeTone = "active";
+    } else {
+      tradeLabel = "Thinking";
+      tradeTone = "thinking";
+    }
+  } else if (feedRunning) {
+    tradeLabel = "Feed Live";
+    tradeTone = "active";
+  }
+
+  const healthIssues = [];
+  if (backendOffline) healthIssues.push({ tone: "error" });
+  if (botStarted && !feedRunning) healthIssues.push({ tone: "error" });
+  if (Number(liveMonitor?.feedStaleSeconds ?? -1) > 180) healthIssues.push({ tone: "error" });
+  if (metrics && metrics.brokerMetricsReady === false) healthIssues.push({ tone: "warn" });
+  (Array.isArray(symbolStates) ? symbolStates : []).forEach((state) => {
+    const health = String(state?.healthStatus || "").toLowerCase();
+    const code = String(state?.errorCode || "");
+    if (!botStarted && (code === "FEED_STOPPED" || code === "ENTRY_GATE_CLOSED")) return;
+    if (health === "error" || health === "warn") healthIssues.push({ tone: health });
+  });
+  const hasError = healthIssues.some((issue) => issue.tone === "error");
+  const hasWarn = healthIssues.some((issue) => issue.tone === "warn");
+  return {
+    tradeLabel,
+    tradeTone,
+    healthLabel: hasError ? "Error" : hasWarn ? "Attention" : botStarted || feedRunning ? "OK" : "Idle",
+    healthTone: hasError ? "error" : hasWarn ? "warn" : botStarted || feedRunning ? "ok" : "idle",
+    issueCount: healthIssues.length,
+  };
+}
+
+function equityReviewCode(entry) {
+  const phase = String(entry?.phase || "").toUpperCase();
+  const tone = String(entry?.tone || "").toUpperCase();
+  if (phase.includes("MARKET") || phase.includes("TRACKER")) return tone === "ERROR" ? "DATA_ERROR" : "DATA_CHECK";
+  if (phase.includes("RISK")) return tone === "ERROR" || tone === "BLOCKED" ? "RISK_BLOCK" : "RISK_CHECK";
+  if (phase.includes("TOPSTEP") || phase.includes("ORDER")) return tone === "ERROR" || tone === "BLOCKED" ? "ORDER_ERROR" : "ORDER_CHECK";
+  if (phase.includes("EXIT") || phase.includes("CLOSE") || phase.includes("POST CLOSE")) return tone === "ERROR" ? "SELL_ERROR" : "SELL_CHECK";
+  if (phase.includes("SIGNAL") || phase.includes("CANDIDATE")) return "TRADE_THINKING";
+  if (tone === "ERROR" || tone === "BLOCKED") return "SYSTEM_ERROR";
+  if (tone === "WARN") return "SYSTEM_WARN";
+  return "STATUS";
 }
 
 function thinkingDecisionLine(entry) {
@@ -1613,12 +1706,186 @@ function chartDateKey(time) {
   }).format(date);
 }
 
-function buildSymbolTrackers({ symbols, states, decisions, marketData, botStarted }) {
+function augmentTopstepMetricsWithMarks(metrics, symbolStates) {
+  if (!metrics?.broker?.success) return metrics;
+  const stateBySymbol = new Map((Array.isArray(symbolStates) ? symbolStates : []).map((state) => [String(state.symbol || "").toUpperCase(), state]));
+  const broker = metrics.broker;
+  const positions = (Array.isArray(broker.positions) ? broker.positions : []).map((position) => {
+    const symbol = String(position?.symbol || "").toUpperCase();
+    const markPrice = Number(stateBySymbol.get(symbol)?.lastPrice || position?.markPrice || 0);
+    const entryPrice = Number(position?.averagePrice || position?.entryPrice || 0);
+    const contracts = Number(position?.contracts || 0);
+    const calculatedPnl = markPrice > 0 && entryPrice > 0 && contracts > 0
+      ? calculateFuturesPnl(symbol, position.side, entryPrice, markPrice, contracts)
+      : Number(position?.pnl || 0);
+    return {
+      ...position,
+      symbol,
+      markPrice,
+      currentPrice: markPrice,
+      entryPrice,
+      averagePrice: entryPrice,
+      pnl: calculatedPnl,
+      unrealizedPnl: calculatedPnl,
+    };
+  });
+  const unrealizedPnl = positions.reduce((total, position) => total + Number(position.unrealizedPnl || 0), 0);
+  const realizedPnl = Number(broker.realizedPnl ?? metrics.currentPnl ?? 0);
+  const accountSize = Number(metrics.accountSize || broker.accountSize || 0);
+  const cashBalance = Number(broker.balance || broker.cashBalance || metrics.currentBalance || 0);
+  const currentPnl = realizedPnl + unrealizedPnl;
+  const currentBalance = cashBalance > 0 ? cashBalance + unrealizedPnl : accountSize + currentPnl;
+  return {
+    ...metrics,
+    currentPnl,
+    currentBalance,
+    returnPct: accountSize > 0 ? (currentPnl / accountSize) * 100 : Number(metrics.returnPct || 0),
+    openTrades: positions.length,
+    broker: {
+      ...broker,
+      positions,
+      unrealizedPnl,
+      realizedPnl,
+      currentPnl,
+      currentBalance,
+    },
+  };
+}
+
+function buildBrokerOpenTradeRows(positions) {
+  return (Array.isArray(positions) ? positions : [])
+    .filter((position) => Number(position?.contracts || 0) > 0)
+    .map((position, index) => ({
+      id: `topstep-position-${position.id || position.contractId || position.symbol || index}`,
+      symbol: String(position.symbol || "").toUpperCase(),
+      strategyCode: "Topstep",
+      strategyName: "Topstep Open Position",
+      side: String(position.side || "").toUpperCase() === "SHORT" ? "SHORT" : "LONG",
+      contracts: Number(position.contracts || 0),
+      entryPrice: Number(position.entryPrice || position.averagePrice || 0),
+      exitPrice: 0,
+      pnl: Number(position.unrealizedPnl ?? position.pnl ?? 0),
+      status: "LIVE_TOPSTEP",
+      reason: "Open position from Topstep Position/searchOpen; mark PnL updates from live ProjectX price.",
+      entryTime: position.createdAt,
+      createdAt: position.createdAt,
+    }));
+}
+
+function buildBrokerClosedTradeRows(trades) {
+  const openLots = new Map();
+  const rows = [];
+  const sortedTrades = (Array.isArray(trades) ? trades : [])
+    .filter((trade) => trade && !trade.voided)
+    .sort((first, second) => (parseChartTime(first.createdAt) || 0) - (parseChartTime(second.createdAt) || 0));
+  sortedTrades.forEach((trade, index) => {
+    const symbol = String(trade.symbol || "").toUpperCase();
+    const key = brokerTradePairKey(trade);
+    const tradeSide = normalizeTopstepTradeSide(trade.side);
+    const contracts = Math.max(0, Number(trade.contracts || 0));
+    const fillPrice = Number(trade.price || trade.exitPrice || 0);
+    if (!trade.closed) {
+      if (contracts > 0 && fillPrice > 0 && tradeSide) {
+        const lots = openLots.get(key) || [];
+        lots.push({
+          id: trade.id || trade.orderId || `${symbol}-${index}`,
+          side: tradeSide,
+          remaining: contracts,
+          price: fillPrice,
+          createdAt: trade.createdAt,
+        });
+        openLots.set(key, lots);
+      }
+      return;
+    }
+
+    const lots = openLots.get(key) || [];
+    let remaining = contracts || 1;
+    let matchedContracts = 0;
+    let weightedEntry = 0;
+    let entryTime = "";
+    let entrySide = "";
+    lots.forEach((lot) => {
+      if (remaining <= 0 || lot.remaining <= 0 || lot.side === tradeSide) return;
+      const take = Math.min(lot.remaining, remaining);
+      lot.remaining -= take;
+      remaining -= take;
+      matchedContracts += take;
+      weightedEntry += lot.price * take;
+      entryTime = entryTime || lot.createdAt;
+      entrySide = entrySide || lot.side;
+    });
+    openLots.set(key, lots.filter((lot) => lot.remaining > 0));
+
+    const fees = Number(trade.fees || 0);
+    const entryPrice = matchedContracts > 0 ? weightedEntry / matchedContracts : 0;
+    const rowContracts = matchedContracts || contracts;
+    const positionSide = entrySide ? positionSideFromEntrySide(entrySide) : positionSideFromClosingSide(tradeSide);
+    const reason = entryPrice > 0
+      ? `Topstep Trade/search paired entry and close fills${fees ? `; fees ${formatCurrency(fees)}` : ""}.`
+      : `Topstep Trade/search closed fill${fees ? `; fees ${formatCurrency(fees)}` : ""}; entry fill outside current sync window.`;
+    rows.push({
+      id: `topstep-trade-${trade.id || trade.orderId || index}`,
+      symbol,
+      strategyCode: "Topstep",
+      strategyName: "Topstep Closed Trade",
+      side: positionSide,
+      contracts: rowContracts,
+      entryPrice,
+      exitPrice: fillPrice,
+      pnl: Number(trade.pnl || 0),
+      status: "SOLD_TOPSTEP",
+      reason,
+      entryTime: entryTime || trade.createdAt,
+      createdAt: trade.createdAt,
+    });
+  });
+  return rows.sort((first, second) => (parseChartTime(second.createdAt) || 0) - (parseChartTime(first.createdAt) || 0));
+}
+
+function brokerTradePairKey(trade) {
+  const symbol = String(trade?.symbol || "").toUpperCase();
+  const contractId = String(trade?.contractId || "").toUpperCase();
+  return `${symbol}:${contractId}`;
+}
+
+function normalizeTopstepTradeSide(side) {
+  const value = String(side || "").toUpperCase();
+  if (value === "0" || value === "BUY" || value === "BID") return "BUY";
+  if (value === "1" || value === "SELL" || value === "ASK") return "SELL";
+  return value === "LONG" ? "BUY" : value === "SHORT" ? "SELL" : "";
+}
+
+function positionSideFromEntrySide(entrySide) {
+  return entrySide === "SELL" ? "SHORT" : "LONG";
+}
+
+function positionSideFromClosingSide(closingSide) {
+  return closingSide === "BUY" ? "SHORT" : "LONG";
+}
+
+function metricSourceDetail(metrics, type) {
+  if (!metrics) return "Waiting for Topstep sync";
+  if (metrics?.broker?.success) {
+    if (type === "pnl" && Math.abs(Number(metrics.broker.unrealizedPnl || 0)) > 0) {
+      return `Topstep balance + live mark PnL ${formatCurrency(metrics.broker.unrealizedPnl)}`;
+    }
+    if (type === "trades") return "Closed trades from Topstep Trade/search";
+    if (type === "balance") return "Balance from Topstep Account/search";
+    if (type === "drawdown") return "Topstep account drawdown fallback guarded";
+    return "Topstep broker-sourced";
+  }
+  return "Local fallback until Topstep responds";
+}
+
+function buildSymbolTrackers({ symbols, states, decisions, marketData, brokerPositions, botStarted }) {
   const stateBySymbol = new Map((Array.isArray(states) ? states : []).map((state) => [String(state.symbol || "").toUpperCase(), state]));
+  const brokerBySymbol = buildBrokerPositionMap(brokerPositions);
   const decisionRows = Array.isArray(decisions) ? decisions : [];
   return (Array.isArray(symbols) ? symbols : DEFAULT_SYMBOLS).map((symbol) => {
     const normalizedSymbol = String(symbol || "").toUpperCase();
     const state = stateBySymbol.get(normalizedSymbol) || null;
+    const brokerPosition = brokerBySymbol.get(normalizedSymbol) || null;
     const candles = Array.isArray(marketData?.[normalizedSymbol]) ? marketData[normalizedSymbol] : [];
     const sessionCandles = latestSessionChartCandles(candles.map(normalizeCandle).filter((candle) => candle.time && Number(candle.close || 0) > 0));
     const lastPrice = Number(latestChartPrice(sessionCandles) || state?.lastPrice || 0);
@@ -1626,7 +1893,7 @@ function buildSymbolTrackers({ symbols, states, decisions, marketData, botStarte
     const changePct = firstPrice > 0 ? ((lastPrice - firstPrice) / firstPrice) * 100 : Number(state?.changePct || 0);
     const trades = decisionRows.filter((decision) => isEntryDecision(decision) && String(decision.symbol || "").toUpperCase() === normalizedSymbol);
     const liveTrades = trades.filter((trade) => !isClosedTradeDecision(trade));
-    const pnl = trades.reduce((total, trade) => {
+    const localPnl = trades.reduce((total, trade) => {
       const closed = isClosedTradeDecision(trade);
       const entryPrice = Number(trade.entryPrice || 0);
       const exitPrice = Number(trade.exitPrice || 0);
@@ -1636,19 +1903,43 @@ function buildSymbolTrackers({ symbols, states, decisions, marketData, botStarte
       const calculatedPnl = calculateFuturesPnl(normalizedSymbol, trade.side, entryPrice, markPrice, contracts);
       return total + (closed && realizedPnl !== 0 ? realizedPnl : calculatedPnl);
     }, 0);
-    const signal = trackerSignalLabel(state, liveTrades.length, botStarted);
+    const brokerLiveTrades = Number(brokerPosition?.contracts || 0) > 0 ? 1 : 0;
+    const liveTradeCount = Math.max(liveTrades.length, brokerLiveTrades);
+    const pnl = brokerLiveTrades > 0 ? Number(brokerPosition?.unrealizedPnl ?? brokerPosition?.pnl ?? 0) : localPnl;
+    const signal = trackerSignalLabel(state, liveTradeCount, botStarted);
+    const health = trackerHealthLabel(state, botStarted);
     return {
       symbol: normalizedSymbol,
       lastPrice,
       changePct,
       pnl,
       totalTrades: trades.length,
-      liveTrades: liveTrades.length,
+      liveTrades: liveTradeCount,
       signal: signal.label,
       signalTone: signal.tone,
-      detail: trackerDetail(state, signal, botStarted, lastPrice),
+      healthLabel: health.label,
+      healthTone: health.tone,
+      errorCode: health.errorCode,
+      healthDetail: health.detail,
+      detail: brokerLiveTrades > 0 ? "Topstep open position verified; PnL is marked from live price." : trackerDetail(state, signal, botStarted, lastPrice),
     };
   });
+}
+
+function buildBrokerPositionMap(positions) {
+  const map = new Map();
+  (Array.isArray(positions) ? positions : []).forEach((position) => {
+    const symbol = String(position?.symbol || "").toUpperCase();
+    if (!symbol) return;
+    const existing = map.get(symbol) || { symbol, contracts: 0, pnl: 0, unrealizedPnl: 0 };
+    existing.contracts += Number(position.contracts || 0);
+    existing.pnl += Number(position.pnl || 0);
+    existing.unrealizedPnl += Number(position.unrealizedPnl ?? position.pnl ?? 0);
+    existing.entryPrice = Number(position.entryPrice || position.averagePrice || existing.entryPrice || 0);
+    existing.side = position.side || existing.side || "LONG";
+    map.set(symbol, existing);
+  });
+  return map;
 }
 
 function trackerSignalLabel(state, liveTrades, botStarted) {
@@ -1669,6 +1960,25 @@ function trackerSignalLabel(state, liveTrades, botStarted) {
     return { label: "Looking", tone: "looking" };
   }
   return { label: "Idle", tone: "idle" };
+}
+
+function trackerHealthLabel(state, botStarted) {
+  if (!botStarted) {
+    return { label: "Health Idle", tone: "idle", errorCode: "", detail: "Bot is not running." };
+  }
+  const health = String(state?.healthStatus || "").toLowerCase();
+  const errorCode = String(state?.errorCode || "").trim();
+  const detail = state?.healthDetail || state?.analysisStatus || "Waiting for health check.";
+  if (health === "error") {
+    return { label: "Health Error", tone: "error", errorCode: errorCode || "HEALTH_ERROR", detail };
+  }
+  if (health === "warn") {
+    return { label: "Health Check", tone: "warn", errorCode: errorCode || "HEALTH_WARN", detail };
+  }
+  if (health === "idle") {
+    return { label: "Health Idle", tone: "idle", errorCode, detail };
+  }
+  return { label: "Health OK", tone: "ok", errorCode, detail };
 }
 
 function trackerDetail(state, signal, botStarted, lastPrice) {
@@ -1906,7 +2216,7 @@ function buildChartTrades(decisions, symbol, latestPrice) {
 function isEntryDecision(decision) {
   const status = String(decision?.status || "").toUpperCase();
   const hasEntry = Number(decision?.entryPrice || 0) > 0;
-  return status.includes("ACCEPTED") || status.includes("SUBMITTED") || (hasEntry && (status.includes("EXIT") || status.includes("CLOSED") || status.includes("FLAT") || status.includes("SOLD")));
+  return status.includes("ACCEPTED") || status.includes("SUBMITTED") || status.includes("LIVE_TOPSTEP") || (hasEntry && (status.includes("EXIT") || status.includes("CLOSED") || status.includes("FLAT") || status.includes("SOLD")));
 }
 
 function isClosedTradeDecision(decision) {
@@ -2053,7 +2363,7 @@ async function readApiResponse(response) {
 
 function statusClass(status) {
   const value = String(status || "");
-  if (value.includes("ACCEPTED") || value.includes("SUBMITTED") || value.includes("EXIT") || value.includes("FLAT")) return "app-badge app-positive-badge";
+  if (value.includes("ACCEPTED") || value.includes("SUBMITTED") || value.includes("EXIT") || value.includes("FLAT") || value.includes("SOLD") || value.includes("LIVE_TOPSTEP")) return "app-badge app-positive-badge";
   if (value.includes("REJECTED") || value.includes("BLOCK")) return "app-badge app-risk-badge";
   return "app-badge app-neutral-badge";
 }
