@@ -11,11 +11,6 @@ export async function onRequest({ request, env, params }) {
   headers.delete("host");
   headers.delete("content-length");
 
-  if (env.CF_ACCESS_CLIENT_ID && env.CF_ACCESS_CLIENT_SECRET) {
-    headers.set("CF-Access-Client-Id", env.CF_ACCESS_CLIENT_ID);
-    headers.set("CF-Access-Client-Secret", env.CF_ACCESS_CLIENT_SECRET);
-  }
-
   try {
     const response = await fetch(backendUrl, {
       method: request.method,

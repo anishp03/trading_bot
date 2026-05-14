@@ -58,8 +58,6 @@ export default function Login({ onLogin }) {
       className="auth-page"
     >
       <div className="app-panel auth-panel">
-        <h2 className="app-title mb-4 text-center">Trading Bot</h2>
-
         {error && (
           <div className="mb-3 text-center fw-bold" style={{ color: "var(--app-negative)" }}>
             {error}

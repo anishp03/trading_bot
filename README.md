@@ -47,20 +47,18 @@ For Cloudflare Pages launch, prefer same-origin frontend API calls through the P
 
 ```text
 VITE_API_BASE_URL=https://app.tradingconsole.net
-VITE_PRIMARY_ACCOUNT_EMAIL=patelanish203@gmail.com
-VITE_PRIMARY_ACCOUNT_ROLE=admin
 BACKEND_API_ORIGIN=https://api.tradingconsole.net
 ```
 
 The browser calls `https://app.tradingconsole.net/api/*`; Cloudflare runs `frontend/functions/api/[[path]].js` and forwards the request server-side to the backend tunnel. This avoids cross-subdomain browser cookie/CORS friction.
 
-Cloudflare Access is the login gate. The frontend redirects `/login` into the app and uses `VITE_PRIMARY_ACCOUNT_EMAIL` as the backend account key for stored broker/settings data, so users do not log in twice.
-
-If the backend API is protected by Cloudflare Access service tokens, set these Cloudflare Pages environment variables too:
+The app uses its own `/api/login` session flow. Account creation stays disabled; seed or reset the admin account from the private backend environment:
 
 ```text
-CF_ACCESS_CLIENT_ID=<service-token-client-id>
-CF_ACCESS_CLIENT_SECRET=<service-token-client-secret>
+TRADINGBOT_REQUIRE_APP_AUTH=true
+TRADINGBOT_BOOTSTRAP_ADMIN_EMAIL=<admin-email>
+TRADINGBOT_BOOTSTRAP_ADMIN_PASSWORD=<admin-password>
+TRADINGBOT_BOOTSTRAP_ADMIN_RESET=false
 ```
 
 ## Production Build
@@ -99,8 +97,6 @@ Environment variable:
 
 ```text
 VITE_API_BASE_URL=https://app.tradingconsole.net
-VITE_PRIMARY_ACCOUNT_EMAIL=patelanish203@gmail.com
-VITE_PRIMARY_ACCOUNT_ROLE=admin
 BACKEND_API_ORIGIN=https://api.tradingconsole.net
 ```
 
@@ -114,7 +110,7 @@ Official reference:
 
 The backend should run on the other PC on port `7070`, then be exposed through one of these:
 
-- Cloudflare Tunnel with Access protection
+- Cloudflare Tunnel without Access auth, relying on the app login
 - Tailscale/private VPN
 - Local network only, if the frontend is opened on the same machine
 

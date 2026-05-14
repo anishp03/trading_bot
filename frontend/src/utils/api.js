@@ -68,11 +68,16 @@ export function apiUrl(path) {
 export function apiFetch(path, options = {}) {
   const headers = new Headers(options.headers || {});
   const method = options.method || "GET";
+  const auth = readStoredAuth();
 
   if (isDevWriteToLiveBackend(method)) {
     return Promise.reject(new Error(
       `Blocked ${String(method).toUpperCase()} ${path}: this Vite dev frontend is pointed at the live backend (${API_BASE_URL}). Use http://localhost:7071 for dev writes.`
     ));
+  }
+
+  if (auth?.token && !headers.has("Authorization") && path !== "/api/login") {
+    headers.set("Authorization", `Bearer ${auth.token}`);
   }
 
   return fetch(apiUrl(path), {
