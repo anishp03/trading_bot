@@ -330,15 +330,15 @@ export default function FuturesBacktest() {
         </div>
 
         <div className="app-data-toolbar futures-data-toolbar">
-          <div className="app-data-chip">
+          <div className="app-data-chip futures-data-chip futures-storage-chip" title={marketData.storagePath || "market_data/futures"}>
             <span className="app-label">Storage</span>
             <strong>{marketData.storagePath || "market_data/futures"}</strong>
           </div>
-          <div className="app-data-chip">
+          <div className="app-data-chip futures-data-chip" title={marketData.timeframe || "1Min"}>
             <span className="app-label">Timeframe</span>
             <strong>{marketData.timeframe || "1Min"}</strong>
           </div>
-          <div className="app-data-chip">
+          <div className="app-data-chip futures-data-chip">
             <span className="app-label">Selected Rows</span>
             <strong>{isMarketDataLoading ? "Loading..." : formatNumber(selectedRows, 0)}</strong>
           </div>

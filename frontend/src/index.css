@@ -2153,7 +2153,12 @@ textarea {
 }
 
 .futures-data-toolbar {
-  grid-template-columns: repeat(6, minmax(150px, 1fr));
+  grid-template-columns:
+    minmax(240px, 1.35fr)
+    minmax(150px, 0.75fr)
+    minmax(150px, 0.72fr)
+    minmax(160px, 0.82fr)
+    minmax(160px, 0.82fr);
 }
 
 .futures-strategy-slot-toolbar {
@@ -2162,6 +2167,21 @@ textarea {
 
 .futures-data-field {
   min-width: 0;
+}
+
+.futures-data-chip {
+  min-width: 0;
+}
+
+.futures-data-chip strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.futures-storage-chip strong {
+  display: block;
 }
 
 .futures-run-builder {
@@ -2183,6 +2203,7 @@ textarea {
   border: 1px solid var(--app-border);
   background: rgba(255, 255, 255, 0.035);
   padding: 10px 12px;
+  min-width: 0;
 }
 
 .app-data-chip strong {

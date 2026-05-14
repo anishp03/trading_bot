@@ -4,7 +4,6 @@ import { apiFetch } from "../utils/api.js";
 import { formatEstTime } from "../utils/time.js";
 
 const PAGE_SIZE = 8;
-const PROTECTED_PORTFOLIO_RUN_ID = 3154;
 
 export default function FuturesBacktestHistory() {
   const [runs, setRuns] = useState([]);
@@ -100,6 +99,7 @@ export default function FuturesBacktestHistory() {
     try {
       const response = await apiFetch("/api/futures/portfolio-backtests/clear", { method: "POST" });
       if (!response.ok) throw new Error("Failed to clear futures portfolio runs.");
+      setRuns([]);
       setPage(1);
       setSelectedRunId(null);
       setSelectedTrades([]);
@@ -117,7 +117,6 @@ export default function FuturesBacktestHistory() {
   const boundedPage = Math.min(page, totalPages);
   const pageRuns = runs.slice((boundedPage - 1) * PAGE_SIZE, boundedPage * PAGE_SIZE);
   const selectedRun = runs.find((run) => run.id === selectedRunId) || null;
-  const clearableRuns = runs.filter((run) => run.id !== PROTECTED_PORTFOLIO_RUN_ID);
   const previewRun = useMemo(() => toPreviewRun(selectedRun), [selectedRun]);
   const previewTrades = useMemo(() => selectedTrades.map(toPreviewTrade), [selectedTrades]);
 
@@ -128,7 +127,7 @@ export default function FuturesBacktestHistory() {
       <div className="app-panel">
         <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap">
           <div className="fw-bold app-kicker">Portfolio Runs</div>
-          <button type="button" className="app-btn app-btn-danger px-3" onClick={clearRuns} disabled={isClearing || clearableRuns.length === 0}>
+          <button type="button" className="app-btn app-btn-danger px-3" onClick={clearRuns} disabled={isClearing || runs.length === 0}>
             {isClearing ? "Clearing..." : "Clear Runs"}
           </button>
         </div>
