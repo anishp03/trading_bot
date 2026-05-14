@@ -8,6 +8,7 @@ import FuturesBacktest from "./pages/FuturesBacktest.jsx";
 import FuturesBacktestHistory from "./pages/FuturesBacktestHistory.jsx";
 import FuturesStrategy from "./pages/FuturesStrategy.jsx";
 import FuturesLive from "./pages/FuturesLive.jsx";
+import Documents from "./pages/Documents.jsx";
 import Settings from "./pages/Settings.jsx";
 import NotFound from "./pages/NotFound.jsx";
 
@@ -37,6 +38,7 @@ export default function App() {
         <Route path="/futures-backtest" element={<FuturesBacktest />} />
         <Route path="/futures-backtest-history" element={<FuturesBacktestHistory />} />
         <Route path="/futures-live" element={<FuturesLive />} />
+        <Route path="/documents" element={<Documents />} />
         <Route path="/settings" element={<Settings accountEmail={PRIMARY_ACCOUNT_EMAIL} />} />
         <Route path="*" element={<NotFound />} />
       </Route>

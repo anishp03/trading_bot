@@ -26,7 +26,10 @@ const marketSections = {
   },
 };
 
-const systemItems = [{ to: "/settings", label: "Settings" }];
+const systemItems = [
+  { to: "/documents", label: "Documents" },
+  { to: "/settings", label: "Settings" },
+];
 const navItems = [
   ...marketSections.stocks.items,
   ...marketSections.futures.items,
@@ -46,6 +49,7 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
   const [futuresSidebarStatus, setFuturesSidebarStatus] = useState(null);
   const [futuresSidebarOnline, setFuturesSidebarOnline] = useState(backendMode !== "offline");
   const [backendUpdate, setBackendUpdate] = useState({ busy: false, message: "" });
+  const [backendUpdatePopup, setBackendUpdatePopup] = useState(null);
   const activeMarket = marketSections[selectedMarket] || marketSections.stocks;
   const currentPage = navItems.find((item) => item.to === location.pathname)?.label || "Trading Bot";
 
@@ -103,17 +107,24 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
       busy: true,
       message: "Starting update...",
     });
+    setBackendUpdatePopup(null);
 
     try {
       const response = await apiFetch("/api/system/backend-update", { method: "POST" });
       const payload = await readJsonResponse(response);
-      if (!response.ok) {
+      if (!response.ok || payload.json?.success === false) {
         throw new Error(payload.json?.message || payload.text || "Backend update failed to start.");
       }
+      const message = payload.json?.message || "Backend update started. The API may briefly disconnect.";
 
       setBackendUpdate({
         busy: false,
-        message: payload.json?.message || "Backend update started. The API may briefly disconnect.",
+        message,
+      });
+      setBackendUpdatePopup({
+        title: "Backend Update Started Successfully",
+        message,
+        detail: payload.json?.logPath ? `Log: ${payload.json.logPath}` : "The API may briefly disconnect while the live backend restarts.",
       });
     } catch (error) {
       console.error("Error starting backend update:", error);
@@ -176,6 +187,13 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
         </div>
       </aside>
 
+      {backendUpdatePopup && (
+        <BackendUpdateSuccessPopup
+          popup={backendUpdatePopup}
+          onClose={() => setBackendUpdatePopup(null)}
+        />
+      )}
+
       <main className="app-main">
         <header className="app-topbar">
           <div className="app-topbar-inner">
@@ -227,6 +245,24 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
   );
 }
 
+function BackendUpdateSuccessPopup({ popup, onClose }) {
+  return (
+    <div className="app-backend-update-popup-backdrop" role="presentation" onClick={onClose}>
+      <div className="app-backend-update-popup" role="dialog" aria-modal="true" aria-labelledby="backend-update-popup-title" onClick={(event) => event.stopPropagation()}>
+        <div className="app-backend-update-popup-icon" aria-hidden="true">OK</div>
+        <div className="app-backend-update-popup-copy">
+          <h3 id="backend-update-popup-title">{popup.title}</h3>
+          <p>{popup.message}</p>
+          {popup.detail && <small>{popup.detail}</small>}
+        </div>
+        <button type="button" className="app-backend-update-popup-close" onClick={onClose} aria-label="Close backend update message">
+          Close
+        </button>
+      </div>
+    </div>
+  );
+}
+
 async function readJsonResponse(response) {
   if (!response.ok) {
     return { json: null, text: await readApiErrorMessage(response, "Backend update failed to start.") };
@@ -245,6 +281,9 @@ async function readJsonResponse(response) {
 }
 
 function marketForPath(pathname) {
+  if (pathname === "/documents") {
+    return "futures";
+  }
   if (marketSections.futures.items.some((item) => item.to === pathname)) {
     return "futures";
   }

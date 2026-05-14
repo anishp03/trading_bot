@@ -209,6 +209,89 @@ textarea {
   line-height: 1.35;
 }
 
+.app-backend-update-popup-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 420;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 26px 16px;
+  pointer-events: auto;
+  background: rgba(4, 8, 15, 0.34);
+}
+
+.app-backend-update-popup {
+  width: min(520px, calc(100vw - 32px));
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border-radius: 14px;
+  border: 1px solid rgba(120, 220, 160, 0.36);
+  background: #0f1b1a;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.44);
+  padding: 14px;
+}
+
+.app-backend-update-popup-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(120, 220, 160, 0.5);
+  background: rgba(120, 220, 160, 0.13);
+  color: #a8f0c2;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.app-backend-update-popup-copy {
+  min-width: 0;
+}
+
+.app-backend-update-popup-copy h3 {
+  margin: 0;
+  color: #e8fff0;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.app-backend-update-popup-copy p {
+  margin: 0.18rem 0 0;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
+.app-backend-update-popup-copy small {
+  display: block;
+  margin-top: 0.3rem;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 0.7rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.app-backend-update-popup-close {
+  min-height: 36px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 0 12px;
+}
+
+.app-backend-update-popup-close:hover,
+.app-backend-update-popup-close:focus-visible {
+  border-color: rgba(120, 220, 160, 0.5);
+  background: rgba(120, 220, 160, 0.12);
+  color: #f4fff7;
+}
+
 .app-main {
   height: 100vh;
   display: grid;
@@ -914,6 +997,158 @@ textarea {
   background: rgba(255, 255, 255, 0.04);
 }
 
+.documents-page {
+  gap: 1rem;
+}
+
+.documents-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 0.82fr) minmax(260px, 0.58fr);
+  gap: 1rem;
+  align-items: end;
+  padding: 18px 0 4px;
+}
+
+.documents-hero p {
+  margin: 0;
+  color: var(--app-muted);
+  line-height: 1.45;
+}
+
+.documents-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.documents-check-list,
+.strategy-doc-list ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.documents-check-list li,
+.strategy-doc-list li {
+  margin: 0.42rem 0;
+}
+
+.documents-flow {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.documents-flow-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.documents-flow-step {
+  min-height: 86px;
+  display: grid;
+  align-content: start;
+  gap: 0.35rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+  padding: 12px;
+}
+
+.documents-flow-step strong {
+  color: var(--app-link);
+}
+
+.documents-flow-step span {
+  color: var(--app-muted);
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
+.strategy-doc-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.strategy-doc-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.9rem;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  min-width: 0;
+}
+
+.strategy-doc-media {
+  min-width: 0;
+}
+
+.strategy-doc-media img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #071017;
+}
+
+.strategy-doc-body {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(160px, 0.7fr) repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  align-content: start;
+  align-items: start;
+}
+
+.strategy-doc-heading {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.strategy-doc-heading span,
+.strategy-doc-list span,
+.strategy-doc-exit span {
+  color: var(--app-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.strategy-doc-heading h3 {
+  margin: 0;
+  color: var(--app-link);
+  font-size: 1.1rem;
+  line-height: 1.35;
+}
+
+.strategy-doc-list {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.strategy-doc-list ul {
+  font-size: 0.9rem;
+}
+
+.strategy-doc-exit {
+  display: grid;
+  gap: 0.25rem;
+  padding-left: 1rem;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.strategy-doc-exit p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
+
 .futures-launch-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1373,6 +1608,17 @@ textarea {
   font-size: 0.78rem;
   line-height: 1.24rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.futures-thinking-row.bracket-alert {
+  color: rgba(255, 228, 184, 0.98);
+  background: rgba(255, 176, 72, 0.12);
+  box-shadow: inset 3px 0 0 rgba(255, 176, 72, 0.8);
+}
+
+.futures-thinking-row.bracket-alert time,
+.futures-thinking-row.bracket-alert b {
+  color: rgba(255, 209, 128, 0.98);
 }
 
 .futures-thinking-row:last-child {
@@ -2588,6 +2834,31 @@ textarea {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .documents-hero,
+  .documents-summary-grid,
+  .strategy-doc-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .documents-flow-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .strategy-doc-body {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .strategy-doc-heading {
+    grid-column: 1 / -1;
+  }
+
+  .strategy-doc-exit {
+    padding-left: 0;
+    padding-top: 0.65rem;
+    border-left: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
   .futures-launch-actions {
     justify-content: flex-start;
   }
@@ -2740,7 +3011,9 @@ textarea {
   .futures-launch-config,
   .futures-chart-symbol-row,
   .futures-symbol-state-grid,
-  .futures-bot-tracker-grid {
+  .futures-bot-tracker-grid,
+  .documents-flow-grid,
+  .strategy-doc-body {
     grid-template-columns: minmax(0, 1fr);
   }
 

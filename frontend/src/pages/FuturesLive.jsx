@@ -786,7 +786,7 @@ function FuturesThinkingLog({ entries, status, onRefresh }) {
         )}
         {visibleRows.length ? (
           visibleRows.map((entry, index) => (
-            <div className="futures-thinking-row" key={entry.id || `${entry.createdAt}-${index}`}>
+            <div className={thinkingLogRowClass(entry)} key={entry.id || `${entry.createdAt}-${index}`}>
               <time>{formatEstTime(entry.createdAt || entry.barTime)}</time>
               <span><b>{equityReviewCode(entry)}</b> {thinkingDecisionLine(entry)}</span>
             </div>
@@ -958,7 +958,9 @@ function observedDecisionLogEntry(decision, sessionId, fallbackTime) {
     symbol,
     barTime: decision?.entryTime || decision?.signalTime || "",
     summary: `${symbol || "Signal"} ${cleanLogText(decision?.strategyCode || "strategy")} ${cleanLogText(decision?.side || "")} ${cleanLogText(decision?.status || "decision")}`.trim(),
-    detail: cleanLogText(decision?.reason || "Decision recorded by the Live Bot."),
+    detail: cleanLogText(decision?.requiresAutoOcoBrackets
+      ? "ProjectX rejected bracket attachments because this TopstepX account is still using Position Brackets. Enable Auto OCO Brackets in TopstepX Risk Settings before live strategy orders can submit. No entry-only fallback was used."
+      : decision?.reason || "Decision recorded by the Live Bot."),
   });
 }
 
@@ -1054,6 +1056,12 @@ function thinkingDecisionLine(entry) {
     reason = detail.slice(summary.length + 1).trim();
   }
   return `${phase}${context ? ` (${context})` : ""}: ${summary}${reason ? ` - ${reason}` : ""}`;
+}
+
+function thinkingLogRowClass(entry) {
+  const text = `${entry?.summary || ""} ${entry?.detail || ""}`.toLowerCase();
+  const bracketAlert = text.includes("auto oco brackets") || text.includes("position brackets");
+  return `futures-thinking-row ${cleanLogText(entry?.tone || "info").toLowerCase()}${bracketAlert ? " bracket-alert" : ""}`;
 }
 
 function reservedTrackerTile(symbol, detail) {
