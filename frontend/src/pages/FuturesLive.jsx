@@ -1276,6 +1276,7 @@ function equityReviewCode(entry) {
   if (phase.includes("RISK")) return tone === "ERROR" || tone === "BLOCKED" ? "RISK_BLOCK" : "RISK_CHECK";
   if (phase.includes("TOPSTEP") || phase.includes("ORDER")) return tone === "ERROR" || tone === "BLOCKED" ? "ORDER_ERROR" : "ORDER_CHECK";
   if (phase.includes("EXIT") || phase.includes("CLOSE") || phase.includes("POST CLOSE")) return tone === "ERROR" ? "SELL_ERROR" : "SELL_CHECK";
+  if (phase.includes("POTENTIAL")) return tone === "BLOCKED" ? "POTENTIAL_BLOCK" : "POTENTIAL_TRADE";
   if (phase.includes("SIGNAL") || phase.includes("CANDIDATE")) return "TRADE_THINKING";
   if (tone === "ERROR" || tone === "BLOCKED") return "SYSTEM_ERROR";
   if (tone === "WARN") return "SYSTEM_WARN";
