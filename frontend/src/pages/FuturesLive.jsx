@@ -14,6 +14,7 @@ const LIVE_MARKS_REFRESH_MS = 1000;
 const LIVE_RECONCILE_REFRESH_MS = 10000;
 const HEALTH_WARN_HOLD_MS = 25000;
 const MIN_OPENING_CHART_BARS = 24;
+const BROKER_SOURCE_TOPSTEPX = "TOPSTEPX";
 const DEFAULT_PROFILE = "TOPSTEP_150K_PRACTICE";
 const PROFILE_ACCOUNTS = {
   TOPSTEP_50K_COMBINE: { label: "50K Combine", accountId: "22529998" },
@@ -123,7 +124,7 @@ export default function FuturesLive() {
     [accountMetricCache, accountScopeId, rawAccountScopedMetrics]
   );
   const brokerSnapshot = accountScopedMetrics?.broker?.success ? accountScopedMetrics.broker : null;
-  const brokerAuthoritative = Boolean(brokerSnapshot);
+  const brokerAuthoritative = isAuthoritativeTopstepBrokerSnapshot(brokerSnapshot, accountScopedMetrics);
   const localTradeProvenance = useMemo(
     () => buildLocalTradeProvenance(liveDecisionHistory, liveOrders, accountScopeId),
     [accountScopeId, liveDecisionHistory, liveOrders]
@@ -185,8 +186,8 @@ export default function FuturesLive() {
     [brokerAuthoritative, brokerClosedTradeRows, brokerOpenTradeRows]
   );
   const realChartTrades = useMemo(
-    () => buildChartTrades(brokerChartTradeRows.length ? brokerChartTradeRows : displayTradeRows, selectedChartSymbol, selectedChartMarkPrice),
-    [brokerChartTradeRows, displayTradeRows, selectedChartMarkPrice, selectedChartSymbol]
+    () => buildChartTrades(brokerAuthoritative ? brokerChartTradeRows : displayTradeRows, selectedChartSymbol, selectedChartMarkPrice),
+    [brokerAuthoritative, brokerChartTradeRows, displayTradeRows, selectedChartMarkPrice, selectedChartSymbol]
   );
   const chartTrades = realChartTrades;
   const botTrackers = useMemo(
@@ -517,7 +518,6 @@ export default function FuturesLive() {
         liveMarksRef.current = data;
         setLiveMarks(data);
         const normalizedTimeframe = normalizeClientTimeframe(data.timeframe || selectedTimeframe);
-        setLiveMetrics((current) => mergeMetricsWithMarks(current, data));
         setLiveMonitor((current) => mergeMonitorWithMarks(current, data, normalizedTimeframe));
         setMonitorCache((current) => {
           const base = current?.[normalizedTimeframe] || null;
@@ -2065,7 +2065,7 @@ function chartDateKey(time) {
 }
 
 function augmentTopstepMetricsWithMarks(metrics, symbolStates) {
-  if (!metrics?.broker?.success) return metrics;
+  if (!isAuthoritativeTopstepBrokerSnapshot(metrics?.broker, metrics)) return metrics;
   const stateBySymbol = new Map((Array.isArray(symbolStates) ? symbolStates : []).map((state) => [String(state.symbol || "").toUpperCase(), state]));
   const broker = metrics.broker;
   const positions = (Array.isArray(broker.positions) ? broker.positions : []).map((position) => {
@@ -2073,9 +2073,9 @@ function augmentTopstepMetricsWithMarks(metrics, symbolStates) {
     const markPrice = Number(stateBySymbol.get(symbol)?.lastPrice || position?.markPrice || 0);
     const entryPrice = Number(position?.averagePrice || position?.entryPrice || 0);
     const contracts = Number(position?.contracts || 0);
-    const calculatedPnl = markPrice > 0 && entryPrice > 0 && contracts > 0
+    const markPnl = markPrice > 0 && entryPrice > 0 && contracts > 0
       ? calculateFuturesPnl(symbol, position.side, entryPrice, markPrice, contracts)
-      : Number(position?.pnl || 0);
+      : null;
     return {
       ...position,
       symbol,
@@ -2083,92 +2083,24 @@ function augmentTopstepMetricsWithMarks(metrics, symbolStates) {
       currentPrice: markPrice,
       entryPrice,
       averagePrice: entryPrice,
-      pnl: calculatedPnl,
-      unrealizedPnl: calculatedPnl,
+      markPnl,
+      displayPnl: markPnl ?? Number(position?.unrealizedPnl ?? position?.pnl ?? 0),
     };
   });
-  const unrealizedPnl = positions.reduce((total, position) => total + Number(position.unrealizedPnl || 0), 0);
-  const realizedPnl = Number(broker.realizedPnl ?? metrics.currentPnl ?? 0);
-  const accountSize = Number(metrics.accountSize || broker.accountSize || 0);
-  const cashBalance = Number(broker.balance || broker.cashBalance || metrics.currentBalance || 0);
-  const currentPnl = realizedPnl + unrealizedPnl;
-  const currentBalance = cashBalance > 0 ? cashBalance + unrealizedPnl : accountSize + currentPnl;
   return {
     ...metrics,
-    currentPnl,
-    currentBalance,
-    returnPct: accountSize > 0 ? (currentPnl / accountSize) * 100 : Number(metrics.returnPct || 0),
-    openTrades: positions.length,
     broker: {
       ...broker,
       positions,
-      unrealizedPnl,
-      realizedPnl,
-      currentPnl,
-      currentBalance,
+      displayPnlSource: "LIVE_MARKS_PRICE_ONLY",
     },
   };
 }
 
-function mergeMetricsWithMarks(metrics, marks) {
-  if (!marks?.success) return metrics;
-  const account = marks.account || {};
-  const current = metrics || {};
-  const currentBroker = current.broker || {};
-  const hasBrokerSnapshot = Boolean(marks.lastBrokerSyncAt || marks.lastBrokerEventAt || marks.brokerAccountMatched === false || finiteNumberOrNull(account.currentBalance) != null);
-  const previousPositions = Array.isArray(currentBroker.positions) ? currentBroker.positions : [];
-  const previousTrades = Array.isArray(currentBroker.trades) ? currentBroker.trades : [];
-  const previousOrders = Array.isArray(currentBroker.orders) ? currentBroker.orders : [];
-  const marksPositions = Array.isArray(marks.positions) ? marks.positions : null;
-  const marksTrades = Array.isArray(marks.trades) ? marks.trades : null;
-  const marksOrders = Array.isArray(marks.orders) ? marks.orders : null;
-  const positions = hasBrokerSnapshot && marksPositions ? marksPositions : previousPositions;
-  const trades = hasBrokerSnapshot && marksTrades ? marksTrades : previousTrades;
-  const orders = hasBrokerSnapshot && marksOrders ? marksOrders : previousOrders;
-  const accountSize = finiteNumber(account.accountSize, current.accountSize || currentBroker.accountSize || 0);
-  const currentPnl = finiteNumber(account.currentPnl, current.currentPnl || 0);
-  const currentBalance = finiteNumber(account.currentBalance, current.currentBalance || (accountSize + currentPnl));
-  const realizedPnl = finiteNumber(account.realizedPnl, currentBroker.realizedPnl ?? currentPnl);
-  const unrealizedPnl = finiteNumber(account.unrealizedPnl, currentBroker.unrealizedPnl ?? 0);
-  const returnPct = finiteNumber(account.returnPct, accountSize > 0 ? (currentPnl / accountSize) * 100 : current.returnPct || 0);
-  const drawdown = finiteNumber(account.drawdown, current.drawdown || 0);
-  const numberOfTrades = Number.isFinite(Number(account.numberOfTrades)) ? Number(account.numberOfTrades) : Number(current.numberOfTrades || trades.length || 0);
-  const openTrades = Number.isFinite(Number(account.openTrades)) ? Number(account.openTrades) : Number(current.openTrades || positions.length || 0);
-  return {
-    ...current,
-    success: true,
-    dataSource: current.dataSource === "TOPSTEPX" ? current.dataSource : "LIVE_MARKS_CACHE",
-    brokerMetricsReady: current.brokerMetricsReady || positions.length > 0 || trades.length > 0,
-    currentPnl,
-    currentBalance,
-    returnPct,
-    numberOfTrades,
-    openTrades,
-    drawdown,
-    accountSize,
-    lastUpdated: marks.serverTime || current.lastUpdated,
-    broker: {
-      ...currentBroker,
-      success: currentBroker.success || positions.length > 0 || trades.length > 0 || finiteNumberOrNull(account.currentBalance) != null,
-      source: currentBroker.source || "LIVE_MARKS_CACHE",
-      accountId: marks.accountId || currentBroker.accountId,
-      brokerAccountMatched: marks.brokerAccountMatched !== false,
-      syncedAt: marks.lastBrokerSyncAt || currentBroker.syncedAt,
-      lastEventAt: marks.lastBrokerEventAt || currentBroker.lastEventAt,
-      accountSize,
-      currentPnl,
-      currentBalance,
-      realizedPnl,
-      unrealizedPnl,
-      returnPct,
-      drawdown,
-      numberOfTrades,
-      openTrades,
-      positions,
-      trades,
-      orders,
-    },
-  };
+function isAuthoritativeTopstepBrokerSnapshot(broker, metrics = null) {
+  if (!broker?.success) return false;
+  const source = String(broker.source || metrics?.dataSource || "").toUpperCase();
+  return source === BROKER_SOURCE_TOPSTEPX && broker.authoritative !== false;
 }
 
 function scopeBrokerMetricsToAccount(metrics, accountId, accountSizeFallback = 0) {
@@ -2181,7 +2113,7 @@ function scopeBrokerMetricsToAccount(metrics, accountId, accountSizeFallback = 0
   const positions = accountMatches ? filterByAccountId(broker.positions, cleanAccountId) : [];
   const trades = accountMatches ? filterByAccountId(broker.trades, cleanAccountId) : [];
   const orders = accountMatches ? filterByAccountId(broker.orders, cleanAccountId) : [];
-  const scopedBrokerReady = accountMatches && Boolean(broker.success || positions.length || trades.length || orders.length);
+  const scopedBrokerReady = accountMatches && isAuthoritativeTopstepBrokerSnapshot(broker, metrics);
   if (!accountMatches) {
     const scopedAccountSize = Number(accountSizeFallback || 0);
     return {
@@ -2214,6 +2146,7 @@ function scopeBrokerMetricsToAccount(metrics, accountId, accountSizeFallback = 0
     broker: {
       ...broker,
       success: scopedBrokerReady,
+      source: broker.source || metrics.dataSource,
       accountId: brokerAccountId || cleanAccountId,
       brokerAccountMatched: true,
       positions,
@@ -2247,10 +2180,9 @@ function mergeStableAccountMetrics(metrics, cachedMetrics, accountId) {
   const sameAccount = accountMatches({ accountId: broker.accountId || metrics.accountId }, accountId);
   const previousTrades = sameAccount && Array.isArray(cachedBroker.trades) ? cachedBroker.trades : [];
   const incomingTrades = Array.isArray(broker.trades) ? broker.trades : [];
-  const previousOrders = sameAccount && Array.isArray(cachedBroker.orders) ? cachedBroker.orders : [];
   const incomingOrders = Array.isArray(broker.orders) ? broker.orders : [];
   const mergedTrades = mergeStableBrokerRows(previousTrades, incomingTrades);
-  const mergedOrders = mergeStableBrokerRows(previousOrders, incomingOrders);
+  const exactOrders = incomingOrders;
   const historyIncomplete = previousTrades.length > incomingTrades.length;
   const stableCurrentPnl = historyIncomplete && Number(metrics.currentPnl || 0) === 0
     ? cachedMetrics.currentPnl
@@ -2275,7 +2207,7 @@ function mergeStableAccountMetrics(metrics, cachedMetrics, accountId) {
       drawdown: stableDrawdown,
       numberOfTrades,
       trades: mergedTrades,
-      orders: mergedOrders,
+      orders: exactOrders,
     },
   };
 }
@@ -2412,12 +2344,6 @@ function usableStrategyCode(value) {
   return code;
 }
 
-function finiteNumber(value, fallback = 0) {
-  if (value == null || value === "") return Number(fallback || 0);
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : Number(fallback || 0);
-}
-
 function finiteNumberOrNull(value) {
   if (value == null || value === "") return null;
   const numeric = Number(value);
@@ -2451,7 +2377,7 @@ function buildBrokerOpenTradeRows(positions, provenance = []) {
         contracts,
         entryPrice,
         exitPrice: 0,
-        pnl: Number(position.unrealizedPnl ?? position.pnl ?? 0),
+        pnl: Number(position.displayPnl ?? position.markPnl ?? position.unrealizedPnl ?? position.pnl ?? 0),
         status: "LIVE_TOPSTEP",
         entryReason: buildEntryReason({
           strategyCode: matchedDecision?.strategyCode,
@@ -2784,7 +2710,7 @@ function buildSymbolTrackers({ symbols, states, decisions, marketData, brokerPos
     }, 0);
     const brokerLiveTrades = Number(brokerPosition?.contracts || 0) > 0 ? 1 : 0;
     const brokerClosed = closedBrokerBySymbol.get(normalizedSymbol) || { count: 0, pnl: 0 };
-    const liveTradeCount = Math.max(liveTrades.length, brokerLiveTrades);
+    const liveTradeCount = brokerAuthoritative ? brokerLiveTrades : liveTrades.length;
     const totalTrades = brokerAuthoritative
       ? brokerClosed.count + brokerLiveTrades
       : trades.length;
@@ -2818,8 +2744,8 @@ function buildBrokerPositionMap(positions) {
     if (!symbol) return;
     const existing = map.get(symbol) || { symbol, contracts: 0, pnl: 0, unrealizedPnl: 0 };
     existing.contracts += Number(position.contracts || 0);
-    existing.pnl += Number(position.pnl || 0);
-    existing.unrealizedPnl += Number(position.unrealizedPnl ?? position.pnl ?? 0);
+    existing.pnl += Number(position.displayPnl ?? position.markPnl ?? position.pnl ?? 0);
+    existing.unrealizedPnl += Number(position.displayPnl ?? position.markPnl ?? position.unrealizedPnl ?? position.pnl ?? 0);
     existing.entryPrice = Number(position.entryPrice || position.averagePrice || existing.entryPrice || 0);
     existing.side = position.side || existing.side || "LONG";
     map.set(symbol, existing);
@@ -3472,13 +3398,6 @@ async function readApiResponse(response) {
   } catch {
     return { json: null, text };
   }
-}
-
-function statusClass(status) {
-  const value = String(status || "");
-  if (value.includes("ACCEPTED") || value.includes("SUBMITTED") || value.includes("EXIT") || value.includes("FLAT") || value.includes("SOLD") || value.includes("LIVE_TOPSTEP")) return "app-badge app-positive-badge";
-  if (value.includes("REJECTED") || value.includes("BLOCK")) return "app-badge app-risk-badge";
-  return "app-badge app-neutral-badge";
 }
 
 function estimateFuturesMarketSession(now = new Date()) {
