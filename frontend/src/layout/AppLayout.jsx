@@ -24,7 +24,7 @@ const navItems = [
   ...marketSections.futures.items,
   ...systemItems,
 ];
-const FUTURES_STATUS_REFRESH_MS = 10000;
+const FUTURES_STATUS_REFRESH_MS = 30000;
 
 function navClassName({ isActive }) {
   return isActive ? "app-nav-link active" : "app-nav-link";
@@ -283,6 +283,11 @@ function FuturesSidebarStatus({ backendOnline, status }) {
   const backendOn = Boolean(backendOnline && status?.backend?.online !== false);
   const botOn = Boolean(backendOn && status?.bot?.running);
   const marketDataOn = Boolean(backendOn && status?.marketData?.receiving);
+  const marketDataStale = Boolean(
+    backendOn
+      && status?.marketData?.running
+      && Number(status?.marketData?.staleSeconds ?? -1) > 180
+  );
   const topstepApiOn = Boolean(backendOn && status?.topstepApi?.ready);
   const tradingOn = Boolean(backendOn && status?.trading?.enabled);
   const strategyOn = Boolean(backendOn && status?.strategyConfig?.active);
@@ -319,7 +324,7 @@ function FuturesSidebarStatus({ backendOnline, status }) {
       label: "Market Data",
       value: marketDataOn ? "ON" : "OFF",
       tone: marketDataOn ? "on" : "off",
-      detail: marketDataOn ? `Fresh ${shortSidebarTime(status?.marketData?.lastEventAt)}` : status?.marketData?.running ? "Feed waiting" : "Feed stopped",
+      detail: marketDataOn ? `Fresh ${shortSidebarTime(status?.marketData?.lastEventAt)}` : marketDataStale ? "Data stopped" : status?.marketData?.running ? "Feed waiting" : "Feed stopped",
     },
     {
       label: "Trading Enabled",

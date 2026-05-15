@@ -13,6 +13,7 @@ const TIMEFRAME_OPTIONS = [
 const LIVE_MARKS_REFRESH_MS = 1000;
 const LIVE_RECONCILE_REFRESH_MS = 10000;
 const HEALTH_WARN_HOLD_MS = 25000;
+const MARKET_DATA_STALE_SECONDS = 180;
 const MIN_OPENING_CHART_BARS = 24;
 const BROKER_SOURCE_TOPSTEPX = "TOPSTEPX";
 const DEFAULT_PROFILE = "TOPSTEP_150K_PRACTICE";
@@ -881,9 +882,8 @@ function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
               <span><b>{tracker.liveTrades}</b> live</span>
               <span className={`futures-bot-signal ${tracker.signalTone}`}>{tracker.signal}</span>
             </div>
-            <div className={`futures-bot-tracker-health ${tracker.healthDetail || tracker.errorCode ? "" : "compact"}`}>
+            <div className="futures-bot-tracker-health compact">
               <span className={`futures-health-pill ${tracker.healthTone}`}>{tracker.healthLabel}</span>
-              {(tracker.errorCode || tracker.healthDetail) && <small>{tracker.errorCode || tracker.healthDetail}</small>}
             </div>
             <div className="futures-bot-tracker-foot">
               <span>{tracker.detail}</span>
@@ -1254,7 +1254,7 @@ function buildEquityReviewStatus({ backendOffline, botStarted, feedRunning, live
     const code = String(state?.errorCode || "");
     const symbol = String(state?.symbol || "").toUpperCase();
     if (!botStarted && (code === "FEED_STOPPED" || code === "ENTRY_GATE_CLOSED")) return;
-    if ((health === "warn" || health === "error") && marksHealthySymbols.has(symbol)) return;
+    if ((health === "warn" || health === "error") && marksHealthySymbols.has(symbol) && code !== "FEED_STALE" && code !== "MARKET_DATA_STOPPED") return;
     if (health === "error" || health === "warn") healthIssues.push({ tone: health });
   });
   const hasError = healthIssues.some((issue) => issue.tone === "error");
@@ -2000,20 +2000,25 @@ function mergeCurrentCandleIntoSeries(series, currentCandle) {
 
 function mergeSymbolStatesWithMarks(symbolStates, marks) {
   const bySymbol = new Map((Array.isArray(symbolStates) ? symbolStates : []).map((state) => [String(state.symbol || "").toUpperCase(), state]));
+  const feedStaleSeconds = Number(marks?.feedStaleSeconds ?? -1);
+  const marketDataStopped = feedStaleSeconds >= 0
+    ? feedStaleSeconds > MARKET_DATA_STALE_SECONDS
+    : marks?.feedFresh === false;
   Object.entries(marks.symbols || {}).forEach(([rawSymbol, patch]) => {
     const symbol = String(rawSymbol || "").toUpperCase();
     if (!symbol) return;
     const current = bySymbol.get(symbol) || { symbol };
     const lastPrice = Number(patch?.lastPrice || current.lastPrice || 0);
     const currentCandleTime = patch?.currentCandle?.time || current.lastBarTime || "";
-    const marksHealthy = Boolean(patch?.currentCandle || lastPrice > 0 || marks.feedFresh);
+    const marksHealthy = !marketDataStopped && Boolean(patch?.currentCandle || lastPrice > 0 || marks.feedFresh);
     bySymbol.set(symbol, {
       ...current,
       symbol,
       dataSource: current.dataSource || "LIVE_MARKS_CACHE",
-      analysisStatus: marksHealthy ? "Tracking live candles" : (current.analysisStatus || "Waiting for live marks"),
-      healthStatus: marksHealthy ? "ok" : (current.healthStatus || "warn"),
-      healthDetail: marksHealthy ? "Live marks are updating." : (current.healthDetail || "Fast marks are waiting for a fresh ProjectX event."),
+      analysisStatus: marketDataStopped ? "Market Data Stopped" : marksHealthy ? "Tracking live candles" : (current.analysisStatus || "Waiting for live marks"),
+      healthStatus: marketDataStopped ? "error" : marksHealthy ? "ok" : (current.healthStatus || "warn"),
+      errorCode: marketDataStopped ? "MARKET_DATA_STOPPED" : marksHealthy ? "" : current.errorCode,
+      healthDetail: marketDataStopped ? "Market Data Stopped" : marksHealthy ? "Live marks are updating." : (current.healthDetail || "Fast marks are waiting for a fresh ProjectX event."),
       lastPrice,
       lastBarTime: currentCandleTime,
       liveEvents: Math.max(Number(current.liveEvents || 0), Number(patch?.currentCandle?.events || 0)),
@@ -2793,6 +2798,9 @@ function trackerHealthLabel(state, botStarted) {
   const health = String(state?.healthStatus || "").toLowerCase();
   const errorCode = String(state?.errorCode || "").trim();
   const detail = state?.healthDetail || state?.analysisStatus || "Waiting for health check.";
+  if (errorCode === "FEED_STALE" || errorCode === "MARKET_DATA_STOPPED") {
+    return { label: "Health Error", tone: "error", errorCode, detail: "Market Data Stopped" };
+  }
   if (health === "error") {
     return { label: "Health Error", tone: "error", errorCode: errorCode || "HEALTH_ERROR", detail };
   }
@@ -2807,6 +2815,10 @@ function trackerHealthLabel(state, botStarted) {
 
 function trackerDetail(state, signal, botStarted, lastPrice) {
   if (!botStarted) return "Not started";
+  const errorCode = String(state?.errorCode || "").trim();
+  if (errorCode === "FEED_STALE" || errorCode === "MARKET_DATA_STOPPED") {
+    return "Market Data Stopped";
+  }
   if (signal?.tone === "trading") return "In trade; PnL updates with current mark price.";
   if (signal?.currentSignal?.strategyCode) {
     const entryTime = signal.currentSignal.entryTime || signal.currentSignal.time || signal.currentSignal.signalTime || state?.currentSignalTime || "";
