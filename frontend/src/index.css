@@ -2406,6 +2406,17 @@ textarea {
   gap: 10px;
 }
 
+.futures-live-trade-toolbar {
+  grid-template-columns:
+    minmax(118px, 1fr)
+    minmax(118px, 1fr)
+    minmax(104px, 0.85fr)
+    minmax(132px, 1.08fr)
+    minmax(112px, 0.9fr)
+    minmax(128px, 1fr)
+    minmax(128px, 1fr);
+}
+
 .app-data-toolbar {
   display: grid;
   grid-template-columns: repeat(3, minmax(150px, 1fr)) auto;

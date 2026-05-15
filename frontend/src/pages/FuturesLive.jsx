@@ -3301,7 +3301,7 @@ function TradeFilters({ trades, filteredTrades, filters, onChange }) {
           </button>
         )}
       </div>
-      <div className="app-trade-toolbar mt-3">
+      <div className="app-trade-toolbar futures-live-trade-toolbar mt-3">
         <label className="d-grid gap-1">
           <span className="app-label">Outcome</span>
           <select className="form-select app-input" value={filters.outcome} onChange={(event) => setFilter("outcome", event.target.value)}>
