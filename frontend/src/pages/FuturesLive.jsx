@@ -805,6 +805,7 @@ export default function FuturesLive() {
             trades={chartTrades}
             lastRefreshAt={lastMonitorRefreshAt}
             serverTime={liveMonitor?.serverTime}
+            lastRealtimeEventAt={liveMonitor?.lastRealtimeEventAt}
             feedStaleSeconds={feedStaleSeconds}
             warmupPending={warmupPending}
             graphReadiness={graphReadiness}
@@ -1333,6 +1334,7 @@ function FuturesMarketChart({
   trades = [],
   lastRefreshAt,
   serverTime,
+  lastRealtimeEventAt,
   feedStaleSeconds = -1,
   warmupPending = false,
   graphReadiness = null,
@@ -1400,6 +1402,8 @@ function FuturesMarketChart({
   const activeVolumeMax = displayedVolumeMax?.symbol === domainSymbolKey ? displayedVolumeMax.value : targetVolumeMax;
   const maxVolume = Math.max(activeVolumeMax, 1);
   const priceClipId = `futures-price-clip-${String(symbol || "chart").replace(/[^a-z0-9_-]/gi, "")}-${String(timeframe || "tf").replace(/[^a-z0-9_-]/gi, "")}`;
+  const marketDataStopped = !backendOffline && botStarted && feedStaleSeconds >= 0 && feedStaleSeconds > MARKET_DATA_STALE_SECONDS;
+  const lastFeedEventLabel = lastRealtimeEventAt ? `Last event ${formatEstTime(lastRealtimeEventAt)}` : "Last event unavailable";
 
   const toY = (price) => priceBottom - (((Number(price || 0) - min) / range) * (priceBottom - priceTop));
   const toX = (index) => (leadingSlots + index) * slotWidth + slotWidth / 2;
@@ -1588,6 +1592,69 @@ function FuturesMarketChart({
       }
     };
   }, [hasCandles, symbol, targetDomainMin, targetDomainMax]);
+
+  if (marketDataStopped) {
+    return (
+      <div
+        ref={chartShellRef}
+        className={isTransitioning ? "app-chart-shell futures-market-chart-shell futures-market-chart-shell-empty is-transitioning" : "app-chart-shell futures-market-chart-shell futures-market-chart-shell-empty"}
+        tabIndex={0}
+      >
+        <div className="futures-chart-actionbar">
+          <div className="futures-chart-left-controls">
+            <div className="futures-chart-selector-stack">
+              <div className="futures-chart-symbol-mini-row" aria-label="Chart symbol">
+                {symbols.map((optionSymbol) => (
+                  <button
+                    key={optionSymbol}
+                    type="button"
+                    className={symbol === optionSymbol ? "futures-chart-symbol-mini-btn active" : "futures-chart-symbol-mini-btn"}
+                    onClick={() => onSymbolChange?.(optionSymbol)}
+                  >
+                    {optionSymbol}
+                  </button>
+                ))}
+              </div>
+              <div className="futures-timeframe-row futures-timeframe-row-chart" aria-label="Chart timeframe">
+                {TIMEFRAME_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={timeframe === option.value ? "futures-timeframe-btn active" : "futures-timeframe-btn"}
+                    onClick={() => onTimeframeChange?.(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="futures-chart-status-copy">
+              <strong>Feed Stopped</strong>
+              <span>UI {formatEstTime(lastRefreshAt)} | Server {formatEstTime(serverTime)} | Feed {formatDuration(feedStaleSeconds)}</span>
+            </div>
+          </div>
+          <div className="futures-chart-actions" aria-label="Chart navigation">
+            <button type="button" disabled title="Scroll back">←</button>
+            <button type="button" disabled title="Scroll forward">→</button>
+            <button type="button" disabled title="Zoom in">+</button>
+            <button type="button" disabled title="Zoom out">−</button>
+            <button type="button" disabled title="Jump to live">LIVE</button>
+          </div>
+        </div>
+
+        <div className="app-chart-empty futures-chart-sync-empty futures-chart-feed-stopped-empty">
+          <strong>Feed Stopped</strong>
+          <div className="futures-chart-sync-grid">
+            <span>{symbol}</span>
+            <span>{timeframeLabel(timeframe)}</span>
+            <span>Market Data Stopped</span>
+            <span>{lastFeedEventLabel}</span>
+            <span>Feed age {formatDuration(feedStaleSeconds)}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!hasCandles) {
     const graphReadyItems = Number(graphReadiness?.readyItems || 0);
