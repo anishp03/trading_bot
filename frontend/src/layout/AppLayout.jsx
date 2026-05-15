@@ -25,6 +25,7 @@ const navItems = [
   ...systemItems,
 ];
 const FUTURES_STATUS_REFRESH_MS = 30000;
+const FUTURES_MARKET_DATA_STALE_SECONDS = 30;
 
 function navClassName({ isActive }) {
   return isActive ? "app-nav-link active" : "app-nav-link";
@@ -286,7 +287,7 @@ function FuturesSidebarStatus({ backendOnline, status }) {
   const marketDataStale = Boolean(
     backendOn
       && status?.marketData?.running
-      && Number(status?.marketData?.staleSeconds ?? -1) > 180
+      && Number(status?.marketData?.staleSeconds ?? -1) > FUTURES_MARKET_DATA_STALE_SECONDS
   );
   const topstepApiOn = Boolean(backendOn && status?.topstepApi?.ready);
   const tradingOn = Boolean(backendOn && status?.trading?.enabled);

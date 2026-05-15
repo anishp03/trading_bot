@@ -13,7 +13,7 @@ const TIMEFRAME_OPTIONS = [
 const LIVE_MARKS_REFRESH_MS = 1000;
 const LIVE_RECONCILE_REFRESH_MS = 10000;
 const HEALTH_WARN_HOLD_MS = 25000;
-const MARKET_DATA_STALE_SECONDS = 180;
+const MARKET_DATA_STALE_SECONDS = 30;
 const MIN_OPENING_CHART_BARS = 24;
 const BROKER_SOURCE_TOPSTEPX = "TOPSTEPX";
 const DEFAULT_PROFILE = "TOPSTEP_150K_PRACTICE";
@@ -1237,7 +1237,7 @@ function buildEquityReviewStatus({ backendOffline, botStarted, feedRunning, live
   const healthIssues = [];
   if (backendOffline) healthIssues.push({ tone: "error" });
   if (botStarted && !feedRunning) healthIssues.push({ tone: "error" });
-  if (Number(liveMonitor?.feedStaleSeconds ?? -1) > 180) healthIssues.push({ tone: "error" });
+  if (Number(liveMonitor?.feedStaleSeconds ?? -1) > MARKET_DATA_STALE_SECONDS) healthIssues.push({ tone: "error" });
   const marksSeverity = liveMarks?.checks?.overall?.severity || "";
   if (marksSeverity === "error") healthIssues.push({ tone: "error" });
   if (marksSeverity === "warn") healthIssues.push({ tone: "warn" });
