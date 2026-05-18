@@ -1636,7 +1636,7 @@ textarea {
 }
 
 .futures-thinking-row.bracket-alert time,
-.futures-thinking-row.bracket-alert b {
+.futures-thinking-row.bracket-alert .futures-event-tag {
   color: rgba(255, 209, 128, 0.98);
 }
 
@@ -1650,9 +1650,108 @@ textarea {
   white-space: nowrap;
 }
 
-.futures-thinking-row span {
+.futures-thinking-row span,
+.futures-event-body {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.futures-event-body {
+  display: grid;
+  gap: 5px;
+}
+
+.futures-event-topline {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.futures-event-tag {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: rgba(120, 170, 255, 0.12);
+  color: rgba(142, 190, 255, 0.98);
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.futures-event-tag.accepted,
+.futures-event-tag.active {
+  background: rgba(120, 220, 160, 0.12);
+  color: rgba(146, 232, 177, 0.98);
+}
+
+.futures-event-tag.warn,
+.futures-event-tag.closed {
+  background: rgba(255, 214, 112, 0.12);
+  color: rgba(255, 214, 112, 0.98);
+}
+
+.futures-event-tag.error,
+.futures-event-tag.blocked {
+  background: rgba(255, 120, 120, 0.12);
+  color: rgba(255, 141, 141, 0.98);
+}
+
+.futures-event-context {
+  color: var(--app-muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.futures-event-title {
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 850;
+}
+
+.futures-event-subtext {
+  color: rgba(221, 226, 236, 0.76);
+}
+
+.futures-event-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.futures-event-detail {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: rgba(255, 255, 255, 0.065);
+  color: rgba(236, 241, 248, 0.9);
+  font-size: 0.68rem;
+  line-height: 1rem;
+}
+
+.futures-event-detail b {
+  color: var(--app-muted);
+  font-weight: 850;
+  text-transform: uppercase;
+  font-size: 0.58rem;
+}
+
+.futures-event-detail em {
+  color: rgba(255, 255, 255, 0.92);
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .futures-bot-tracker-header {

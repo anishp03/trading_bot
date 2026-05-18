@@ -488,7 +488,7 @@ export default function FuturesLive() {
   }
 
   function loadLiveThinking(status = liveStatus) {
-    const sessionId = Number(status?.running ? status?.sessionId || 0 : 0);
+    const sessionId = Number(status?.sessionId || 0);
     if (!sessionId) {
       setLiveThinkingStatus("idle");
       return;
@@ -955,14 +955,31 @@ function FuturesThinkingLog({ entries, status }) {
         {visibleRows.length > 0 && (
           <div className="futures-thinking-log-head">
             <span>Date / Time</span>
-            <span>Error Code / Status</span>
+            <span>Event</span>
           </div>
         )}
         {visibleRows.length ? (
           visibleRows.map((entry, index) => (
             <div className={thinkingLogRowClass(entry)} key={entry.id || `${entry.createdAt}-${index}`}>
               <time>{formatEstTime(entry.createdAt || entry.barTime)}</time>
-              <span><b>{equityReviewCode(entry)}</b> {thinkingDecisionLine(entry)}</span>
+              <div className="futures-event-body">
+                <div className="futures-event-topline">
+                  <span className={`futures-event-tag ${eventToneClass(entry)}`}>{eventLogCode(entry)}</span>
+                  {eventContextText(entry) && <span className="futures-event-context">{eventContextText(entry)}</span>}
+                </div>
+                <div className="futures-event-title">{eventTitle(entry)}</div>
+                {eventSubtext(entry) && <div className="futures-event-subtext">{eventSubtext(entry)}</div>}
+                {eventDetailEntries(entry).length > 0 && (
+                  <div className="futures-event-details">
+                    {eventDetailEntries(entry).map(([key, value]) => (
+                      <span className="futures-event-detail" key={`${entry.id || index}-${key}`}>
+                        <b>{detailLabel(key)}</b>
+                        <em>{formatEventDetailValue(value)}</em>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           ))
         ) : (
@@ -978,14 +995,8 @@ function buildObservedLiveBotLogEntries({
   botStarted,
   feedRunning,
   liveStatus,
-  realtimeStatus,
   liveMonitor,
   liveMarks,
-  liveDecisions,
-  brokerOpenTradeRows,
-  brokerClosedTradeRows,
-  accountScopeId,
-  symbolStates,
 }) {
   const entries = [];
   const sessionId = Number(liveStatus?.sessionId || 0);
@@ -996,10 +1007,12 @@ function buildObservedLiveBotLogEntries({
       key: "backend-offline",
       sessionId,
       createdAt: observedAt,
+      eventType: "BROKER_SYNC_ERROR",
       phase: "Backend",
       tone: "blocked",
       summary: "Backend API is not responding.",
       detail: "Live Bot status cannot be refreshed until the API responds again.",
+      details: {},
     }));
     return entries;
   }
@@ -1009,58 +1022,46 @@ function buildObservedLiveBotLogEntries({
       key: `bot-running|${sessionKey}|${liveStatus?.startedAt || ""}`,
       sessionId,
       createdAt: liveStatus?.startedAt || liveStatus?.lastUpdatedAt || observedAt,
-      phase: "Started",
+      eventType: "BOT_STARTED",
+      phase: "Live Bot",
       tone: "active",
-      summary: `${String(liveStatus?.executionMode || "Live").replaceAll("_", " ")} runner is on.`,
-      detail: `Session ${sessionId || "--"}; tracking ${cleanLogText(liveStatus?.symbols || DEFAULT_SYMBOLS.join(", "))}; account ${cleanLogText(liveStatus?.fundedProfile || "practice")}.`,
+      summary: "Live bot started.",
+      detail: "Waiting for the backend event stream.",
+      details: {
+        symbols: cleanLogText(liveStatus?.symbols || DEFAULT_SYMBOLS.join(", ")),
+        mode: cleanLogText(liveStatus?.executionMode || "Live"),
+        profile: cleanLogText(liveStatus?.fundedProfile || "practice"),
+      },
     }));
   } else if (liveStatus) {
     entries.push(observedLogEntry({
       key: `bot-idle|${sessionKey}|${liveStatus?.lastDecision || ""}`,
       sessionId,
       createdAt: liveStatus?.lastUpdatedAt || observedAt,
-      phase: "Stopped",
+      eventType: "BOT_STOPPED",
+      phase: "Live Bot",
       tone: "closed",
-      summary: "Live runner is idle.",
-      detail: "No signal scans or broker submissions are running.",
+      summary: "Live bot stopped.",
+      detail: "No new strategy scans or Topstep orders will run until the bot is started again.",
+      details: { sessionId },
     }));
   }
 
-  if (feedRunning) {
-    const states = Array.isArray(symbolStates) ? symbolStates : [];
-    const trackedSymbols = states.map((state) => state?.symbol).filter(Boolean);
+  const feedStaleSeconds = Number(liveMarks?.feedStaleSeconds ?? liveMonitor?.feedStaleSeconds ?? -1);
+  if (feedRunning && feedStaleSeconds > MARKET_DATA_STALE_SECONDS) {
     entries.push(observedLogEntry({
-      key: `feed-running|${sessionKey}|${liveMonitor?.dataSource || realtimeStatus?.dataMode || "feed"}`,
+      key: `feed-stopped|${sessionKey}|${feedStaleSeconds}`,
       sessionId,
-      createdAt: realtimeStatus?.lastEventAt || liveMonitor?.realtimeLastEventAt || liveMonitor?.serverTime || observedAt,
+      createdAt: liveMarks?.lastEventAt || liveMonitor?.realtimeLastEventAt || observedAt,
+      eventType: "MARKET_DATA_STOPPED",
       phase: "Market Data",
-      tone: "active",
-      summary: "Tracking ProjectX prices.",
-      detail: `${trackedSymbols.length || DEFAULT_SYMBOLS.length} symbols are being monitored. ${cleanLogText(realtimeStatus?.lastMessage || liveMonitor?.realtimeMessage || "Price feed is active.")}`,
-    }));
-  }
-
-  appendLiveMarksCheckLogEntries(entries, {
-    liveMarks,
-    botStarted,
-    feedRunning,
-    sessionId,
-    sessionKey,
-    observedAt,
-  });
-
-  const untrackedBrokerRows = [...(Array.isArray(brokerOpenTradeRows) ? brokerOpenTradeRows : []), ...(Array.isArray(brokerClosedTradeRows) ? brokerClosedTradeRows : [])]
-    .filter((trade) => String(trade?.strategyCode || "").toUpperCase() === "UNTRACKED");
-  if (untrackedBrokerRows.length > 0) {
-    const symbols = Array.from(new Set(untrackedBrokerRows.map((trade) => String(trade?.symbol || "").toUpperCase()).filter(Boolean))).join(", ");
-    entries.push(observedLogEntry({
-      key: `provenance|${sessionKey}|${accountScopeId || "account"}|${untrackedBrokerRows.length}|${symbols}`,
-      sessionId,
-      createdAt: observedAt,
-      phase: "Trade Provenance",
-      tone: "warn",
-      summary: `${untrackedBrokerRows.length} broker trade row(s) are missing local strategy provenance.`,
-      detail: `Account ${cleanLogText(accountScopeId || "unknown")} broker rows ${cleanLogText(symbols || "unknown")} are marked UNTRACKED until a local decision/order-ledger record can be matched.`,
+      tone: "error",
+      summary: "Market data stopped.",
+      detail: "Strategy scans and Topstep entries are paused until fresh data resumes.",
+      details: {
+        seconds: feedStaleSeconds,
+        lastEvent: cleanLogText(liveMarks?.lastEventAt || liveMonitor?.realtimeLastEventAt || ""),
+      },
     }));
   }
 
@@ -1070,64 +1071,18 @@ function buildObservedLiveBotLogEntries({
       key: `entry-gate|${sessionKey}|${marketSession.code || ""}|${marketSession.marketDate || ""}|${Boolean(marketSession.entryWindowOpen)}`,
       sessionId,
       createdAt: marketSession.now || liveStatus?.lastUpdatedAt || observedAt,
+      eventType: marketSession.entryWindowOpen ? "ENTRY_GATE_OPENED" : "ENTRY_GATE_CLOSED",
       phase: "Entry Gate",
       tone: marketSession.entryWindowOpen ? "active" : "closed",
-      summary: cleanLogText(marketSession.label || "Trading gate checked."),
-      detail: `${cleanLogText(marketSession.detail || "")}${marketSession.entryWindowOpen ? " Strategy entries can be evaluated." : " New entries are blocked while this gate is closed."}`,
+      summary: marketSession.entryWindowOpen ? "Trading entries enabled." : "Trading entries disabled.",
+      detail: marketSession.entryWindowOpen ? "Strategy signals may now submit to Topstep if they pass validation." : cleanLogText(marketSession.detail || "New entries are blocked while this gate is closed."),
+      details: {
+        gate: cleanLogText(marketSession.label || ""),
+        code: cleanLogText(marketSession.code || ""),
+        marketDate: cleanLogText(marketSession.marketDate || ""),
+      },
     }));
   }
-
-  const lastProcessed = liveStatus?.lastProcessedLiveBarTime || liveStatus?.lastBarTime || "";
-  if (botStarted && lastProcessed) {
-    const decisions = Number(liveStatus?.decisionCount || 0);
-    entries.push(observedLogEntry({
-      key: `scan|${sessionKey}|${lastProcessed}|${decisions}`,
-      sessionId,
-      createdAt: liveStatus?.lastUpdatedAt || observedAt,
-      phase: "Signal Scan",
-      tone: decisions > 0 ? "active" : "info",
-      barTime: lastProcessed,
-      summary: decisions > 0 ? `${decisions} live decision(s) recorded.` : "No trade decision recorded for the latest processed bar.",
-      detail: `Processed ${formatInteger(liveStatus?.automationCycles || 0)} automation cycle(s). ${cleanLogText(liveStatus?.lastDecision || "")}`,
-    }));
-  }
-
-  (Array.isArray(symbolStates) ? symbolStates : []).forEach((state) => {
-    const symbol = String(state?.symbol || "").toUpperCase();
-    if (!symbol) return;
-    if (feedRunning && state?.analysisStatus) {
-      entries.push(observedLogEntry({
-        key: `tracker|${sessionKey}|${symbol}|${state.analysisStatus}`,
-        sessionId,
-        createdAt: state?.lastBarTime || observedAt,
-        phase: "Tracker",
-        tone: "active",
-        symbol,
-        barTime: state?.lastBarTime || "",
-        summary: `${symbol} ${cleanLogText(state.analysisStatus)}.`,
-        detail: `Last price ${formatPrice(state.lastPrice)}; enabled strategies ${Number(state.enabledStrategies || 0)}; active signals ${Number(state.activeSignalCount || 0)}.`,
-      }));
-    }
-    const latestSignal = currentTrackerSignal(state);
-    if (latestSignal?.strategyCode) {
-      entries.push(observedLogEntry({
-        key: `potential|${sessionKey}|${symbol}|${latestSignal.strategyCode}|${latestSignal.side || ""}|${latestSignal.entryTime || latestSignal.time || state.currentSignalTime || state.lastSignalTime || ""}`,
-        sessionId,
-        createdAt: latestSignal.entryTime || latestSignal.time || state.currentSignalTime || state.lastSignalTime || observedAt,
-        phase: "Potential Trade",
-        tone: "setup",
-        symbol,
-        barTime: latestSignal.entryTime || latestSignal.time || state.currentSignalTime || state.lastSignalTime || "",
-        summary: `${symbol} ${latestSignal.strategyCode} ${String(latestSignal.side || "").toUpperCase()} signal appeared.`,
-        detail: `Entry ${formatPrice(latestSignal.entryPrice)}; stop ${formatPrice(latestSignal.stopPrice)}; target ${formatPrice(latestSignal.targetPrice)}. Waiting for live candidate/risk validation.`,
-      }));
-    }
-  });
-
-  (Array.isArray(liveDecisions) ? liveDecisions : []).slice(0, 40).forEach((decision) => {
-    const event = observedDecisionLogEntry(decision, sessionId, observedAt);
-    if (event) entries.push(event);
-  });
 
   return entries;
 }
@@ -1237,18 +1192,22 @@ function observedDecisionLogEntry(decision, sessionId, fallbackTime) {
   });
 }
 
-function observedLogEntry({ key, sessionId, createdAt, phase, tone, symbol = "", barTime = "", summary, detail }) {
+function observedLogEntry({ key, sessionId, createdAt, eventType = "", phase, tone, symbol = "", barTime = "", summary, detail, details = {} }) {
   return {
     id: `observed-${key}`,
     observedKey: key,
     sessionId,
     createdAt: createdAt || liveLogNow(),
+    eventType,
     phase,
     tone,
     symbol,
     barTime,
+    title: summary,
+    subtext: detail,
     summary,
     detail,
+    details,
   };
 }
 
@@ -1306,6 +1265,122 @@ function equityReviewCode(entry) {
   return "STATUS";
 }
 
+function eventLogCode(entry) {
+  const type = String(entry?.eventType || "").trim();
+  return type || equityReviewCode(entry);
+}
+
+function eventTitle(entry) {
+  return cleanLogText(entry?.title || entry?.summary || "--");
+}
+
+function eventSubtext(entry) {
+  return cleanLogText(entry?.subtext || entry?.detail || "");
+}
+
+function eventContextText(entry) {
+  const symbol = String(entry?.symbol || entry?.details?.symbol || "").trim().toUpperCase();
+  const barTime = String(entry?.barTime || entry?.details?.barTime || "").trim();
+  return [
+    symbol,
+    barTime ? formatEstTime(barTime) : "",
+  ].filter(Boolean).join(" | ");
+}
+
+function eventToneClass(entry) {
+  return cleanLogText(entry?.tone || "info").toLowerCase();
+}
+
+function eventDetailEntries(entry) {
+  const details = entry?.details && typeof entry.details === "object" && !Array.isArray(entry.details) ? entry.details : {};
+  const priority = [
+    "symbols",
+    "symbol",
+    "strategy",
+    "side",
+    "contracts",
+    "entry",
+    "stop",
+    "target",
+    "orderId",
+    "seconds",
+    "downtime",
+    "marketEventGap",
+    "lastEvent",
+    "gate",
+    "profile",
+    "account",
+    "mode",
+    "action",
+    "status",
+    "exitPrice",
+    "pnl",
+    "reason",
+  ];
+  const seen = new Set();
+  const ordered = [];
+  priority.forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(details, key)) {
+      ordered.push([key, details[key]]);
+      seen.add(key);
+    }
+  });
+  Object.entries(details).forEach(([key, value]) => {
+    if (!seen.has(key)) ordered.push([key, value]);
+  });
+  return ordered
+    .filter(([, value]) => detailValueVisible(value))
+    .slice(0, 10);
+}
+
+function detailValueVisible(value) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "number") return Number.isFinite(value) && value !== 0;
+  if (typeof value === "boolean") return true;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return String(value).trim().length > 0;
+}
+
+function detailLabel(key) {
+  const labels = {
+    symbols: "symbols",
+    symbol: "symbol",
+    strategy: "strategy",
+    side: "side",
+    contracts: "contracts",
+    entry: "entry",
+    stop: "stop",
+    target: "target",
+    orderId: "order",
+    seconds: "age",
+    downtime: "downtime",
+    marketEventGap: "event gap",
+    lastEvent: "last event",
+    gate: "gate",
+    profile: "profile",
+    account: "account",
+    mode: "mode",
+    action: "action",
+    status: "status",
+    exitPrice: "exit",
+    pnl: "PnL",
+    reason: "reason",
+  };
+  return labels[key] || String(key || "").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+}
+
+function formatEventDetailValue(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number") {
+    return Number.isInteger(value) ? formatInteger(value) : formatPrice(value);
+  }
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  if (Array.isArray(value)) return value.map(formatEventDetailValue).join(", ");
+  if (typeof value === "object") return cleanLogText(JSON.stringify(value));
+  return cleanLogText(value);
+}
+
 function thinkingDecisionLine(entry) {
   const phase = String(entry?.phase || "Live Bot").trim();
   const symbol = String(entry?.symbol || "").trim();
@@ -1324,9 +1399,9 @@ function thinkingDecisionLine(entry) {
 }
 
 function thinkingLogRowClass(entry) {
-  const text = `${entry?.summary || ""} ${entry?.detail || ""}`.toLowerCase();
+  const text = `${entry?.summary || ""} ${entry?.detail || ""} ${entry?.title || ""} ${entry?.subtext || ""}`.toLowerCase();
   const bracketAlert = text.includes("auto oco brackets") || text.includes("position brackets");
-  return `futures-thinking-row ${cleanLogText(entry?.tone || "info").toLowerCase()}${bracketAlert ? " bracket-alert" : ""}`;
+  return `futures-thinking-row ${eventToneClass(entry)} ${eventLogCode(entry).toLowerCase().replaceAll("_", "-")}${bracketAlert ? " bracket-alert" : ""}`;
 }
 
 function reservedTrackerTile(symbol, detail) {
@@ -2026,9 +2101,10 @@ function normalizeCandle(candle) {
 }
 
 function liveDecisionSidecarSignature(status) {
-  const sessionId = Number(status?.running ? status?.sessionId || 0 : 0);
+  const sessionId = Number(status?.sessionId || 0);
   return [
     sessionId,
+    Boolean(status?.running),
     Number(status?.decisionCount || 0),
     Number(status?.acceptedDecisionCount || 0),
     Number(status?.rejectedDecisionCount || 0),
