@@ -127,6 +127,7 @@ export default function FuturesLive() {
   );
   const brokerSnapshot = accountScopedMetrics?.broker?.success ? accountScopedMetrics.broker : null;
   const brokerAuthoritative = isAuthoritativeTopstepBrokerSnapshot(brokerSnapshot, accountScopedMetrics);
+  const botAccountDataActive = botStarted && brokerAuthoritative;
   const localTradeProvenance = useMemo(
     () => buildLocalTradeProvenance(liveDecisionHistory, liveOrders, accountScopeId),
     [accountScopeId, liveDecisionHistory, liveOrders]
@@ -139,9 +140,14 @@ export default function FuturesLive() {
     () => buildBrokerClosedTradeRows(brokerSnapshot?.trades, localTradeProvenance),
     [brokerSnapshot, localTradeProvenance]
   );
-  const localLiveTrades = displayTradeRows.filter((decision) => isEntryDecision(decision) && !isClosedTradeDecision(decision));
-  const liveTrades = brokerAuthoritative ? brokerOpenTradeRows : localLiveTrades;
-  const allTradeRows = brokerAuthoritative ? brokerClosedTradeRows : displayTradeRows;
+  const liveTrades = useMemo(
+    () => botAccountDataActive ? brokerOpenTradeRows : [],
+    [botAccountDataActive, brokerOpenTradeRows]
+  );
+  const allTradeRows = useMemo(
+    () => botAccountDataActive ? brokerClosedTradeRows : [],
+    [botAccountDataActive, brokerClosedTradeRows]
+  );
   const filteredLiveTrades = useMemo(
     () => filterTradeRows(liveTrades, liveTradeFilters),
     [liveTradeFilters, liveTrades]
@@ -181,29 +187,32 @@ export default function FuturesLive() {
   const feedStaleSeconds = Number(liveMonitor?.feedStaleSeconds ?? -1);
   const marketSession = liveMonitor?.marketSession || liveStatus?.marketSession || estimateFuturesMarketSession();
   const marketIdle = !backendOffline && !monitorDataActive;
-  const metrics = accountScopedMetrics;
+  const metrics = useMemo(
+    () => botAccountDataActive ? accountScopedMetrics : defaultLiveAccountMetrics(selectedProfile.accountSize, accountScopeId),
+    [accountScopeId, accountScopedMetrics, botAccountDataActive, selectedProfile.accountSize]
+  );
   const sidebarStartReady = Boolean(futuresSidebarStatus?.strategyConfig?.active && futuresSidebarStatus?.topstepApi?.ready);
   const brokerChartTradeRows = useMemo(
-    () => brokerAuthoritative ? [...brokerClosedTradeRows, ...brokerOpenTradeRows] : [],
-    [brokerAuthoritative, brokerClosedTradeRows, brokerOpenTradeRows]
+    () => botAccountDataActive ? [...brokerClosedTradeRows, ...brokerOpenTradeRows] : [],
+    [botAccountDataActive, brokerClosedTradeRows, brokerOpenTradeRows]
   );
   const realChartTrades = useMemo(
-    () => buildChartTrades(brokerAuthoritative ? brokerChartTradeRows : displayTradeRows, selectedChartSymbol, selectedChartMarkPrice),
-    [brokerAuthoritative, brokerChartTradeRows, displayTradeRows, selectedChartMarkPrice, selectedChartSymbol]
+    () => buildChartTrades(botAccountDataActive ? brokerChartTradeRows : [], selectedChartSymbol, selectedChartMarkPrice),
+    [botAccountDataActive, brokerChartTradeRows, selectedChartMarkPrice, selectedChartSymbol]
   );
   const chartTrades = realChartTrades;
   const botTrackers = useMemo(
     () => buildSymbolTrackers({
       symbols: monitorSymbols,
-      states: symbolStates,
-      decisions: displayTradeRows,
-      marketData: liveMonitor?.marketData || {},
-      brokerPositions: brokerSnapshot?.positions || [],
-      brokerClosedTrades: brokerClosedTradeRows,
-      brokerAuthoritative,
-      botStarted,
+      states: botAccountDataActive ? symbolStates : [],
+      decisions: botAccountDataActive ? displayTradeRows : [],
+      marketData: botAccountDataActive ? liveMonitor?.marketData || {} : {},
+      brokerPositions: botAccountDataActive ? brokerSnapshot?.positions || [] : [],
+      brokerClosedTrades: botAccountDataActive ? brokerClosedTradeRows : [],
+      brokerAuthoritative: botAccountDataActive,
+      botStarted: botAccountDataActive,
     }),
-    [botStarted, brokerAuthoritative, brokerClosedTradeRows, brokerSnapshot, displayTradeRows, liveMonitor?.marketData, monitorSymbols, symbolStates]
+    [botAccountDataActive, brokerClosedTradeRows, brokerSnapshot, displayTradeRows, liveMonitor?.marketData, monitorSymbols, symbolStates]
   );
   const rawEquityReviewStatus = useMemo(
     () => buildEquityReviewStatus({
@@ -828,7 +837,7 @@ export default function FuturesLive() {
           <FuturesBotTrackerPanel
             trackers={botTrackers}
             selectedSymbol={selectedChartSymbol}
-            botStarted={monitorDataActive}
+            botStarted={botAccountDataActive}
           />
         </div>
       </section>
@@ -2241,6 +2250,41 @@ function scopeBrokerMetricsToAccount(metrics, accountId, accountSizeFallback = 0
   };
 }
 
+function defaultLiveAccountMetrics(accountSize = 0, accountId = "") {
+  const normalizedAccountSize = Number(accountSize || 0);
+  const normalizedAccountId = String(accountId || "").trim();
+  return {
+    success: true,
+    dataSource: "IDLE",
+    brokerMetricsReady: false,
+    accountSize: normalizedAccountSize,
+    currentPnl: 0,
+    currentBalance: normalizedAccountSize,
+    returnPct: 0,
+    drawdown: 0,
+    numberOfTrades: 0,
+    openTrades: 0,
+    broker: {
+      success: false,
+      source: "IDLE",
+      accountId: normalizedAccountId,
+      brokerAccountMatched: Boolean(normalizedAccountId),
+      accountSize: normalizedAccountSize,
+      currentPnl: 0,
+      currentBalance: normalizedAccountSize,
+      realizedPnl: 0,
+      unrealizedPnl: 0,
+      returnPct: 0,
+      drawdown: 0,
+      numberOfTrades: 0,
+      openTrades: 0,
+      positions: [],
+      trades: [],
+      orders: [],
+    },
+  };
+}
+
 function stabilizeAccountMetrics(metrics, cachedMetrics, accountId) {
   if (isUsableAccountMetricsSnapshot(metrics, accountId)) {
     return mergeStableAccountMetrics(metrics, cachedMetrics, accountId);
@@ -2768,6 +2812,9 @@ function compactExitReason(reason) {
 }
 
 function buildSymbolTrackers({ symbols, states, decisions, marketData, brokerPositions, brokerClosedTrades, brokerAuthoritative, botStarted }) {
+  if (!botStarted) {
+    return (Array.isArray(symbols) ? symbols : DEFAULT_SYMBOLS).map(idleSymbolTracker);
+  }
   const stateBySymbol = new Map((Array.isArray(states) ? states : []).map((state) => [String(state.symbol || "").toUpperCase(), state]));
   const brokerBySymbol = buildBrokerPositionMap(brokerPositions);
   const closedBrokerBySymbol = buildBrokerClosedTradeMap(brokerClosedTrades);
@@ -2820,6 +2867,22 @@ function buildSymbolTrackers({ symbols, states, decisions, marketData, brokerPos
       detail: brokerLiveTrades > 0 ? "Topstep open position verified; PnL is marked from live price." : trackerDetail(state, signal, botStarted, lastPrice),
     };
   });
+}
+
+function idleSymbolTracker(symbol) {
+  return {
+    symbol: String(symbol || "").toUpperCase(),
+    lastPrice: 0,
+    changePct: 0,
+    pnl: 0,
+    totalTrades: 0,
+    liveTrades: 0,
+    signal: "Idle",
+    signalTone: "idle",
+    healthLabel: "Health Idle",
+    healthTone: "idle",
+    detail: "Not started",
+  };
 }
 
 function buildBrokerPositionMap(positions) {
