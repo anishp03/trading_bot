@@ -77,6 +77,7 @@ export default function FuturesLive() {
   const requestControllers = useRef(new Map());
   const decisionSidecarSignature = useRef("");
   const liveMarksRef = useRef(null);
+  const sidebarFeedStateSignature = useRef("");
   const {
     futuresSidebarOnline = true,
     futuresSidebarStatus = null,
@@ -288,6 +289,18 @@ export default function FuturesLive() {
     const intervalId = window.setInterval(loadLiveMarks, LIVE_MARKS_REFRESH_MS);
     return () => window.clearInterval(intervalId);
   }, [accountScopeId, symbolsCsv, selectedTimeframe]);
+
+  useEffect(() => {
+    if (typeof refreshFuturesSidebarStatus !== "function" || !feedRunning || feedStaleSeconds < 0) {
+      return;
+    }
+    const nextSignature = feedStaleSeconds > MARKET_DATA_STALE_SECONDS ? "stopped" : "fresh";
+    if (sidebarFeedStateSignature.current === nextSignature) {
+      return;
+    }
+    sidebarFeedStateSignature.current = nextSignature;
+    refreshFuturesSidebarStatus();
+  }, [feedRunning, feedStaleSeconds, refreshFuturesSidebarStatus]);
 
   useEffect(() => {
     const intervalId = window.setInterval(refreshLiveReconciliation, LIVE_RECONCILE_REFRESH_MS);
