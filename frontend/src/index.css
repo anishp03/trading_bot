@@ -898,7 +898,7 @@ textarea {
 }
 
 .futures-live-summary-grid {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .app-live-card {
@@ -1299,6 +1299,11 @@ textarea {
   font-size: 0.74rem;
   line-height: 1rem;
   overflow-wrap: anywhere;
+}
+
+.futures-launch-stat-stack {
+  display: grid;
+  gap: 2px;
 }
 
 .futures-launch-symbol-list {

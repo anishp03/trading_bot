@@ -16,6 +16,8 @@ const HEALTH_WARN_HOLD_MS = 25000;
 const MARKET_DATA_STALE_SECONDS = 30;
 const MIN_OPENING_CHART_BARS = 24;
 const BROKER_SOURCE_TOPSTEPX = "TOPSTEPX";
+const LIVE_TRADE_CACHE_VERSION = 1;
+const LIVE_TRADE_CACHE_MAX_ROWS = 2000;
 const DEFAULT_PROFILE = "TOPSTEP_150K_RESEARCH";
 const DEFAULT_ACCOUNT_PROFILE = "TOPSTEP_150K_PRACTICE";
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MGC"]);
@@ -94,6 +96,8 @@ export default function FuturesLive() {
   const [backendOnline, setBackendOnline] = useState(true);
   const [liveTradeFilters, setLiveTradeFilters] = useState(DEFAULT_TRADE_FILTERS);
   const [allTradeFilters, setAllTradeFilters] = useState(DEFAULT_TRADE_FILTERS);
+  const [cachedAllTradeRows, setCachedAllTradeRows] = useState([]);
+  const [tradeCacheReady, setTradeCacheReady] = useState(false);
   const chartTransitionTimer = useRef(null);
   const botStartedRef = useRef(false);
   const observedThinkingSession = useRef(0);
@@ -101,6 +105,8 @@ export default function FuturesLive() {
   const decisionSidecarSignature = useRef("");
   const liveMarksRef = useRef(null);
   const sidebarFeedStateSignature = useRef("");
+  const tradeCachePersistSignature = useRef("");
+  const tradeCacheAccount = useRef("");
   const {
     futuresSidebarOnline = true,
     futuresSidebarStatus = null,
@@ -148,6 +154,7 @@ export default function FuturesLive() {
   const botControlActive = Boolean(liveStatus?.running || realtimeStatus?.running || liveMonitor?.realtimeRunning);
   const displayedDecisions = useMemo(() => (botStarted ? liveDecisions : []), [botStarted, liveDecisions]);
   const displayTradeRows = useMemo(() => mergeLiveTradeDecisions(displayedDecisions), [displayedDecisions]);
+  const localDecisionTradeRows = useMemo(() => mergeLiveTradeDecisions(liveDecisionHistory), [liveDecisionHistory]);
   const symbolStates = useMemo(() => (Array.isArray(liveMonitor?.symbolStates) ? liveMonitor.symbolStates : []), [liveMonitor?.symbolStates]);
   const augmentedLiveMetrics = useMemo(
     () => augmentTopstepMetricsWithMarks(liveMetrics, symbolStates),
@@ -176,13 +183,25 @@ export default function FuturesLive() {
     () => buildBrokerClosedTradeRows(brokerSnapshot?.trades, localTradeProvenance),
     [brokerSnapshot, localTradeProvenance]
   );
+  const localClosedTradeCacheRows = useMemo(
+    () => buildLocalClosedTradeCacheRows(localDecisionTradeRows, accountScopeId),
+    [accountScopeId, localDecisionTradeRows]
+  );
+  const hydratedTradeCacheRows = useMemo(
+    () => mergeBrokerTradeCacheRows(localClosedTradeCacheRows, cachedAllTradeRows),
+    [cachedAllTradeRows, localClosedTradeCacheRows]
+  );
+  const enrichedClosedTradeRows = useMemo(
+    () => mergeBrokerTradeCacheRows(botAccountDataActive ? brokerClosedTradeRows : [], hydratedTradeCacheRows),
+    [botAccountDataActive, brokerClosedTradeRows, hydratedTradeCacheRows]
+  );
   const liveTrades = useMemo(
     () => botAccountDataActive ? brokerOpenTradeRows : [],
     [botAccountDataActive, brokerOpenTradeRows]
   );
   const allTradeRows = useMemo(
-    () => botAccountDataActive ? brokerClosedTradeRows : [],
-    [botAccountDataActive, brokerClosedTradeRows]
+    () => enrichedClosedTradeRows,
+    [enrichedClosedTradeRows]
   );
   const filteredLiveTrades = useMemo(
     () => filterTradeRows(liveTrades, liveTradeFilters),
@@ -229,8 +248,8 @@ export default function FuturesLive() {
   );
   const sidebarStartReady = Boolean(futuresSidebarStatus?.strategyConfig?.active && futuresSidebarStatus?.topstepApi?.ready);
   const brokerChartTradeRows = useMemo(
-    () => botAccountDataActive ? [...brokerClosedTradeRows, ...brokerOpenTradeRows] : [],
-    [botAccountDataActive, brokerClosedTradeRows, brokerOpenTradeRows]
+    () => botAccountDataActive ? [...allTradeRows, ...brokerOpenTradeRows] : allTradeRows,
+    [allTradeRows, botAccountDataActive, brokerOpenTradeRows]
   );
   const realChartTrades = useMemo(
     () => buildChartTrades(botAccountDataActive ? brokerChartTradeRows : [], selectedChartSymbol, selectedChartMarkPrice),
@@ -244,11 +263,11 @@ export default function FuturesLive() {
       decisions: botAccountDataActive ? displayTradeRows : [],
       marketData: botAccountDataActive ? liveMonitor?.marketData || {} : {},
       brokerPositions: botAccountDataActive ? brokerSnapshot?.positions || [] : [],
-      brokerClosedTrades: botAccountDataActive ? brokerClosedTradeRows : [],
+      brokerClosedTrades: botAccountDataActive ? allTradeRows : [],
       brokerAuthoritative: botAccountDataActive,
       botStarted: botAccountDataActive,
     }),
-    [botAccountDataActive, brokerClosedTradeRows, brokerSnapshot, displayTradeRows, liveMonitor?.marketData, monitorSymbols, symbolStates]
+    [allTradeRows, botAccountDataActive, brokerSnapshot, displayTradeRows, liveMonitor?.marketData, monitorSymbols, symbolStates]
   );
   const rawEquityReviewStatus = useMemo(
     () => buildEquityReviewStatus({
@@ -272,6 +291,10 @@ export default function FuturesLive() {
   const canStartLiveBot = !backendOffline && !selectedAccountDisabled && Boolean(sidebarStartReady && activeSnapshot && !liveStatus?.running);
   const launchTone = backendOffline ? "offline" : botControlActive ? "live" : sidebarStartReady ? "ready" : "pending";
   const liveStrategySlotSummary = activeSnapshot ? formatStrategySlotSummary(activeSnapshot.sourceMetrics) : "Copy backtest first";
+  const liveStrategySlotStats = useMemo(
+    () => activeSnapshot ? strategySlotSummaryParts(liveStrategySlotSummary) : [],
+    [activeSnapshot, liveStrategySlotSummary]
+  );
   const launchLabel = backendOffline ? "Bot Status: OFF" : botStarted ? "Running" : feedRunning ? "Feed Live" : sidebarStartReady ? "Ready" : marketIdle && !marketSession?.entryWindowOpen ? "Closed" : "Setup";
 
   useEffect(() => {
@@ -301,7 +324,13 @@ export default function FuturesLive() {
   useEffect(() => {
     setLiveTradeFilters(DEFAULT_TRADE_FILTERS);
     setAllTradeFilters(DEFAULT_TRADE_FILTERS);
+    loadLiveTradeCache(accountScopeId);
   }, [accountScopeId]);
+
+  useEffect(() => {
+    if (!tradeCacheReady || tradeCacheAccount.current !== accountScopeId) return;
+    persistLiveTradeCacheRows(allTradeRows);
+  }, [accountScopeId, allTradeRows, tradeCacheReady]);
 
   useEffect(() => {
     if (!isUsableAccountMetricsSnapshot(rawAccountScopedMetrics, accountScopeId)) return;
@@ -402,6 +431,75 @@ export default function FuturesLive() {
       requestControllers.current.clear();
     };
   }, []);
+
+  async function loadLiveTradeCache(accountId = accountScopeId) {
+    const cleanAccountId = String(accountId || "").trim();
+    tradeCacheAccount.current = cleanAccountId;
+    tradeCachePersistSignature.current = "";
+    setTradeCacheReady(false);
+    if (!cleanAccountId) {
+      setCachedAllTradeRows([]);
+      setTradeCacheReady(true);
+      return [];
+    }
+
+    const localRows = compactBrokerTradeCacheRows(readLocalTradeCacheRows(cleanAccountId), cleanAccountId);
+    setCachedAllTradeRows(localRows);
+    tradeCachePersistSignature.current = brokerTradeCacheSignature(localRows);
+    setTradeCacheReady(true);
+
+    try {
+      const params = new URLSearchParams({ accountId: cleanAccountId });
+      const response = await apiFetch(`/api/futures/live/trade-cache?${params.toString()}`);
+      const payload = await readApiResponse(response);
+      if (!response.ok || payload.json?.success === false) {
+        throw new Error(payload.json?.message || payload.text || "Failed to load live trade cache.");
+      }
+      const remoteRows = compactBrokerTradeCacheRows(payload.json?.rows, cleanAccountId);
+      const mergedRows = compactBrokerTradeCacheRows(mergeBrokerTradeCacheRows(remoteRows, localRows), cleanAccountId);
+      if (tradeCacheAccount.current !== cleanAccountId) return mergedRows;
+      setCachedAllTradeRows(mergedRows);
+      tradeCachePersistSignature.current = brokerTradeCacheSignature(mergedRows);
+      writeLocalTradeCacheRows(cleanAccountId, mergedRows);
+      return mergedRows;
+    } catch (error) {
+      if (isApiNetworkError(error)) noteBackendError("Error loading live trade cache:", error);
+      return localRows;
+    }
+  }
+
+  async function persistLiveTradeCacheRows(rows, { force = false } = {}) {
+    const cleanAccountId = String(accountScopeId || "").trim();
+    if (!cleanAccountId) return [];
+    const nextRows = compactBrokerTradeCacheRows(rows, cleanAccountId);
+    const nextSignature = brokerTradeCacheSignature(nextRows);
+    if (!force && nextSignature === tradeCachePersistSignature.current) {
+      return nextRows;
+    }
+    tradeCachePersistSignature.current = nextSignature;
+    writeLocalTradeCacheRows(cleanAccountId, nextRows);
+    setCachedAllTradeRows((current) => {
+      const mergedRows = compactBrokerTradeCacheRows(mergeBrokerTradeCacheRows(nextRows, current), cleanAccountId);
+      return brokerTradeCacheSignature(current) === brokerTradeCacheSignature(mergedRows) ? current : mergedRows;
+    });
+    try {
+      const params = new URLSearchParams({ accountId: cleanAccountId });
+      await apiFetch(`/api/futures/live/trade-cache?${params.toString()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          success: true,
+          version: LIVE_TRADE_CACHE_VERSION,
+          accountId: cleanAccountId,
+          updatedAt: new Date().toISOString(),
+          rows: nextRows,
+        }),
+      });
+    } catch (error) {
+      if (isApiNetworkError(error)) noteBackendError("Error saving live trade cache:", error);
+    }
+    return nextRows;
+  }
 
   function refreshLiveData() {
     loadLiveStatus({ forceSidecars: true });
@@ -691,6 +789,7 @@ export default function FuturesLive() {
       const openingSymbol = monitorSymbols[0] || "MNQ";
       setSelectedChartSymbol(openingSymbol);
       setSelectedTimeframe("1m");
+      await loadLiveTradeCache(accountScopeId);
       const params = new URLSearchParams({
         symbol: openingSymbol,
         executionMode: "TOPSTEPX",
@@ -721,6 +820,7 @@ export default function FuturesLive() {
 
   async function stopLiveBot() {
     await runAction("stop", async () => {
+      await persistLiveTradeCacheRows(allTradeRows, { force: true });
       const response = await apiFetch("/api/futures/live/stop", { method: "POST" });
       const payload = await readApiResponse(response);
       if (!response.ok || payload.json?.success === false) {
@@ -737,6 +837,7 @@ export default function FuturesLive() {
       setFeedback(payload.json?.message || "Live bot stopped.");
       refreshFuturesSidebarStatus?.();
       refreshLiveData();
+      persistLiveTradeCacheRows(allTradeRows, { force: true });
     });
   }
 
@@ -838,7 +939,15 @@ export default function FuturesLive() {
           <div className={activeSnapshot ? "futures-launch-chip ready" : "futures-launch-chip"}>
             <span>Live Strategy</span>
             <strong>{activeSnapshot ? "Live Slot" : "Not Set"}</strong>
-            <small>{activeSnapshot?.sourcePortfolioBacktestId ? `Run #${activeSnapshot.sourcePortfolioBacktestId} | ${liveStrategySlotSummary}` : liveStrategySlotSummary}</small>
+            {activeSnapshot ? (
+              <div className="futures-launch-stat-stack">
+                {liveStrategySlotStats.map((stat) => (
+                  <small key={stat}>{stat}</small>
+                ))}
+              </div>
+            ) : (
+              <small>{liveStrategySlotSummary}</small>
+            )}
           </div>
 
           <div className="futures-launch-chip">
@@ -863,7 +972,6 @@ export default function FuturesLive() {
       <section className="app-live-grid futures-live-summary-grid">
         <MetricCard label="Current Balance" value={formatAccountCurrency(Number(metrics?.currentBalance ?? Number(metrics?.accountSize || 0) + Number(metrics?.currentPnl || 0)))} />
         <MetricCard label="Current PnL" value={formatCurrency(metrics?.currentPnl)} accent={Number(metrics?.currentPnl || 0)} />
-        <MetricCard label="Drawdown / Cushion" value={formatDrawdownValue(metrics)} accent={-Math.abs(Number(metrics?.drawdown || 0))} />
         <MetricCard label="Return %" value={formatPct(metrics?.returnPct)} accent={Number(metrics?.returnPct || 0)} />
         <MetricCard label="Trades" value={String(tradeMetricCount)} />
       </section>
@@ -1229,111 +1337,6 @@ function buildObservedLiveBotLogEntries({
   return entries;
 }
 
-function appendLiveMarksCheckLogEntries(entries, { liveMarks, botStarted, feedRunning, sessionId, sessionKey, observedAt }) {
-  if (!liveMarks && feedRunning) {
-    entries.push(observedLogEntry({
-      key: `marks-missing|${sessionKey}`,
-      sessionId,
-      createdAt: observedAt,
-      phase: "Metric Checks",
-      tone: "warn",
-      summary: "Fast marks have not returned yet.",
-      detail: "The page is still using slower monitor and metrics polling until the marks endpoint returns a status payload.",
-    }));
-    return;
-  }
-  if (!liveMarks) return;
-  const checks = liveMarks.checks || {};
-  const counts = checks.counts || {};
-  const overall = checks.overall || {};
-  const needsOperationalChecks = Boolean(botStarted || feedRunning);
-  const actionableOverall = overall.ok === false && (String(overall.severity || "").toLowerCase() === "error" || needsOperationalChecks);
-  if (!actionableOverall) return;
-  entries.push(observedLogEntry({
-    key: `marks-overall|${sessionKey}|${overall.severity || "unknown"}|${Boolean(overall.ok)}`,
-    sessionId,
-    createdAt: liveMarks.serverTime || observedAt,
-    phase: "Metric Checks",
-    tone: checkTone(overall),
-    summary: cleanLogText(overall.message || (overall.ok ? "Fast live marks checks are healthy." : "Fast live marks need attention.")),
-    detail: metricCheckCountsDetail(counts),
-  }));
-  [
-    ["marketFeed", "Market Data"],
-    ["symbolMarks", "Missing Data"],
-    ["currentCandles", "Candle Data"],
-    ["brokerAccount", "Broker Account"],
-    ["brokerSync", "Broker Sync"],
-  ].forEach(([key, phase]) => {
-    const check = checks[key];
-    if (!check || check.ok) return;
-    const severity = String(check.severity || "").toLowerCase();
-    if (severity !== "error" && !needsOperationalChecks) return;
-    entries.push(observedLogEntry({
-      key: `marks-check|${sessionKey}|${key}|${check.severity || "warn"}|${cleanLogText(check.message)}`,
-      sessionId,
-      createdAt: liveMarks.serverTime || observedAt,
-      phase,
-      tone: checkTone(check),
-      summary: cleanLogText(check.message || `${phase} check needs attention.`),
-      detail: metricCheckCountsDetail(counts),
-    }));
-  });
-}
-
-function checkTone(check) {
-  const severity = String(check?.severity || "").toLowerCase();
-  if (severity === "error") return "error";
-  if (severity === "warn") return "warn";
-  return check?.ok === false ? "warn" : "active";
-}
-
-function metricCheckCountsDetail(counts = {}) {
-  const parts = [
-    `positions ${formatInteger(counts.positions ?? 0)}`,
-    `orders ${formatInteger(counts.orders ?? 0)}`,
-    `trades ${formatInteger(counts.trades ?? 0)}`,
-  ];
-  if (Number(counts.feedStaleSeconds) >= 0) parts.push(`feed stale ${formatInteger(counts.feedStaleSeconds)}s`);
-  if (Number(counts.brokerSyncAgeSeconds) >= 0) parts.push(`broker sync age ${formatInteger(counts.brokerSyncAgeSeconds)}s`);
-  if (Number(counts.brokerEventAgeSeconds) >= 0) parts.push(`broker event age ${formatInteger(counts.brokerEventAgeSeconds)}s`);
-  return parts.join("; ");
-}
-
-function observedDecisionLogEntry(decision, sessionId, fallbackTime) {
-  const id = decision?.id || `${decision?.symbol || ""}-${decision?.strategyCode || ""}-${decision?.signalTime || ""}-${decision?.status || ""}`;
-  const status = String(decision?.status || "").toUpperCase();
-  const symbol = String(decision?.symbol || "").toUpperCase();
-  let phase = "Live Decision";
-  let tone = "info";
-  if (status.includes("SUBMITTED") || status.includes("ACCEPTED")) {
-    phase = "Trade Entry";
-    tone = "accepted";
-  } else if (status.includes("REJECTED")) {
-    phase = "Risk Gate";
-    tone = "blocked";
-  } else if (status.includes("BLOCK")) {
-    phase = "TopstepX";
-    tone = "blocked";
-  } else if (status.includes("EXIT") || status.includes("CLOSED") || status.includes("FLAT") || status.includes("SOLD")) {
-    phase = "Trade Exit";
-    tone = "closed";
-  }
-  return observedLogEntry({
-    key: `decision|${id}|${status}`,
-    sessionId,
-    createdAt: decision?.createdAt || decision?.entryTime || decision?.signalTime || fallbackTime,
-    phase,
-    tone,
-    symbol,
-    barTime: decision?.entryTime || decision?.signalTime || "",
-    summary: `${symbol || "Signal"} ${cleanLogText(decision?.strategyCode || "strategy")} ${cleanLogText(decision?.side || "")} ${cleanLogText(decision?.status || "decision")}`.trim(),
-    detail: cleanLogText(decision?.requiresAutoOcoBrackets
-      ? "ProjectX rejected bracket attachments because this TopstepX account is still using Position Brackets. Enable Auto OCO Brackets in TopstepX Risk Settings before live strategy orders can submit. No entry-only fallback was used."
-      : decision?.reason || "Decision recorded by the Live Bot."),
-  });
-}
-
 function observedLogEntry({ key, sessionId, createdAt, eventType = "", phase, tone, symbol = "", barTime = "", summary, detail, details = {} }) {
   return {
     id: `observed-${key}`,
@@ -1562,23 +1565,6 @@ function formatEventDetailValue(value) {
   if (Array.isArray(value)) return value.map(formatEventDetailValue).join(", ");
   if (typeof value === "object") return cleanLogText(JSON.stringify(value));
   return cleanLogText(value);
-}
-
-function thinkingDecisionLine(entry) {
-  const phase = String(entry?.phase || "Live Bot").trim();
-  const symbol = String(entry?.symbol || "").trim();
-  const barTime = String(entry?.barTime || "").trim();
-  const summary = String(entry?.summary || "--").trim();
-  const detail = String(entry?.detail || "").trim();
-  const context = [
-    symbol,
-    barTime ? `bar ${formatEstTime(barTime)}` : "",
-  ].filter(Boolean).join(", ");
-  let reason = detail;
-  if (summary && detail.toLowerCase().startsWith(`${summary.toLowerCase()}:`)) {
-    reason = detail.slice(summary.length + 1).trim();
-  }
-  return `${phase}${context ? ` (${context})` : ""}: ${summary}${reason ? ` - ${reason}` : ""}`;
 }
 
 function thinkingLogRowClass(entry) {
@@ -2730,7 +2716,7 @@ function accountMatches(row, accountId) {
 
 function usableStrategyCode(value) {
   const code = String(value || "").trim().toUpperCase();
-  if (!code || code === "TOPSTEP") return "";
+  if (!code || code === "TOPSTEP" || code === "UNTRACKED") return "";
   return code;
 }
 
@@ -2898,6 +2884,320 @@ function buildBrokerClosedTradeRows(trades, provenance = []) {
     });
   });
   return rows.sort((first, second) => (parseChartTime(second.createdAt) || 0) - (parseChartTime(first.createdAt) || 0));
+}
+
+function buildLocalClosedTradeCacheRows(trades, accountId = "") {
+  const cleanAccountId = String(accountId || "").trim();
+  return (Array.isArray(trades) ? trades : [])
+    .filter((trade) => isEntryDecision(trade) && isClosedTradeDecision(trade))
+    .map((trade, index) => {
+      const strategyCode = usableStrategyCode(trade.strategyCode);
+      const symbol = String(trade.symbol || "").toUpperCase();
+      if (!strategyCode || !symbol || !accountMatches(trade, cleanAccountId)) return null;
+      const side = String(trade.side || "").toUpperCase() === "SHORT" ? "SHORT" : "LONG";
+      const entryTime = trade.entryTime || trade.signalTime || trade.createdAt || "";
+      const exitTime = trade.exitTime || trade.closedAt || trade.updatedAt || trade.createdAt || entryTime;
+      const entryPrice = Number(trade.entryPrice || 0);
+      const exitPrice = Number(trade.exitPrice || trade.currentPrice || 0);
+      const contracts = Number(trade.contracts || 0);
+      if (entryPrice <= 0 || contracts <= 0) return null;
+      return {
+        id: brokerStableRowId("local-trade-cache", cleanAccountId || trade.accountId, symbol, side, entryTime, trade.closedDecisionId || trade.id || index),
+        cacheSource: "local-decision",
+        symbol,
+        accountId: cleanAccountId || trade.accountId || "",
+        strategyCode,
+        strategyName: trade.strategyName || liveStrategyNameFallback(strategyCode),
+        side,
+        contracts,
+        entryPrice,
+        exitPrice,
+        pnl: Number(trade.pnl || 0),
+        status: "SOLD_TOPSTEP",
+        entryReason: trade.entryReason || trade.reason || "Saved live strategy entry.",
+        exitReason: trade.exitReason || trade.reason || "Saved live strategy close.",
+        reason: trade.reason || "Saved from local live strategy decision history.",
+        fees: finiteNumberOrNull(trade.fees),
+        stopPrice: finiteNumberOrNull(trade.stopPrice),
+        targetPrice: finiteNumberOrNull(trade.targetPrice),
+        signalTime: trade.signalTime || entryTime,
+        entryTime,
+        exitTime,
+        createdAt: exitTime,
+        brokerOrderId: trade.brokerOrderId || trade.orderId || "",
+        orderId: trade.orderId || trade.brokerOrderId || "",
+        customTag: trade.customTag || "",
+        cachedAt: new Date().toISOString(),
+      };
+    })
+    .filter(Boolean);
+}
+
+function mergeBrokerTradeCacheRows(currentRows, cachedRows) {
+  const cacheRows = compactBrokerTradeCacheRows(cachedRows);
+  if (!cacheRows.length) {
+    return (Array.isArray(currentRows) ? currentRows : []).slice().sort(compareTradeRowsDesc);
+  }
+  const cacheIndex = new Map();
+  cacheRows.forEach((row) => {
+    brokerTradeCacheKeys(row).forEach((key) => {
+      if (!cacheIndex.has(key)) cacheIndex.set(key, row);
+    });
+  });
+
+  const seenCacheIds = new Set();
+  const mergedRows = (Array.isArray(currentRows) ? currentRows : []).map((row) => {
+    const cachedRow = findCachedBrokerTradeRow(row, cacheRows, cacheIndex);
+    if (!cachedRow) return row;
+    seenCacheIds.add(brokerTradeCacheIdentity(cachedRow));
+    return hydrateBrokerTradeRow(row, cachedRow);
+  });
+
+  cacheRows.forEach((row) => {
+    const identity = brokerTradeCacheIdentity(row);
+    if (!seenCacheIds.has(identity) && !mergedRows.some((current) => brokerTradeRowsMatch(current, row))) {
+      mergedRows.push(row);
+    }
+  });
+  return mergedRows.sort(compareTradeRowsDesc);
+}
+
+function compactBrokerTradeCacheRows(rows, accountId = "") {
+  const cleanAccountId = String(accountId || "").trim();
+  const byKey = new Map();
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const normalized = normalizeCachedBrokerTradeRow(row, cleanAccountId);
+    if (!normalized) return;
+    const key = brokerTradeCacheIdentity(normalized);
+    const existing = byKey.get(key);
+    byKey.set(key, choosePreferredCachedTradeRow(existing, normalized));
+  });
+  return Array.from(byKey.values()).sort(compareTradeRowsDesc).slice(0, LIVE_TRADE_CACHE_MAX_ROWS);
+}
+
+function normalizeCachedBrokerTradeRow(row, accountId = "") {
+  const strategyCode = usableStrategyCode(row?.strategyCode);
+  const symbol = String(row?.symbol || "").toUpperCase();
+  const side = String(row?.side || "").toUpperCase() === "SHORT" ? "SHORT" : "LONG";
+  const cleanAccountId = String(accountId || row?.accountId || "").trim();
+  const entryPrice = finiteNumberOrNull(row?.entryPrice) || 0;
+  const exitPrice = finiteNumberOrNull(row?.exitPrice) || 0;
+  const contracts = finiteNumberOrNull(row?.contracts) || 0;
+  const entryTime = row?.entryTime || row?.signalTime || "";
+  const createdAt = row?.createdAt || row?.exitTime || row?.closedAt || row?.updatedAt || entryTime;
+  if (!strategyCode || !symbol || !cleanAccountId || contracts <= 0 || (!entryTime && !createdAt)) return null;
+  return {
+    id: row?.id || brokerStableRowId("cached-trade", cleanAccountId, symbol, side, entryTime || createdAt, roundedTradePrice(entryPrice), roundedTradePrice(exitPrice)),
+    cacheSource: row?.cacheSource || "topstep-enriched",
+    symbol,
+    accountId: cleanAccountId,
+    strategyCode,
+    strategyName: row?.strategyName || liveStrategyNameFallback(strategyCode),
+    side,
+    contracts,
+    entryPrice,
+    exitPrice,
+    pnl: finiteNumberOrNull(row?.pnl) || 0,
+    status: row?.status || "SOLD_TOPSTEP",
+    entryReason: row?.entryReason || "",
+    exitReason: row?.exitReason || "",
+    reason: row?.reason || "",
+    fees: finiteNumberOrNull(row?.fees),
+    stopPrice: finiteNumberOrNull(row?.stopPrice),
+    targetPrice: finiteNumberOrNull(row?.targetPrice),
+    signalTime: row?.signalTime || entryTime,
+    entryTime,
+    exitTime: row?.exitTime || row?.closedAt || row?.updatedAt || createdAt,
+    createdAt,
+    brokerOrderId: row?.brokerOrderId || row?.orderId || "",
+    orderId: row?.orderId || row?.brokerOrderId || "",
+    customTag: row?.customTag || "",
+    cachedAt: row?.cachedAt || new Date().toISOString(),
+  };
+}
+
+function choosePreferredCachedTradeRow(existing, next) {
+  if (!existing) return next;
+  const existingSource = String(existing.cacheSource || "");
+  const nextSource = String(next.cacheSource || "");
+  if (existingSource === "local-decision" && nextSource !== "local-decision") {
+    return hydrateBrokerTradeRow(next, existing);
+  }
+  if (nextSource === "local-decision" && existingSource !== "local-decision") {
+    return hydrateBrokerTradeRow(existing, next);
+  }
+  return tradeSortTimestamp(next) >= tradeSortTimestamp(existing) ? hydrateBrokerTradeRow(next, existing) : hydrateBrokerTradeRow(existing, next);
+}
+
+function hydrateBrokerTradeRow(row, cachedRow) {
+  const currentCode = usableStrategyCode(row?.strategyCode);
+  const cachedCode = usableStrategyCode(cachedRow?.strategyCode);
+  if (!cachedCode) return row;
+  const useCachedStrategy = !currentCode;
+  const entryReason = useCachedStrategy || isUntrackedReason(row?.entryReason)
+    ? cachedRow.entryReason || row?.entryReason
+    : row?.entryReason || cachedRow.entryReason;
+  const exitReason = useCachedStrategy || isUntrackedReason(row?.exitReason)
+    ? cachedRow.exitReason || row?.exitReason
+    : row?.exitReason || cachedRow.exitReason;
+  return {
+    ...cachedRow,
+    ...row,
+    strategyCode: currentCode || cachedCode,
+    strategyName: currentCode ? row.strategyName || cachedRow.strategyName : cachedRow.strategyName || row?.strategyName,
+    entryReason,
+    exitReason,
+    reason: useCachedStrategy && cachedRow.reason ? cachedRow.reason : row?.reason || cachedRow.reason,
+    stopPrice: finiteNumberOrNull(row?.stopPrice) ?? cachedRow.stopPrice,
+    targetPrice: finiteNumberOrNull(row?.targetPrice) ?? cachedRow.targetPrice,
+    signalTime: row?.signalTime || cachedRow.signalTime,
+    brokerOrderId: row?.brokerOrderId || cachedRow.brokerOrderId,
+    orderId: row?.orderId || cachedRow.orderId,
+    customTag: row?.customTag || cachedRow.customTag,
+    cacheSource: row?.cacheSource || cachedRow.cacheSource || "topstep-enriched",
+    cachedAt: cachedRow.cachedAt || row?.cachedAt,
+  };
+}
+
+function findCachedBrokerTradeRow(row, cacheRows, cacheIndex) {
+  for (const key of brokerTradeCacheKeys(row)) {
+    if (cacheIndex.has(key)) return cacheIndex.get(key);
+  }
+  const rowAccountId = String(row?.accountId || "").trim();
+  const rowSymbol = String(row?.symbol || "").toUpperCase();
+  const rowSide = String(row?.side || "").toUpperCase();
+  const rowContracts = Number(row?.contracts || 0);
+  const rowEntry = Number(row?.entryPrice || 0);
+  const rowExit = Number(row?.exitPrice || 0);
+  const rowEntryTime = parseChartTime(row?.entryTime || row?.signalTime);
+  const rowCloseTime = parseChartTime(row?.createdAt || row?.exitTime || row?.closedAt);
+  const tick = instrumentTickSize(rowSymbol);
+  let bestRow = null;
+  let bestScore = Infinity;
+  cacheRows.forEach((cachedRow) => {
+    if (String(cachedRow.accountId || "").trim() !== rowAccountId) return;
+    if (String(cachedRow.symbol || "").toUpperCase() !== rowSymbol) return;
+    if (String(cachedRow.side || "").toUpperCase() !== rowSide) return;
+    const contractPenalty = rowContracts > 0 && Number(cachedRow.contracts || 0) > 0 && rowContracts !== Number(cachedRow.contracts || 0) ? 12 : 0;
+    const cachedEntryTime = parseChartTime(cachedRow.entryTime || cachedRow.signalTime);
+    const cachedCloseTime = parseChartTime(cachedRow.createdAt || cachedRow.exitTime || cachedRow.closedAt);
+    const entryMinutes = rowEntryTime && cachedEntryTime ? Math.abs(rowEntryTime - cachedEntryTime) / 60000 : 60;
+    const closeMinutes = rowCloseTime && cachedCloseTime ? Math.abs(rowCloseTime - cachedCloseTime) / 60000 : 60;
+    const entryTicks = rowEntry > 0 && Number(cachedRow.entryPrice || 0) > 0
+      ? Math.abs(rowEntry - Number(cachedRow.entryPrice || 0)) / Math.max(tick, 0.01)
+      : 0;
+    const exitTicks = rowExit > 0 && Number(cachedRow.exitPrice || 0) > 0
+      ? Math.abs(rowExit - Number(cachedRow.exitPrice || 0)) / Math.max(tick, 0.01)
+      : 0;
+    const score = Math.min(entryMinutes, closeMinutes) + entryTicks * 1.5 + exitTicks + contractPenalty;
+    if (score < bestScore) {
+      bestScore = score;
+      bestRow = cachedRow;
+    }
+  });
+  return bestScore <= 45 ? bestRow : null;
+}
+
+function brokerTradeRowsMatch(first, second) {
+  return brokerTradeCacheKeys(first).some((key) => brokerTradeCacheKeys(second).includes(key));
+}
+
+function brokerTradeCacheIdentity(row) {
+  return brokerTradeCacheKeys(row)[0] || brokerStableRowId(
+    "trade-cache-row",
+    row?.accountId,
+    row?.symbol,
+    row?.side,
+    row?.entryTime || row?.createdAt,
+    row?.id
+  );
+}
+
+function brokerTradeCacheKeys(row) {
+  const accountId = String(row?.accountId || "").trim();
+  const symbol = String(row?.symbol || "").toUpperCase();
+  const side = String(row?.side || "").toUpperCase();
+  const contracts = Number(row?.contracts || 0);
+  const entryPrice = roundedTradePrice(row?.entryPrice);
+  const exitPrice = roundedTradePrice(row?.exitPrice);
+  const entryBucket = tradeTimeBucket(row?.entryTime || row?.signalTime);
+  const closeBucket = tradeTimeBucket(row?.createdAt || row?.exitTime || row?.closedAt);
+  const orderId = String(row?.brokerOrderId || row?.orderId || "").trim();
+  const customTag = String(row?.customTag || "").trim();
+  return [
+    row?.id ? `id:${row.id}` : "",
+    orderId ? `order:${accountId}|${orderId}` : "",
+    customTag ? `tag:${accountId}|${customTag}` : "",
+    accountId && symbol && side && entryBucket && entryPrice ? `entry:${accountId}|${symbol}|${side}|${contracts}|${entryBucket}|${entryPrice}` : "",
+    accountId && symbol && side && closeBucket && exitPrice ? `close:${accountId}|${symbol}|${side}|${contracts}|${closeBucket}|${exitPrice}` : "",
+    accountId && symbol && side && entryBucket && closeBucket ? `time:${accountId}|${symbol}|${side}|${contracts}|${entryBucket}|${closeBucket}` : "",
+  ].filter(Boolean);
+}
+
+function brokerTradeCacheSignature(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => [
+      brokerTradeCacheIdentity(row),
+      usableStrategyCode(row?.strategyCode),
+      row?.strategyName || "",
+      row?.pnl ?? "",
+      row?.createdAt || "",
+    ].join("::"))
+    .join("||");
+}
+
+function readLocalTradeCacheRows(accountId) {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(liveTradeCacheStorageKey(accountId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed?.rows) ? parsed.rows : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalTradeCacheRows(accountId, rows) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(liveTradeCacheStorageKey(accountId), JSON.stringify({
+      version: LIVE_TRADE_CACHE_VERSION,
+      accountId: String(accountId || "").trim(),
+      updatedAt: new Date().toISOString(),
+      rows: compactBrokerTradeCacheRows(rows, accountId),
+    }));
+  } catch {
+    // Browser storage is a fallback only; the backend JSON cache remains authoritative.
+  }
+}
+
+function liveTradeCacheStorageKey(accountId) {
+  return `futures-live-trade-cache:v${LIVE_TRADE_CACHE_VERSION}:${String(accountId || "default").trim()}`;
+}
+
+function roundedTradePrice(value) {
+  const numeric = Number(value || 0);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric.toFixed(2) : "";
+}
+
+function tradeTimeBucket(value) {
+  const timestamp = parseChartTime(value);
+  if (!timestamp) return "";
+  return String(Math.floor(timestamp / (5 * 60 * 1000)));
+}
+
+function compareTradeRowsDesc(first, second) {
+  return (tradeSortTimestamp(second) || 0) - (tradeSortTimestamp(first) || 0);
+}
+
+function isUntrackedReason(value) {
+  return String(value || "").toUpperCase().includes("UNTRACKED");
+}
+
+function liveStrategyNameFallback(strategyCode) {
+  const code = String(strategyCode || "").trim();
+  return code ? code.replace(/_/g, " ") : "";
 }
 
 function brokerTradePairKey(trade) {
@@ -3979,18 +4279,6 @@ function formatCompactSignedCurrency(value) {
   return `${sign}$${abs.toFixed(0)}`;
 }
 
-function formatDrawdownValue(metrics) {
-  const drawdown = Math.abs(Number(metrics?.drawdown || 0));
-  const drawdownCushion = Math.abs(Number(metrics?.drawdownCushion || 0));
-  const accountSize = Number(metrics?.accountSize || metrics?.broker?.accountSize || 0);
-  const pct = accountSize > 0 ? (drawdown / accountSize) * 100 : Number.NaN;
-  if (drawdown <= 0 && drawdownCushion > 0) {
-    return `Cushion ${formatCurrency(drawdownCushion)}`;
-  }
-  const dollarText = formatCurrency(-drawdown);
-  return Number.isFinite(pct) && pct > 0 ? `${dollarText} (${pct.toFixed(2)}%)` : dollarText;
-}
-
 function formatStrategySlotSummary(metrics) {
   const sourceMetrics = metrics || {};
   const profit = firstFiniteMetric(sourceMetrics, ["totalProfit", "resultTotalProfit", "profit"]);
@@ -4001,6 +4289,13 @@ function formatStrategySlotSummary(metrics) {
   if (Number.isFinite(profit)) parts.push(`${formatCompactSignedCurrency(profit)} PnL`);
   if (Number.isFinite(tradeCount)) parts.push(`${formatInteger(tradeCount)} trades`);
   return parts.length ? parts.join(" | ") : "Copy backtest first";
+}
+
+function strategySlotSummaryParts(summary) {
+  return String(summary || "")
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
 }
 
 function firstFiniteMetric(metrics, keys) {
