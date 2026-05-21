@@ -17,15 +17,9 @@ const MARKET_DATA_STALE_SECONDS = 30;
 const MIN_OPENING_CHART_BARS = 24;
 const BROKER_SOURCE_TOPSTEPX = "TOPSTEPX";
 const DEFAULT_PROFILE = "TOPSTEP_150K_RESEARCH";
+const DEFAULT_ACCOUNT_PROFILE = "TOPSTEP_150K_PRACTICE";
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MGC"]);
-const LIVE_INSTRUMENTS = [
-  { symbol: "MES", name: "Micro E-mini S&P 500" },
-  { symbol: "MNQ", name: "Micro E-mini Nasdaq-100" },
-  { symbol: "NQ", name: "E-mini Nasdaq-100" },
-  { symbol: "MGC", name: "Micro Gold" },
-  { symbol: "ES", name: "E-mini S&P 500" },
-  { symbol: "M2K", name: "Micro E-mini Russell 2000" },
-];
+const LIVE_ACCOUNT_PROFILE_CODES = new Set(["TOPSTEP_150K_PRACTICE", "TOPSTEP_50K_COMBINE"]);
 const PROFILE_ACCOUNTS = {
   TOPSTEP_150K_RESEARCH: { label: "150K Research", accountId: "22539378" },
   TOPSTEP_150K_PRACTICE: { label: "150K Combine", accountId: "22539378" },
@@ -73,6 +67,7 @@ const DEFAULT_LIVE_RISK_CONFIG = {
 export default function FuturesLive() {
   const [selectedChartSymbol, setSelectedChartSymbol] = useState(DEFAULT_SYMBOLS[0]);
   const [selectedTimeframe, setSelectedTimeframe] = useState("1m");
+  const [selectedAccountProfileCode, setSelectedAccountProfileCode] = useState(DEFAULT_ACCOUNT_PROFILE);
   const [selectedProfileCode, setSelectedProfileCode] = useState(DEFAULT_PROFILE);
   const [liveRiskConfig, setLiveRiskConfig] = useState(DEFAULT_LIVE_RISK_CONFIG);
   const [fundedProfiles, setFundedProfiles] = useState([]);
@@ -118,18 +113,29 @@ export default function FuturesLive() {
     return profiles.length ? profiles : [FALLBACK_PROFILE];
   }, [fundedProfiles]);
 
+  const topstepAccountProfiles = useMemo(() => {
+    const profileSource = fundedProfiles.length ? fundedProfiles : [
+      { ...FALLBACK_PROFILE, code: DEFAULT_ACCOUNT_PROFILE, name: "Topstep 150K Combine" },
+    ];
+    const profiles = profileSource.filter((profile) => LIVE_ACCOUNT_PROFILE_CODES.has(profile.code) && PROFILE_ACCOUNTS[profile.code]?.accountId);
+    return profiles.length ? profiles : [{ ...FALLBACK_PROFILE, code: DEFAULT_ACCOUNT_PROFILE, name: "Topstep 150K Combine" }];
+  }, [fundedProfiles]);
+
   const selectedProfile = useMemo(() => {
     return liveAccountProfiles.find((profile) => profile.code === selectedProfileCode) || liveAccountProfiles[0] || FALLBACK_PROFILE;
   }, [liveAccountProfiles, selectedProfileCode]);
+
+  const selectedAccountProfile = useMemo(() => {
+    return topstepAccountProfiles.find((profile) => profile.code === selectedAccountProfileCode) || topstepAccountProfiles[0] || FALLBACK_PROFILE;
+  }, [selectedAccountProfileCode, topstepAccountProfiles]);
 
   const activeSnapshot = snapshotState?.snapshot || liveStatus?.liveStrategySnapshot || null;
   const snapshotSymbols = parseSymbolCsv(activeSnapshot?.symbols);
   const liveStrategySymbols = snapshotSymbols.length ? snapshotSymbols : DEFAULT_SYMBOLS;
   const monitorSymbols = DEFAULT_SYMBOLS;
-  const accountPreset = PROFILE_ACCOUNTS[selectedProfile.code] || PROFILE_ACCOUNTS[DEFAULT_PROFILE];
-  const accountScopeId = String(accountPreset.accountId || activeSnapshot?.practiceAccountId || "").trim();
+  const accountPreset = PROFILE_ACCOUNTS[selectedAccountProfile.code] || PROFILE_ACCOUNTS[DEFAULT_ACCOUNT_PROFILE];
+  const accountScopeId = String(accountPreset.accountId || "").trim();
   const liveRiskAccountSize = Number(liveRiskConfig.accountSize || selectedProfile.accountSize || FALLBACK_PROFILE.accountSize);
-  const selectedRiskInstrument = LIVE_INSTRUMENTS.find((instrument) => instrument.symbol === liveRiskConfig.referenceSymbol) || LIVE_INSTRUMENTS[1];
   const symbolsCsv = monitorSymbols.join(",");
   const backendOffline = backendOnline === false || futuresSidebarOnline === false || futuresSidebarStatus?.backend?.online === false;
   const botStarted = !backendOffline && Boolean(liveStatus?.running);
@@ -280,7 +286,17 @@ export default function FuturesLive() {
 
   useEffect(() => {
     setLiveRiskConfig((current) => applyLiveFundedProfile(current, selectedProfile));
+    setSelectedAccountProfileCode((current) => {
+      const aligned = accountProfileCodeForRiskProfile(selectedProfile.code);
+      return sameFundedAccountSize(current, selectedProfile.code) ? current : aligned;
+    });
   }, [selectedProfile]);
+
+  useEffect(() => {
+    if (!topstepAccountProfiles.some((profile) => profile.code === selectedAccountProfileCode)) {
+      setSelectedAccountProfileCode(topstepAccountProfiles[0]?.code || DEFAULT_ACCOUNT_PROFILE);
+    }
+  }, [selectedAccountProfileCode, topstepAccountProfiles]);
 
   useEffect(() => {
     setLiveTradeFilters(DEFAULT_TRADE_FILTERS);
@@ -632,17 +648,11 @@ export default function FuturesLive() {
     transitionChart(() => setSelectedTimeframe(value));
   }
 
-  function updateLiveRiskConfig(field, value) {
-    setLiveRiskConfig((current) => {
-      const next = { ...current, [field]: value };
-      if (field === "referenceSymbol") {
-        return {
-          ...next,
-          maxContracts: String(contractLimitForProfile(selectedProfile, value)),
-        };
-      }
-      return next;
-    });
+  function changeTopstepAccountProfile(code) {
+    setSelectedAccountProfileCode(code);
+    if (!sameFundedAccountSize(code, selectedProfileCode)) {
+      setSelectedProfileCode(riskProfileCodeForAccountProfile(code));
+    }
   }
 
   function transitionChart(update) {
@@ -800,20 +810,22 @@ export default function FuturesLive() {
             </button>
           </div>
         </div>
-      </section>
 
-      <section className="app-panel futures-live-risk-config-panel">
-        <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
-          <div className="fw-bold app-kicker">Live Risk Portfolio Config</div>
-          <div className={activeSnapshot ? "futures-live-source-chip ready" : "futures-live-source-chip"}>
-            <span>Strategy Source</span>
-            <strong>{activeSnapshot ? "Live Slot" : "Not Set"}</strong>
-            <small>{activeSnapshot?.sourcePortfolioBacktestId ? `Run #${activeSnapshot.sourcePortfolioBacktestId} | ${liveStrategySlotSummary}` : liveStrategySlotSummary}</small>
-          </div>
-        </div>
+        <div className="futures-launch-config">
+          <Field label="Topstep Account" className="futures-launch-account-field">
+            <select value={selectedAccountProfileCode} onChange={(event) => changeTopstepAccountProfile(event.target.value)} className="form-select app-input">
+              {topstepAccountProfiles.map((profile) => {
+                const account = PROFILE_ACCOUNTS[profile.code] || {};
+                return (
+                  <option key={profile.code} value={profile.code}>
+                    {account.label || profile.name}
+                  </option>
+                );
+              })}
+            </select>
+          </Field>
 
-        <div className="row g-3">
-          <Field label="Funded Rule Template" className="col-12 col-md-4 col-xl-3">
+          <Field label="Risk Config" className="futures-launch-account-field">
             <select value={selectedProfileCode} onChange={(event) => setSelectedProfileCode(event.target.value)} className="form-select app-input">
               {liveAccountProfiles.map((profile) => (
                 <option key={profile.code} value={profile.code}>
@@ -823,92 +835,29 @@ export default function FuturesLive() {
             </select>
           </Field>
 
-          <Field label="Account Size ($)" className="col-12 col-md-4 col-xl-3">
-            <input type="number" value={liveRiskConfig.accountSize} onChange={(event) => updateLiveRiskConfig("accountSize", event.target.value)} className="form-control app-input" />
-          </Field>
+          <div className={activeSnapshot ? "futures-launch-chip ready" : "futures-launch-chip"}>
+            <span>Live Strategy</span>
+            <strong>{activeSnapshot ? "Live Slot" : "Not Set"}</strong>
+            <small>{activeSnapshot?.sourcePortfolioBacktestId ? `Run #${activeSnapshot.sourcePortfolioBacktestId} | ${liveStrategySlotSummary}` : liveStrategySlotSummary}</small>
+          </div>
 
-          <Field label="Trailing Drawdown ($)" className="col-12 col-md-4 col-xl-3">
-            <input type="number" value={liveRiskConfig.maxTrailingDrawdown} onChange={(event) => updateLiveRiskConfig("maxTrailingDrawdown", event.target.value)} className="form-control app-input" />
-          </Field>
+          <div className="futures-launch-chip">
+            <span>Account ID</span>
+            <strong>{accountPreset.accountId || "Not connected"}</strong>
+            <small>{formatCompactCurrency(liveRiskConfig.accountSize)}</small>
+          </div>
 
-          <Field label="Daily Loss Limit ($)" className="col-12 col-md-4 col-xl-3">
-            <input type="number" value={liveRiskConfig.dailyLossLimit} onChange={(event) => updateLiveRiskConfig("dailyLossLimit", event.target.value)} className="form-control app-input" />
-          </Field>
-
-          <Field label="Max Risk / Trade ($)" className="col-12 col-md-4 col-xl-3">
-            <input type="number" value={liveRiskConfig.maxRiskPerTrade} onChange={(event) => updateLiveRiskConfig("maxRiskPerTrade", event.target.value)} className="form-control app-input" />
-          </Field>
-
-          <Field label="Max Contracts" className="col-12 col-md-4 col-xl-3">
-            <input type="number" min="1" value={liveRiskConfig.maxContracts} onChange={(event) => updateLiveRiskConfig("maxContracts", event.target.value)} className="form-control app-input" />
-          </Field>
-
-          <Field label="Commission / Contract ($)" className="col-12 col-md-4 col-xl-3">
-            <input type="number" step="0.01" value={liveRiskConfig.commissionPerContract} onChange={(event) => updateLiveRiskConfig("commissionPerContract", event.target.value)} className="form-control app-input" />
-          </Field>
-
-          <Field label="Slippage (Ticks)" className="col-12 col-md-4 col-xl-3">
-            <input type="number" step="0.25" value={liveRiskConfig.slippageTicks} onChange={(event) => updateLiveRiskConfig("slippageTicks", event.target.value)} className="form-control app-input" />
-          </Field>
-
-          <Field label="Profit Target Stop ($)" className="col-12 col-md-4 col-xl-3">
-            <input type="number" value={liveRiskConfig.profitTarget} onChange={(event) => updateLiveRiskConfig("profitTarget", event.target.value)} className="form-control app-input" />
-          </Field>
-
-          <Field label="Max Open Positions" className="col-12 col-md-4 col-xl-3">
-            <input type="number" min="1" value={liveRiskConfig.maxOpenPositions} onChange={(event) => updateLiveRiskConfig("maxOpenPositions", event.target.value)} className="form-control app-input" />
-          </Field>
-
-          <Field label="Max Aggregate Contracts" className="col-12 col-md-4 col-xl-3">
-            <input type="number" min="1" value={liveRiskConfig.maxAggregateContracts} onChange={(event) => updateLiveRiskConfig("maxAggregateContracts", event.target.value)} className="form-control app-input" />
-          </Field>
-
-          <Field label="Funded Contract Units" className="col-12 col-md-4 col-xl-3">
-            <input type="number" min="0" step="0.1" value={liveRiskConfig.maxAggregateMiniUnits} onChange={(event) => updateLiveRiskConfig("maxAggregateMiniUnits", event.target.value)} className="form-control app-input" />
-          </Field>
-
-          <Field label="Reference Contract" className="col-12 col-md-4 col-xl-3">
-            <select value={liveRiskConfig.referenceSymbol} onChange={(event) => updateLiveRiskConfig("referenceSymbol", event.target.value)} className="form-select app-input">
-              {LIVE_INSTRUMENTS.map((instrument) => (
-                <option key={instrument.symbol} value={instrument.symbol}>
-                  {instrument.symbol} - {instrument.name}
-                </option>
+          <div className="futures-launch-symbols">
+            <span>Symbols</span>
+            <div className="futures-launch-symbol-list">
+              {liveStrategySymbols.map((symbol) => (
+                <b key={symbol}>{symbol}</b>
               ))}
-            </select>
-          </Field>
-
-          <div className="col-12 col-md-4 col-xl-3">
-            <div className="app-data-chip h-100">
-              <span className="app-label">Template Specs</span>
-              <strong>{selectedRiskInstrument ? `${instrumentSpec(selectedRiskInstrument.symbol).tickSize} tick / $${instrumentSpec(selectedRiskInstrument.symbol).tickValue}` : "Loading"}</strong>
             </div>
           </div>
-
-          <div className="col-12 col-md-4 col-xl-3">
-            <div className="app-data-chip h-100">
-              <span className="app-label">Topstep Account</span>
-              <strong>{accountPreset.accountId || "Not connected"}</strong>
-            </div>
-          </div>
-
-          <div className="col-12">
-            <div className="app-subpanel futures-live-contract-panel">
-              <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap">
-                <div>
-                  <div className="fw-bold app-kicker">Contracts in Live Portfolio</div>
-                  <div className="app-muted app-kicker">{liveStrategySymbols.length} strategy symbols</div>
-                </div>
-              </div>
-              <div className="futures-live-contract-list">
-                {liveStrategySymbols.map((symbol) => (
-                  <span key={symbol}>{symbol}</span>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {feedback && <div className="col-12 app-muted app-kicker">{feedback}</div>}
         </div>
+
+        {feedback && <div className="app-muted app-kicker">{feedback}</div>}
       </section>
 
       <section className="app-live-grid futures-live-summary-grid">
@@ -3899,6 +3848,20 @@ function contractLimitForProfile(profile, symbol) {
   return MICRO_SYMBOLS.has(String(symbol || "").toUpperCase())
     ? profile.maxMicroContracts || profile.maxAggregateContracts || 50
     : profile.maxContracts || 5;
+}
+
+function accountProfileCodeForRiskProfile(code) {
+  return String(code || "").includes("50K") ? "TOPSTEP_50K_COMBINE" : DEFAULT_ACCOUNT_PROFILE;
+}
+
+function riskProfileCodeForAccountProfile(code) {
+  return String(code || "").includes("50K") ? "TOPSTEP_50K_RESEARCH" : DEFAULT_PROFILE;
+}
+
+function sameFundedAccountSize(accountProfileCode, riskProfileCode) {
+  const accountIs50K = String(accountProfileCode || "").includes("50K");
+  const riskIs50K = String(riskProfileCode || "").includes("50K");
+  return accountIs50K === riskIs50K;
 }
 
 async function readApiResponse(response) {

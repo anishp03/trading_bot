@@ -1243,7 +1243,7 @@ textarea {
 
 .futures-launch-config {
   display: grid;
-  grid-template-columns: minmax(190px, 240px) minmax(160px, 0.75fr) minmax(140px, 0.55fr) minmax(260px, 1.2fr);
+  grid-template-columns: minmax(180px, 230px) minmax(180px, 230px) minmax(150px, 0.72fr) minmax(130px, 0.55fr) minmax(240px, 1.15fr);
   align-items: stretch;
   gap: 10px;
 }
