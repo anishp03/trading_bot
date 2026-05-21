@@ -1318,6 +1318,67 @@ textarea {
   padding: 6px 8px;
 }
 
+.futures-live-risk-config-panel {
+  padding: 18px;
+}
+
+.futures-live-source-chip {
+  display: grid;
+  gap: 3px;
+  min-width: min(100%, 270px);
+  max-width: 390px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+  padding: 9px 12px;
+}
+
+.futures-live-source-chip.ready {
+  border-color: rgba(120, 220, 160, 0.18);
+  background: rgba(120, 220, 160, 0.055);
+}
+
+.futures-live-source-chip span,
+.futures-live-source-chip small {
+  color: var(--app-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1rem;
+}
+
+.futures-live-source-chip strong {
+  color: var(--app-link);
+  font-size: 0.98rem;
+  line-height: 1.15rem;
+}
+
+.futures-live-source-chip small {
+  overflow-wrap: anywhere;
+}
+
+.futures-live-contract-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.futures-live-contract-list {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.futures-live-contract-list span {
+  border-radius: 999px;
+  border: 1px solid rgba(122, 162, 255, 0.22);
+  background: rgba(122, 162, 255, 0.08);
+  color: var(--app-link);
+  font-size: 0.74rem;
+  font-weight: 850;
+  line-height: 1;
+  padding: 8px 10px;
+}
+
 .futures-live-action-row {
   display: flex;
   align-items: center;

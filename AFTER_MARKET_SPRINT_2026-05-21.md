@@ -18,6 +18,7 @@ Clarified requirements:
 - Keep previously proposed statistics: positive period percentages, expectancy, average win, average loss, payoff ratio, contract names, richer table/export display.
 - ORB work should fix blocked-order sizing/diagnostics so valid trades can fit criteria. Do not force more ORB signals by changing ORB frequency rules.
 - Runtime scripting / PC migration remains backburner for this sprint.
+- 2026-05-21 latest Live page correction: the Live Controls launch hub should not show the copied-strategy mismatch subtext or the old Live Strategy / Account ID / Symbols cards. Live strategy source and live risk/account portfolio settings are separate. The copied Live Strategy slot remains the signal source; the new Live Risk Portfolio Config controls account size, Topstep profile/account, sizing, exposure, commission, slippage, and profit target for live order sizing.
 
 Implementation checklist:
 
@@ -46,3 +47,5 @@ Progress log:
 - 2026-05-21: Frontend broker provenance matching now carries custom tags and treats Topstep bracket child order IDs (`entryOrderId + 1..4`) as related to the saved live entry, reducing false `UNTRACKED` broker TP/SL rows after restarts.
 - 2026-05-21: Live strategy/account coherence tightened in the frontend: start is disabled when the active Live Strategy slot profile/account does not match the selected Topstep account, and the Live Strategy chip shows the promoted portfolio run ID when available. Existing backend start guards remain in place.
 - 2026-05-21: Verification passed: `./mvnw -q -DskipTests compile`, `./mvnw -q test`, and `npm run build`. Browser smoke check passed on `http://127.0.0.1:5175/futures-live`; log drawer opens and renders the concise newest-first card list.
+- 2026-05-21: Follow-up correction started after user screenshots: removing the mismatch/subtext design from the Live Controls hub and replacing it with a separate Live Risk Portfolio Config modeled after the backtest Portfolio Run Builder. Frontend now defaults to Topstep 150K Research rules, exposes live risk fields, and sends those fields on `/api/futures/live/start`. Backend start guard no longer requires the copied Live Strategy snapshot profile/account to match the selected live risk profile.
+- 2026-05-21: Follow-up correction verified: `./mvnw -q -DskipTests compile`, `./mvnw -q test`, and `npm run build` passed. Browser smoke check on `http://127.0.0.1:5175/futures-live` confirmed the Live Controls hub only shows status/actions, the old mismatch subtext is gone, the old Live Strategy / Account ID / Symbols launch cards are gone, and Live Risk Portfolio Config defaults to Topstep 150K Research with account size 150000 and max risk/trade 2100.

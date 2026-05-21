@@ -16,10 +16,21 @@ const HEALTH_WARN_HOLD_MS = 25000;
 const MARKET_DATA_STALE_SECONDS = 30;
 const MIN_OPENING_CHART_BARS = 24;
 const BROKER_SOURCE_TOPSTEPX = "TOPSTEPX";
-const DEFAULT_PROFILE = "TOPSTEP_150K_PRACTICE";
+const DEFAULT_PROFILE = "TOPSTEP_150K_RESEARCH";
+const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MGC"]);
+const LIVE_INSTRUMENTS = [
+  { symbol: "MES", name: "Micro E-mini S&P 500" },
+  { symbol: "MNQ", name: "Micro E-mini Nasdaq-100" },
+  { symbol: "NQ", name: "E-mini Nasdaq-100" },
+  { symbol: "MGC", name: "Micro Gold" },
+  { symbol: "ES", name: "E-mini S&P 500" },
+  { symbol: "M2K", name: "Micro E-mini Russell 2000" },
+];
 const PROFILE_ACCOUNTS = {
-  TOPSTEP_50K_COMBINE: { label: "50K Combine", accountId: "22529998" },
+  TOPSTEP_150K_RESEARCH: { label: "150K Research", accountId: "22539378" },
   TOPSTEP_150K_PRACTICE: { label: "150K Combine", accountId: "22539378" },
+  TOPSTEP_50K_RESEARCH: { label: "50K Research", accountId: "22529998" },
+  TOPSTEP_50K_COMBINE: { label: "50K Combine", accountId: "22529998" },
 };
 const DEFAULT_TRADE_FILTERS = {
   outcome: "all",
@@ -31,23 +42,39 @@ const DEFAULT_TRADE_FILTERS = {
   endDate: "",
 };
 const FALLBACK_PROFILE = {
-  code: "TOPSTEP_150K_PRACTICE",
-  name: "Topstep 150K Combine",
+  code: "TOPSTEP_150K_RESEARCH",
+  name: "Topstep 150K Research",
   accountSize: 150000,
   maxTrailingDrawdown: 4500,
   dailyLossLimit: 3000,
-  maxRiskPerTrade: 900,
+  maxRiskPerTrade: 2100,
   maxContracts: 15,
   maxMicroContracts: 150,
   maxOpenPositions: 3,
   maxAggregateContracts: 150,
   maxAggregateMiniUnits: 15,
+  profitTarget: 0,
+};
+const DEFAULT_LIVE_RISK_CONFIG = {
+  referenceSymbol: "MNQ",
+  accountSize: "150000",
+  maxTrailingDrawdown: "4500",
+  dailyLossLimit: "3000",
+  maxRiskPerTrade: "2100",
+  maxContracts: "150",
+  commissionPerContract: "1.24",
+  slippageTicks: "1",
+  profitTarget: "0",
+  maxOpenPositions: "3",
+  maxAggregateContracts: "150",
+  maxAggregateMiniUnits: "15",
 };
 
 export default function FuturesLive() {
   const [selectedChartSymbol, setSelectedChartSymbol] = useState(DEFAULT_SYMBOLS[0]);
   const [selectedTimeframe, setSelectedTimeframe] = useState("1m");
   const [selectedProfileCode, setSelectedProfileCode] = useState(DEFAULT_PROFILE);
+  const [liveRiskConfig, setLiveRiskConfig] = useState(DEFAULT_LIVE_RISK_CONFIG);
   const [fundedProfiles, setFundedProfiles] = useState([]);
   const [liveStatus, setLiveStatus] = useState(null);
   const [realtimeStatus, setRealtimeStatus] = useState(null);
@@ -101,6 +128,8 @@ export default function FuturesLive() {
   const monitorSymbols = DEFAULT_SYMBOLS;
   const accountPreset = PROFILE_ACCOUNTS[selectedProfile.code] || PROFILE_ACCOUNTS[DEFAULT_PROFILE];
   const accountScopeId = String(accountPreset.accountId || activeSnapshot?.practiceAccountId || "").trim();
+  const liveRiskAccountSize = Number(liveRiskConfig.accountSize || selectedProfile.accountSize || FALLBACK_PROFILE.accountSize);
+  const selectedRiskInstrument = LIVE_INSTRUMENTS.find((instrument) => instrument.symbol === liveRiskConfig.referenceSymbol) || LIVE_INSTRUMENTS[1];
   const symbolsCsv = monitorSymbols.join(",");
   const backendOffline = backendOnline === false || futuresSidebarOnline === false || futuresSidebarStatus?.backend?.online === false;
   const botStarted = !backendOffline && Boolean(liveStatus?.running);
@@ -119,8 +148,8 @@ export default function FuturesLive() {
     [liveMetrics, symbolStates]
   );
   const rawAccountScopedMetrics = useMemo(
-    () => scopeBrokerMetricsToAccount(augmentedLiveMetrics, accountScopeId, selectedProfile.accountSize),
-    [accountScopeId, augmentedLiveMetrics, selectedProfile.accountSize]
+    () => scopeBrokerMetricsToAccount(augmentedLiveMetrics, accountScopeId, liveRiskAccountSize),
+    [accountScopeId, augmentedLiveMetrics, liveRiskAccountSize]
   );
   const accountScopedMetrics = useMemo(
     () => stabilizeAccountMetrics(rawAccountScopedMetrics, accountMetricCache[accountScopeId], accountScopeId),
@@ -189,8 +218,8 @@ export default function FuturesLive() {
   const marketSession = liveMonitor?.marketSession || liveStatus?.marketSession || estimateFuturesMarketSession();
   const marketIdle = !backendOffline && !monitorDataActive;
   const metrics = useMemo(
-    () => botAccountDataActive ? accountScopedMetrics : defaultLiveAccountMetrics(selectedProfile.accountSize, accountScopeId),
-    [accountScopeId, accountScopedMetrics, botAccountDataActive, selectedProfile.accountSize]
+    () => botAccountDataActive ? accountScopedMetrics : defaultLiveAccountMetrics(liveRiskAccountSize, accountScopeId),
+    [accountScopeId, accountScopedMetrics, botAccountDataActive, liveRiskAccountSize]
   );
   const sidebarStartReady = Boolean(futuresSidebarStatus?.strategyConfig?.active && futuresSidebarStatus?.topstepApi?.ready);
   const brokerChartTradeRows = useMemo(
@@ -234,14 +263,7 @@ export default function FuturesLive() {
   );
   const thinkingEntries = backendThinkingEntries.length > 0 ? backendThinkingEntries : observedThinking;
   const logDrawerEntries = useMemo(() => coalesceLiveBotLogEntries(thinkingEntries), [thinkingEntries]);
-  const snapshotProfileMatches = !activeSnapshot || String(activeSnapshot.fundedProfile || "") === String(selectedProfile.code || "");
-  const snapshotAccountMatches = !activeSnapshot || !activeSnapshot.practiceAccountId || String(activeSnapshot.practiceAccountId) === String(accountScopeId || "");
-  const liveConfigMismatch = Boolean(activeSnapshot && (!snapshotProfileMatches || !snapshotAccountMatches));
-  const liveConfigMismatchMessage = liveConfigMismatch
-    ? `Live Strategy slot is for ${activeSnapshot?.fundedProfile || "another profile"} / ${activeSnapshot?.practiceAccountId || "another account"}. Copy Backtest To Live for ${selectedProfile.name}.`
-    : "";
-  const canStartLiveBot = !backendOffline && !selectedAccountDisabled && !liveConfigMismatch && Boolean(sidebarStartReady && activeSnapshot && !liveStatus?.running);
-  const controlMessage = feedback || liveConfigMismatchMessage || (botStarted ? liveStatus?.lastDecision || realtimeStatus?.lastMessage : feedRunning ? realtimeStatus?.lastMessage || liveMonitor?.realtimeMessage : "");
+  const canStartLiveBot = !backendOffline && !selectedAccountDisabled && Boolean(sidebarStartReady && activeSnapshot && !liveStatus?.running);
   const launchTone = backendOffline ? "offline" : botControlActive ? "live" : sidebarStartReady ? "ready" : "pending";
   const liveStrategySlotSummary = activeSnapshot ? formatStrategySlotSummary(activeSnapshot.sourceMetrics) : "Copy backtest first";
   const launchLabel = backendOffline ? "Bot Status: OFF" : botStarted ? "Running" : feedRunning ? "Feed Live" : sidebarStartReady ? "Ready" : marketIdle && !marketSession?.entryWindowOpen ? "Closed" : "Setup";
@@ -255,6 +277,10 @@ export default function FuturesLive() {
       setSelectedProfileCode(liveAccountProfiles[0]?.code || DEFAULT_PROFILE);
     }
   }, [liveAccountProfiles, selectedProfileCode]);
+
+  useEffect(() => {
+    setLiveRiskConfig((current) => applyLiveFundedProfile(current, selectedProfile));
+  }, [selectedProfile]);
 
   useEffect(() => {
     setLiveTradeFilters(DEFAULT_TRADE_FILTERS);
@@ -437,7 +463,7 @@ export default function FuturesLive() {
   function loadFundedProfiles() {
     requestJson("fundedProfiles", "/api/futures/funded-rule-profiles", (data) => {
         const topstepProfiles = Array.isArray(data)
-          ? data.filter((profile) => profile.code === "TOPSTEP_150K_PRACTICE" || profile.code === "TOPSTEP_50K_COMBINE")
+          ? data.filter((profile) => PROFILE_ACCOUNTS[profile.code]?.accountId)
           : [];
         setFundedProfiles(topstepProfiles.length ? topstepProfiles : [FALLBACK_PROFILE]);
       }, (error) => {
@@ -606,6 +632,19 @@ export default function FuturesLive() {
     transitionChart(() => setSelectedTimeframe(value));
   }
 
+  function updateLiveRiskConfig(field, value) {
+    setLiveRiskConfig((current) => {
+      const next = { ...current, [field]: value };
+      if (field === "referenceSymbol") {
+        return {
+          ...next,
+          maxContracts: String(contractLimitForProfile(selectedProfile, value)),
+        };
+      }
+      return next;
+    });
+  }
+
   function transitionChart(update) {
     setChartTransitioning(true);
     if (chartTransitionTimer.current) {
@@ -646,12 +685,17 @@ export default function FuturesLive() {
         symbol: openingSymbol,
         executionMode: "TOPSTEPX",
         fundedProfile: selectedProfile.code,
-        accountSize: String(selectedProfile.accountSize ?? 50000),
-        maxTrailingDrawdown: String(selectedProfile.maxTrailingDrawdown ?? 2000),
-        dailyLossLimit: String(selectedProfile.dailyLossLimit ?? 1000),
-        maxRiskPerTrade: String(selectedProfile.maxRiskPerTrade ?? 400),
-        maxContracts: String(selectedProfile.maxMicroContracts ?? selectedProfile.maxContracts ?? 50),
-        maxAggregateMiniUnits: String(selectedProfile.maxAggregateMiniUnits ?? 5),
+        accountSize: String(liveRiskConfig.accountSize || selectedProfile.accountSize || 50000),
+        maxTrailingDrawdown: String(liveRiskConfig.maxTrailingDrawdown || selectedProfile.maxTrailingDrawdown || 2000),
+        dailyLossLimit: String(liveRiskConfig.dailyLossLimit || selectedProfile.dailyLossLimit || 1000),
+        maxRiskPerTrade: String(liveRiskConfig.maxRiskPerTrade || selectedProfile.maxRiskPerTrade || 400),
+        maxContracts: String(liveRiskConfig.maxContracts || selectedProfile.maxMicroContracts || selectedProfile.maxContracts || 50),
+        commissionPerContract: String(liveRiskConfig.commissionPerContract || "1.24"),
+        slippageTicks: String(liveRiskConfig.slippageTicks || "1"),
+        profitTarget: String(liveRiskConfig.profitTarget || selectedProfile.profitTarget || 0),
+        maxOpenPositions: String(liveRiskConfig.maxOpenPositions || selectedProfile.maxOpenPositions || 1),
+        maxAggregateContracts: String(liveRiskConfig.maxAggregateContracts || selectedProfile.maxAggregateContracts || 50),
+        maxAggregateMiniUnits: String(liveRiskConfig.maxAggregateMiniUnits || selectedProfile.maxAggregateMiniUnits || 5),
       });
       const response = await apiFetch(`/api/futures/live/start?${params.toString()}`, { method: "POST" });
       const payload = await readApiResponse(response);
@@ -740,7 +784,6 @@ export default function FuturesLive() {
             <div className="futures-launch-title-row">
               <div className="fw-bold app-kicker">Live Controls</div>
             </div>
-            {controlMessage && <div className="app-muted app-kicker mt-1">{controlMessage}</div>}
           </div>
 
           <div className="futures-live-action-row futures-launch-actions">
@@ -757,43 +800,115 @@ export default function FuturesLive() {
             </button>
           </div>
         </div>
+      </section>
 
-        <div className="futures-launch-config">
-          <Field label="Topstep Account" className="futures-launch-account-field">
-            <select value={selectedProfileCode} onChange={(event) => setSelectedProfileCode(event.target.value)} className="form-select app-input">
-              {liveAccountProfiles.map((profile) => {
-                const account = PROFILE_ACCOUNTS[profile.code] || {};
-                return (
-                <option key={profile.code} value={profile.code}>
-                  {account.label || profile.name}
-                </option>
-              );
-              })}
-            </select>
-          </Field>
-
-          <div className={activeSnapshot ? liveConfigMismatch ? "futures-launch-chip warning" : "futures-launch-chip ready" : "futures-launch-chip"}>
-            <span>Live Strategy</span>
+      <section className="app-panel futures-live-risk-config-panel">
+        <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
+          <div className="fw-bold app-kicker">Live Risk Portfolio Config</div>
+          <div className={activeSnapshot ? "futures-live-source-chip ready" : "futures-live-source-chip"}>
+            <span>Strategy Source</span>
             <strong>{activeSnapshot ? "Live Slot" : "Not Set"}</strong>
             <small>{activeSnapshot?.sourcePortfolioBacktestId ? `Run #${activeSnapshot.sourcePortfolioBacktestId} | ${liveStrategySlotSummary}` : liveStrategySlotSummary}</small>
           </div>
-
-          <div className="futures-launch-chip">
-            <span>Account ID</span>
-            <strong>{accountPreset.accountId || "Not connected"}</strong>
-            <small>{formatCompactCurrency(selectedProfile.accountSize)}</small>
-          </div>
-
-          <div className="futures-launch-symbols">
-            <span>Symbols</span>
-            <div className="futures-launch-symbol-list">
-              {liveStrategySymbols.map((symbol) => (
-                <b key={symbol}>{symbol}</b>
-              ))}
-            </div>
-          </div>
         </div>
 
+        <div className="row g-3">
+          <Field label="Funded Rule Template" className="col-12 col-md-4 col-xl-3">
+            <select value={selectedProfileCode} onChange={(event) => setSelectedProfileCode(event.target.value)} className="form-select app-input">
+              {liveAccountProfiles.map((profile) => (
+                <option key={profile.code} value={profile.code}>
+                  {profile.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <Field label="Account Size ($)" className="col-12 col-md-4 col-xl-3">
+            <input type="number" value={liveRiskConfig.accountSize} onChange={(event) => updateLiveRiskConfig("accountSize", event.target.value)} className="form-control app-input" />
+          </Field>
+
+          <Field label="Trailing Drawdown ($)" className="col-12 col-md-4 col-xl-3">
+            <input type="number" value={liveRiskConfig.maxTrailingDrawdown} onChange={(event) => updateLiveRiskConfig("maxTrailingDrawdown", event.target.value)} className="form-control app-input" />
+          </Field>
+
+          <Field label="Daily Loss Limit ($)" className="col-12 col-md-4 col-xl-3">
+            <input type="number" value={liveRiskConfig.dailyLossLimit} onChange={(event) => updateLiveRiskConfig("dailyLossLimit", event.target.value)} className="form-control app-input" />
+          </Field>
+
+          <Field label="Max Risk / Trade ($)" className="col-12 col-md-4 col-xl-3">
+            <input type="number" value={liveRiskConfig.maxRiskPerTrade} onChange={(event) => updateLiveRiskConfig("maxRiskPerTrade", event.target.value)} className="form-control app-input" />
+          </Field>
+
+          <Field label="Max Contracts" className="col-12 col-md-4 col-xl-3">
+            <input type="number" min="1" value={liveRiskConfig.maxContracts} onChange={(event) => updateLiveRiskConfig("maxContracts", event.target.value)} className="form-control app-input" />
+          </Field>
+
+          <Field label="Commission / Contract ($)" className="col-12 col-md-4 col-xl-3">
+            <input type="number" step="0.01" value={liveRiskConfig.commissionPerContract} onChange={(event) => updateLiveRiskConfig("commissionPerContract", event.target.value)} className="form-control app-input" />
+          </Field>
+
+          <Field label="Slippage (Ticks)" className="col-12 col-md-4 col-xl-3">
+            <input type="number" step="0.25" value={liveRiskConfig.slippageTicks} onChange={(event) => updateLiveRiskConfig("slippageTicks", event.target.value)} className="form-control app-input" />
+          </Field>
+
+          <Field label="Profit Target Stop ($)" className="col-12 col-md-4 col-xl-3">
+            <input type="number" value={liveRiskConfig.profitTarget} onChange={(event) => updateLiveRiskConfig("profitTarget", event.target.value)} className="form-control app-input" />
+          </Field>
+
+          <Field label="Max Open Positions" className="col-12 col-md-4 col-xl-3">
+            <input type="number" min="1" value={liveRiskConfig.maxOpenPositions} onChange={(event) => updateLiveRiskConfig("maxOpenPositions", event.target.value)} className="form-control app-input" />
+          </Field>
+
+          <Field label="Max Aggregate Contracts" className="col-12 col-md-4 col-xl-3">
+            <input type="number" min="1" value={liveRiskConfig.maxAggregateContracts} onChange={(event) => updateLiveRiskConfig("maxAggregateContracts", event.target.value)} className="form-control app-input" />
+          </Field>
+
+          <Field label="Funded Contract Units" className="col-12 col-md-4 col-xl-3">
+            <input type="number" min="0" step="0.1" value={liveRiskConfig.maxAggregateMiniUnits} onChange={(event) => updateLiveRiskConfig("maxAggregateMiniUnits", event.target.value)} className="form-control app-input" />
+          </Field>
+
+          <Field label="Reference Contract" className="col-12 col-md-4 col-xl-3">
+            <select value={liveRiskConfig.referenceSymbol} onChange={(event) => updateLiveRiskConfig("referenceSymbol", event.target.value)} className="form-select app-input">
+              {LIVE_INSTRUMENTS.map((instrument) => (
+                <option key={instrument.symbol} value={instrument.symbol}>
+                  {instrument.symbol} - {instrument.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <div className="col-12 col-md-4 col-xl-3">
+            <div className="app-data-chip h-100">
+              <span className="app-label">Template Specs</span>
+              <strong>{selectedRiskInstrument ? `${instrumentSpec(selectedRiskInstrument.symbol).tickSize} tick / $${instrumentSpec(selectedRiskInstrument.symbol).tickValue}` : "Loading"}</strong>
+            </div>
+          </div>
+
+          <div className="col-12 col-md-4 col-xl-3">
+            <div className="app-data-chip h-100">
+              <span className="app-label">Topstep Account</span>
+              <strong>{accountPreset.accountId || "Not connected"}</strong>
+            </div>
+          </div>
+
+          <div className="col-12">
+            <div className="app-subpanel futures-live-contract-panel">
+              <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap">
+                <div>
+                  <div className="fw-bold app-kicker">Contracts in Live Portfolio</div>
+                  <div className="app-muted app-kicker">{liveStrategySymbols.length} strategy symbols</div>
+                </div>
+              </div>
+              <div className="futures-live-contract-list">
+                {liveStrategySymbols.map((symbol) => (
+                  <span key={symbol}>{symbol}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {feedback && <div className="col-12 app-muted app-kicker">{feedback}</div>}
+        </div>
       </section>
 
       <section className="app-live-grid futures-live-summary-grid">
@@ -3758,6 +3873,32 @@ function Field({ label, children, className = "" }) {
       </label>
     </div>
   );
+}
+
+function applyLiveFundedProfile(config, profile) {
+  if (!profile) {
+    return config;
+  }
+  const referenceSymbol = config.referenceSymbol || DEFAULT_LIVE_RISK_CONFIG.referenceSymbol;
+  return {
+    ...config,
+    accountSize: String(profile.accountSize ?? config.accountSize),
+    maxTrailingDrawdown: String(profile.maxTrailingDrawdown ?? config.maxTrailingDrawdown),
+    dailyLossLimit: String(profile.dailyLossLimit ?? config.dailyLossLimit),
+    maxRiskPerTrade: String(profile.maxRiskPerTrade ?? config.maxRiskPerTrade),
+    maxContracts: String(contractLimitForProfile(profile, referenceSymbol)),
+    profitTarget: String(profile.profitTarget ?? config.profitTarget),
+    maxOpenPositions: String(profile.maxOpenPositions ?? config.maxOpenPositions),
+    maxAggregateContracts: String(profile.maxAggregateContracts ?? config.maxAggregateContracts),
+    maxAggregateMiniUnits: String(profile.maxAggregateMiniUnits ?? config.maxAggregateMiniUnits),
+  };
+}
+
+function contractLimitForProfile(profile, symbol) {
+  if (!profile) return 1;
+  return MICRO_SYMBOLS.has(String(symbol || "").toUpperCase())
+    ? profile.maxMicroContracts || profile.maxAggregateContracts || 50
+    : profile.maxContracts || 5;
 }
 
 async function readApiResponse(response) {
