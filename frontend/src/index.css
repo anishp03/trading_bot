@@ -2023,6 +2023,10 @@ textarea {
   font-weight: 900;
 }
 
+.futures-bot-tracker-pnl {
+  justify-content: flex-start;
+}
+
 .futures-bot-tracker-pnl small,
 .futures-bot-tracker-foot {
   color: var(--app-muted);
@@ -2071,7 +2075,7 @@ textarea {
 
 .futures-bot-tracker-health {
   display: grid;
-  grid-template-columns: minmax(104px, max-content) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -2091,8 +2095,10 @@ textarea {
 }
 
 .futures-health-pill {
+  display: block;
+  width: 100%;
   border-radius: 7px;
-  padding: 7px 8px;
+  padding: 9px 10px;
   font-size: 0.68rem;
   font-weight: 900;
   text-align: center;

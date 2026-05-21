@@ -1101,18 +1101,14 @@ function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
             </div>
             <div className="futures-bot-tracker-pnl">
               <em className={tracker.pnl > 0 ? "app-pnl-pos" : tracker.pnl < 0 ? "app-pnl-neg" : "app-muted"}>{formatCurrency(tracker.pnl)}</em>
-              <small className={tracker.changePct > 0 ? "app-pnl-pos" : tracker.changePct < 0 ? "app-pnl-neg" : "app-muted"}>{formatPct(tracker.changePct)}</small>
             </div>
             <div className="futures-bot-tracker-stats">
               <span><b>{tracker.totalTrades}</b> trades</span>
               <span><b>{tracker.liveTrades}</b> live</span>
               <span className={`futures-bot-signal ${tracker.signalTone}`}>{tracker.signal}</span>
             </div>
-            <div className="futures-bot-tracker-health compact">
-              <span className={`futures-health-pill ${tracker.healthTone}`}>{tracker.healthLabel}</span>
-            </div>
-            <div className="futures-bot-tracker-foot">
-              <span>{tracker.detail}</span>
+            <div className="futures-bot-tracker-health">
+              <span className={`futures-health-pill ${tracker.healthTone}`}>{tracker.reserved ? tracker.healthStatusText : `Health: ${tracker.healthStatusText || tracker.healthLabel || "Waiting"}`}</span>
             </div>
           </div>
         ))}
@@ -1596,7 +1592,9 @@ function reservedTrackerTile(symbol, detail) {
     liveTrades: 0,
     signal: "Reserved",
     signalTone: "idle",
-    detail,
+    healthLabel: "Reserved",
+    healthTone: "idle",
+    healthStatusText: detail,
   };
 }
 
@@ -1657,11 +1655,13 @@ function FuturesMarketChart({
   const slotWidth = plotWidth / safeVisibleBars;
   const latestCandle = candleSeries[candleSeries.length - 1];
   const latestPrice = Number(latestCandle?.close || 0);
-  const visibleTrades = Array.isArray(trades) ? trades.filter((trade) => Number(trade.entryPrice || 0) > 0) : [];
   const livePinned = offset === 0;
+  const visibleCandleToleranceMs = timeframeMinutesForClient(timeframe) * 60000 * 1.6;
+  const visibleTrades = Array.isArray(trades) ? trades.filter((trade) => Number(trade.entryPrice || 0) > 0) : [];
+  const chartDomainTrades = visibleTrades.filter((trade) => tradeTouchesVisibleWindow(trade, visibleCandles, visibleCandleToleranceMs));
   const targetPriceDomain = buildChartPriceDomain({
     candles: visibleCandles,
-    trades: visibleTrades,
+    trades: chartDomainTrades,
     latestPrice,
     includeLatestPrice: livePinned,
     symbol,
@@ -1685,7 +1685,6 @@ function FuturesMarketChart({
 
   const toY = (price) => priceBottom - (((Number(price || 0) - min) / range) * (priceBottom - priceTop));
   const toX = (index) => (leadingSlots + index) * slotWidth + slotWidth / 2;
-  const visibleCandleToleranceMs = timeframeMinutesForClient(timeframe) * 60000 * 1.6;
   const findVisibleIndex = (time) => findNearestCandleIndex(visibleCandles, time, visibleCandleToleranceMs);
   const setClampedOffset = (next) => setScrollOffset(Math.max(0, Math.min(maxOffset, next)));
   const panBy = (steps) => setClampedOffset(offset + steps);
@@ -3462,6 +3461,7 @@ function buildSymbolTrackers({ symbols, states, decisions, marketData, brokerPos
       : localPnl;
     const signal = trackerSignalLabel(state, liveTradeCount, botStarted);
     const health = trackerHealthLabel(state, botStarted);
+    const healthStatusText = trackerHealthStatusText(state, health, signal, botStarted, lastPrice, brokerLiveTrades > 0);
     return {
       symbol: normalizedSymbol,
       lastPrice,
@@ -3475,6 +3475,7 @@ function buildSymbolTrackers({ symbols, states, decisions, marketData, brokerPos
       healthTone: health.tone,
       errorCode: health.errorCode,
       healthDetail: health.tone === "ok" ? "" : health.detail,
+      healthStatusText,
       detail: brokerLiveTrades > 0 ? "Topstep open position verified; PnL is marked from live price." : trackerDetail(state, signal, botStarted, lastPrice),
     };
   });
@@ -3492,6 +3493,7 @@ function idleSymbolTracker(symbol) {
     signalTone: "idle",
     healthLabel: "Health Idle",
     healthTone: "idle",
+    healthStatusText: "Market Feed Off",
     detail: "Not started",
   };
 }
@@ -3565,6 +3567,34 @@ function trackerHealthLabel(state, botStarted) {
     return { label: "Health Idle", tone: "idle", errorCode, detail };
   }
   return { label: "Health OK", tone: "ok", errorCode, detail };
+}
+
+function trackerHealthStatusText(state, health, signal, botStarted, lastPrice, brokerLivePosition) {
+  if (!botStarted) return "Market Feed Off";
+  const errorCode = String(health?.errorCode || state?.errorCode || "").trim().toUpperCase();
+  if (["FEED_STOPPED", "FEED_STALE", "MARKET_DATA_STOPPED", "LIVE_CANDLE_MISSING"].includes(errorCode)) {
+    return "Market Feed Off";
+  }
+  if (brokerLivePosition || signal?.tone === "trading") return "Live Position Verified";
+  const raw = cleanLogText(state?.analysisStatus || health?.detail || "");
+  const normalized = raw.toLowerCase();
+  if (!raw || normalized === "not started" || normalized.includes("feed stopped")) return "Market Feed Off";
+  if (normalized.includes("market data stopped")) return "Market Feed Off";
+  if (normalized.includes("tracking live candles")) return "Tracking Live Candles";
+  if (normalized.includes("polling projectx history")) return "Polling ProjectX History";
+  if (normalized.includes("waiting for live ticks")) return "Waiting For Live Ticks";
+  if (normalized.includes("entry gate") || normalized.includes("market closed")) return "Market Closed";
+  if (lastPrice > 0 && health?.tone === "ok") return "Tracking Live Candles";
+  return titleCaseStatus(raw);
+}
+
+function titleCaseStatus(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .split(" ")
+    .map((word) => word.length <= 2 ? word.toUpperCase() : `${word.slice(0, 1).toUpperCase()}${word.slice(1).toLowerCase()}`)
+    .join(" ");
 }
 
 function trackerDetail(state, signal, botStarted, lastPrice) {
@@ -3683,9 +3713,12 @@ function buildChartPriceDomain({ candles, trades, latestPrice, includeLatestPric
     }
   }
 
+  const baseDomainMin = domainMin;
+  const baseDomainMax = domainMax;
+  const baseRange = Math.max(baseDomainMax - baseDomainMin, minimumRange);
+  const anchorFencePadding = Math.max(baseRange * 1.1, tick * 20);
   anchorPrices.forEach((price) => {
-    const range = Math.max(domainMax - domainMin, minimumRange);
-    const nearDomain = price >= domainMin - range * 1.35 && price <= domainMax + range * 1.35;
+    const nearDomain = price >= baseDomainMin - anchorFencePadding && price <= baseDomainMax + anchorFencePadding;
     if (nearDomain) {
       domainMin = Math.min(domainMin, price);
       domainMax = Math.max(domainMax, price);
@@ -3703,6 +3736,25 @@ function buildChartPriceDomain({ candles, trades, latestPrice, includeLatestPric
     min: domainMin - padding,
     max: domainMax + padding,
   };
+}
+
+function tradeTouchesVisibleWindow(trade, candles, toleranceMs = 0) {
+  const series = Array.isArray(candles) ? candles : [];
+  if (!trade || series.length === 0) return false;
+  const firstTime = parseChartTime(series[0]?.time);
+  const lastTime = parseChartTime(series[series.length - 1]?.time);
+  if (!firstTime || !lastTime) return false;
+  const start = Math.min(firstTime, lastTime) - Math.max(0, toleranceMs);
+  const end = Math.max(firstTime, lastTime) + Math.max(0, toleranceMs);
+  const touchesWindow = (value) => {
+    const time = parseChartTime(value);
+    return Boolean(time && time >= start && time <= end);
+  };
+  return touchesWindow(trade.entryTime)
+    || touchesWindow(trade.signalTime)
+    || touchesWindow(trade.exitTime)
+    || touchesWindow(trade.createdAt)
+    || touchesWindow(trade.updatedAt);
 }
 
 function quantileSorted(values, quantile) {
