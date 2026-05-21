@@ -58,6 +58,7 @@ export default function FuturesLive() {
   const [liveThinking, setLiveThinking] = useState([]);
   const [, setLiveThinkingStatus] = useState("idle");
   const [observedThinking, setObservedThinking] = useState([]);
+  const [logDrawerOpen, setLogDrawerOpen] = useState(false);
   const [liveMetrics, setLiveMetrics] = useState(null);
   const [liveMonitor, setLiveMonitor] = useState(null);
   const [liveMarks, setLiveMarks] = useState(null);
@@ -232,8 +233,15 @@ export default function FuturesLive() {
     [liveThinking]
   );
   const thinkingEntries = backendThinkingEntries.length > 0 ? backendThinkingEntries : observedThinking;
-  const canStartLiveBot = !backendOffline && !selectedAccountDisabled && Boolean(sidebarStartReady && activeSnapshot && !liveStatus?.running);
-  const controlMessage = feedback || (botStarted ? liveStatus?.lastDecision || realtimeStatus?.lastMessage : feedRunning ? realtimeStatus?.lastMessage || liveMonitor?.realtimeMessage : "");
+  const logDrawerEntries = useMemo(() => coalesceLiveBotLogEntries(thinkingEntries), [thinkingEntries]);
+  const snapshotProfileMatches = !activeSnapshot || String(activeSnapshot.fundedProfile || "") === String(selectedProfile.code || "");
+  const snapshotAccountMatches = !activeSnapshot || !activeSnapshot.practiceAccountId || String(activeSnapshot.practiceAccountId) === String(accountScopeId || "");
+  const liveConfigMismatch = Boolean(activeSnapshot && (!snapshotProfileMatches || !snapshotAccountMatches));
+  const liveConfigMismatchMessage = liveConfigMismatch
+    ? `Live Strategy slot is for ${activeSnapshot?.fundedProfile || "another profile"} / ${activeSnapshot?.practiceAccountId || "another account"}. Copy Backtest To Live for ${selectedProfile.name}.`
+    : "";
+  const canStartLiveBot = !backendOffline && !selectedAccountDisabled && !liveConfigMismatch && Boolean(sidebarStartReady && activeSnapshot && !liveStatus?.running);
+  const controlMessage = feedback || liveConfigMismatchMessage || (botStarted ? liveStatus?.lastDecision || realtimeStatus?.lastMessage : feedRunning ? realtimeStatus?.lastMessage || liveMonitor?.realtimeMessage : "");
   const launchTone = backendOffline ? "offline" : botControlActive ? "live" : sidebarStartReady ? "ready" : "pending";
   const liveStrategySlotSummary = activeSnapshot ? formatStrategySlotSummary(activeSnapshot.sourceMetrics) : "Copy backtest first";
   const launchLabel = backendOffline ? "Bot Status: OFF" : botStarted ? "Running" : feedRunning ? "Feed Live" : sidebarStartReady ? "Ready" : marketIdle && !marketSession?.entryWindowOpen ? "Closed" : "Setup";
@@ -710,11 +718,16 @@ export default function FuturesLive() {
     <div className="app-page futures-live-page">
       <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap">
         <h2 className="app-title m-0">Live Futures Bot</h2>
-        {!backendOffline && (
-          <span className={liveStatus?.running ? "app-badge app-positive-badge" : "app-badge app-neutral-badge"}>
-            {liveStatus?.running ? "Running" : "Stopped"}
-          </span>
-        )}
+        <div className="d-flex align-items-center gap-2 flex-wrap">
+          {!backendOffline && (
+            <span className={liveStatus?.running ? "app-badge app-positive-badge" : "app-badge app-neutral-badge"}>
+              {liveStatus?.running ? "Running" : "Stopped"}
+            </span>
+          )}
+          <button type="button" className="app-btn app-btn-small px-3" onClick={() => setLogDrawerOpen(true)}>
+            Logs {logDrawerEntries.length ? `(${logDrawerEntries.length})` : ""}
+          </button>
+        </div>
       </div>
 
       <section className="app-panel futures-live-control-panel">
@@ -759,10 +772,10 @@ export default function FuturesLive() {
             </select>
           </Field>
 
-          <div className={activeSnapshot ? "futures-launch-chip ready" : "futures-launch-chip"}>
+          <div className={activeSnapshot ? liveConfigMismatch ? "futures-launch-chip warning" : "futures-launch-chip ready" : "futures-launch-chip"}>
             <span>Live Strategy</span>
             <strong>{activeSnapshot ? "Live Slot" : "Not Set"}</strong>
-            <small>{liveStrategySlotSummary}</small>
+            <small>{activeSnapshot?.sourcePortfolioBacktestId ? `Run #${activeSnapshot.sourcePortfolioBacktestId} | ${liveStrategySlotSummary}` : liveStrategySlotSummary}</small>
           </div>
 
           <div className="futures-launch-chip">
@@ -786,7 +799,7 @@ export default function FuturesLive() {
       <section className="app-live-grid futures-live-summary-grid">
         <MetricCard label="Current Balance" value={formatAccountCurrency(Number(metrics?.currentBalance ?? Number(metrics?.accountSize || 0) + Number(metrics?.currentPnl || 0)))} />
         <MetricCard label="Current PnL" value={formatCurrency(metrics?.currentPnl)} accent={Number(metrics?.currentPnl || 0)} />
-        <MetricCard label="Drawdown" value={formatDrawdownValue(metrics)} accent={-Math.abs(Number(metrics?.drawdown || 0))} />
+        <MetricCard label="Drawdown / Cushion" value={formatDrawdownValue(metrics)} accent={-Math.abs(Number(metrics?.drawdown || 0))} />
         <MetricCard label="Return %" value={formatPct(metrics?.returnPct)} accent={Number(metrics?.returnPct || 0)} />
         <MetricCard label="Trades" value={String(tradeMetricCount)} />
       </section>
@@ -858,7 +871,13 @@ export default function FuturesLive() {
         <TradesTable trades={filteredAllTradeRows} mode="all" />
       </section>
 
-      <FuturesThinkingLog entries={thinkingEntries} status={equityReviewStatus} />
+      <FuturesLiveLogDrawer
+        open={logDrawerOpen}
+        onOpen={() => setLogDrawerOpen(true)}
+        onClose={() => setLogDrawerOpen(false)}
+        entries={logDrawerEntries}
+        status={equityReviewStatus}
+      />
     </div>
   );
 }
@@ -915,6 +934,65 @@ function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
         ))}
       </div>
     </div>
+  );
+}
+
+function FuturesLiveLogDrawer({ open, onOpen, onClose, entries, status }) {
+  const rows = Array.isArray(entries) ? entries.slice(0, 1000) : [];
+  return (
+    <>
+      <button
+        type="button"
+        className={open ? "futures-log-tab open" : "futures-log-tab"}
+        onClick={open ? onClose : onOpen}
+        aria-label={open ? "Close live logs" : "Open live logs"}
+      >
+        <span>Logs</span>
+        <b>{rows.length}</b>
+      </button>
+      {open && <button type="button" className="futures-log-backdrop" aria-label="Close live logs" onClick={onClose} />}
+      <aside className={open ? "futures-log-drawer open" : "futures-log-drawer"} aria-hidden={!open}>
+        <div className="futures-log-drawer-head">
+          <div>
+            <div className="fw-bold app-kicker">Live Logs</div>
+            <span className={`futures-review-status ${status?.healthTone || "idle"}`}>{status?.healthLabel || "Waiting"}</span>
+          </div>
+          <button type="button" className="app-btn app-btn-small" onClick={onClose}>Close</button>
+        </div>
+        <div className="futures-log-drawer-list" role="log" aria-label="Live bot log drawer">
+          {rows.length ? (
+            rows.map((entry, index) => (
+              <div className={thinkingLogRowClass(entry)} key={entry.id || `${entry.createdAt}-${index}`}>
+                <div className="futures-log-drawer-time">
+                  <time>{formatEstTime(entry.createdAt || entry.barTime)}</time>
+                  {entry.coalescedCount > 1 && <span>{entry.coalescedCount}x</span>}
+                </div>
+                <div className="futures-event-body">
+                  <div className="futures-event-topline">
+                    <span className={`futures-event-tag ${eventToneClass(entry)}`}>{eventLogCode(entry)}</span>
+                    {eventContextText(entry) && <span className="futures-event-context">{eventContextText(entry)}</span>}
+                  </div>
+                  <div className="futures-event-title">{eventTitle(entry)}</div>
+                  {compactEventSubtext(entry) && <div className="futures-event-subtext">{compactEventSubtext(entry)}</div>}
+                  {eventDetailEntries(entry).length > 0 && (
+                    <div className="futures-event-details">
+                      {eventDetailEntries(entry).slice(0, 3).map(([key, value]) => (
+                        <span className="futures-event-detail" key={`${entry.id || index}-${key}`}>
+                          <b>{detailLabel(key)}</b>
+                          <em>{formatEventDetailValue(value)}</em>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="app-empty">Waiting for live bot events.</div>
+          )}
+        </div>
+      </aside>
+    </>
   );
 }
 
@@ -1213,6 +1291,47 @@ function observedLogEntry({ key, sessionId, createdAt, eventType = "", phase, to
 
 function cleanLogText(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function coalesceLiveBotLogEntries(entries) {
+  if (!Array.isArray(entries)) return [];
+  const sorted = [...entries]
+    .filter((entry) => entry && (entry.summary || entry.detail || entry.title || entry.subtext))
+    .sort((first, second) => String(second?.createdAt || second?.barTime || "").localeCompare(String(first?.createdAt || first?.barTime || "")));
+  const grouped = new Map();
+  sorted.forEach((entry) => {
+    const key = coalesceLiveBotLogKey(entry);
+    const current = grouped.get(key);
+    if (!current) {
+      grouped.set(key, { ...entry, coalescedCount: 1, firstAt: entry.createdAt || entry.barTime || "", lastAt: entry.createdAt || entry.barTime || "" });
+      return;
+    }
+    current.coalescedCount += 1;
+    current.firstAt = entry.createdAt || entry.barTime || current.firstAt;
+  });
+  return Array.from(grouped.values()).slice(0, 1000);
+}
+
+function coalesceLiveBotLogKey(entry) {
+  const code = eventLogCode(entry);
+  const sessionId = entry?.sessionId || "current";
+  const details = entry?.details || {};
+  if (["MARKET_DATA_STOPPED", "MARKET_DATA_RESUMED", "ENTRY_GATE_CLOSED", "ENTRY_GATE_OPENED", "POST_CLOSE_CLEANUP"].includes(code)) {
+    return [code, sessionId, details.marketDate || "", details.code || "", details.gate || "", details.action || ""].join("|");
+  }
+  if (code.includes("DATA") || code.includes("METRIC")) {
+    return [code, sessionId, cleanLogText(entry?.phase || ""), cleanLogText(eventTitle(entry))].join("|");
+  }
+  return [code, sessionId, cleanLogText(entry?.symbol || details.symbol || ""), cleanLogText(eventTitle(entry)), cleanLogText(entry?.barTime || "")].join("|");
+}
+
+function compactEventSubtext(entry) {
+  const code = eventLogCode(entry);
+  if (["MARKET_DATA_STOPPED", "MARKET_DATA_RESUMED", "ENTRY_GATE_CLOSED", "ENTRY_GATE_OPENED", "POST_CLOSE_CLEANUP"].includes(code)) {
+    return "";
+  }
+  const text = eventSubtext(entry);
+  return text.length > 140 ? `${text.slice(0, 137)}...` : text;
 }
 
 function buildEquityReviewStatus({ backendOffline, botStarted, feedRunning, liveMonitor, liveMarks, symbolStates, metrics }) {
@@ -2511,6 +2630,7 @@ function buildLocalTradeProvenance(decisions = [], orders = [], accountId = "") 
       side: String(decision.side || "").toUpperCase(),
       accountId: decision.accountId,
       brokerOrderId: decision.brokerOrderId || decision.orderId || "",
+      customTag: decision.customTag || "",
       source: "decision",
     });
   });
@@ -2530,6 +2650,7 @@ function buildLocalTradeProvenance(decisions = [], orders = [], accountId = "") 
       signalTime: order.signalTime || order.entryTime || order.createdAt,
       entryTime: order.entryTime || order.createdAt,
       brokerOrderId: order.brokerOrderId || order.orderId || "",
+      customTag: order.customTag || "",
       status: order.status || "SUBMITTED_TOPSTEPX",
       source: "order",
     });
@@ -2571,6 +2692,7 @@ function buildBrokerOpenTradeRows(positions, provenance = []) {
         entryTime: position.createdAt,
         createdAt: position.createdAt,
         orderId: position.orderId || position.brokerOrderId,
+        customTag: position.customTag,
       });
       return {
         id: brokerStableRowId("topstep-position", position.accountId, symbol, side, position.id || position.contractId || position.createdAt || index),
@@ -2665,6 +2787,7 @@ function buildBrokerClosedTradeRows(trades, provenance = []) {
       entryTime,
       createdAt: trade.createdAt,
       orderId: entryOrderId || trade.orderId || trade.brokerOrderId,
+      customTag: trade.customTag,
       closed: true,
     });
     const reason = entryPrice > 0
@@ -2755,6 +2878,7 @@ function findBrokerDecisionMeta(decisions, target) {
   const side = String(target?.side || "").toUpperCase();
   if (!symbol || !side) return null;
   const targetOrderId = String(target?.orderId || target?.brokerOrderId || "").trim();
+  const targetCustomTag = String(target?.customTag || "").trim();
   const targetTime = parseChartTime(target?.entryTime || target?.createdAt);
   const targetPrice = Number(target?.entryPrice || 0);
   const targetContracts = Number(target?.contracts || 0);
@@ -2768,14 +2892,16 @@ function findBrokerDecisionMeta(decisions, target) {
     const strategyCode = usableStrategyCode(decision.strategyCode);
     if (!strategyCode) return;
     const decisionOrderId = String(decision.brokerOrderId || decision.orderId || "").trim();
+    const decisionCustomTag = String(decision.customTag || "").trim();
     const decisionTime = parseChartTime(decision.entryTime || decision.signalTime || decision.createdAt);
     const decisionPrice = Number(decision.entryPrice || 0);
     const decisionContracts = Number(decision.contracts || 0);
     const timeMinutes = targetTime && decisionTime ? Math.abs(targetTime - decisionTime) / 60000 : 999;
     const priceTicks = targetPrice > 0 && decisionPrice > 0 ? Math.abs(targetPrice - decisionPrice) / Math.max(tick, 0.01) : 24;
     const contractPenalty = targetContracts > 0 && decisionContracts > 0 && targetContracts !== decisionContracts ? 18 : 0;
-    const orderMatchBonus = targetOrderId && decisionOrderId && targetOrderId === decisionOrderId ? -10000 : 0;
-    const score = orderMatchBonus + timeMinutes + priceTicks * 2 + contractPenalty;
+    const orderMatchBonus = targetOrderId && decisionOrderId && brokerOrderIdsRelated(decisionOrderId, targetOrderId) ? -10000 : 0;
+    const customTagBonus = targetCustomTag && decisionCustomTag && targetCustomTag.startsWith(decisionCustomTag) ? -9000 : 0;
+    const score = orderMatchBonus + customTagBonus + timeMinutes + priceTicks * 2 + contractPenalty;
     if (score < bestScore) {
       bestScore = score;
       best = decision;
@@ -2783,6 +2909,19 @@ function findBrokerDecisionMeta(decisions, target) {
   });
   if (bestScore > 90) return null;
   return target?.closed ? enrichBrokerDecisionWithExit(best, decisions) : best;
+}
+
+function brokerOrderIdsRelated(entryOrderId, targetOrderId) {
+  const entry = String(entryOrderId || "").trim();
+  const target = String(targetOrderId || "").trim();
+  if (!entry || !target) return false;
+  if (entry === target) return true;
+  const entryNumber = Number(entry);
+  const targetNumber = Number(target);
+  return Number.isFinite(entryNumber)
+    && Number.isFinite(targetNumber)
+    && targetNumber > entryNumber
+    && targetNumber <= entryNumber + 4;
 }
 
 function enrichBrokerDecisionWithExit(decision, decisions) {
@@ -3738,8 +3877,12 @@ function formatCompactSignedCurrency(value) {
 
 function formatDrawdownValue(metrics) {
   const drawdown = Math.abs(Number(metrics?.drawdown || 0));
+  const drawdownCushion = Math.abs(Number(metrics?.drawdownCushion || 0));
   const accountSize = Number(metrics?.accountSize || metrics?.broker?.accountSize || 0);
   const pct = accountSize > 0 ? (drawdown / accountSize) * 100 : Number.NaN;
+  if (drawdown <= 0 && drawdownCushion > 0) {
+    return `Cushion ${formatCurrency(drawdownCushion)}`;
+  }
   const dollarText = formatCurrency(-drawdown);
   return Number.isFinite(pct) && pct > 0 ? `${dollarText} (${pct.toFixed(2)}%)` : dollarText;
 }

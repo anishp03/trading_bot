@@ -716,13 +716,13 @@ textarea {
 }
 
 .trades-grid {
-  grid-template-columns: 1.2fr 1.08fr 0.68fr 0.58fr 0.78fr 0.78fr 0.78fr 1.9fr;
-  min-width: 1080px;
+  grid-template-columns: 1.16fr 1.05fr 1.05fr 0.64fr 0.54fr 0.72fr 0.72fr 0.76fr 1.85fr;
+  min-width: 1200px;
 }
 
 .trades-grid.has-action {
-  grid-template-columns: 1.2fr 1.08fr 0.68fr 0.58fr 0.78fr 0.78fr 0.78fr 1.9fr 0.7fr;
-  min-width: 1180px;
+  grid-template-columns: 1.16fr 1.05fr 1.05fr 0.64fr 0.54fr 0.72fr 0.72fr 0.76fr 1.85fr 0.68fr;
+  min-width: 1290px;
 }
 
 .app-grid-head.trades-grid,
@@ -736,6 +736,20 @@ textarea {
 
 .strategy-table-wrap {
   margin-top: 0;
+}
+
+.futures-analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.futures-analytics-tile {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 0.7rem 0.75rem;
+  min-height: 76px;
 }
 
 .strategy-grid {
@@ -1260,6 +1274,11 @@ textarea {
   background: rgba(120, 220, 160, 0.06);
 }
 
+.futures-launch-chip.warning {
+  border-color: rgba(255, 214, 112, 0.32);
+  background: rgba(255, 214, 112, 0.08);
+}
+
 .futures-launch-chip span,
 .futures-launch-symbols span {
   color: var(--app-muted);
@@ -1540,6 +1559,110 @@ textarea {
 .futures-thinking-panel {
   display: grid;
   gap: 10px;
+}
+
+.futures-log-tab {
+  position: fixed;
+  top: 42%;
+  right: 0;
+  z-index: 455;
+  display: inline-grid;
+  gap: 2px;
+  place-items: center;
+  min-width: 52px;
+  min-height: 86px;
+  border: 1px solid rgba(120, 170, 255, 0.38);
+  border-right: 0;
+  border-radius: 8px 0 0 8px;
+  background: rgba(28, 34, 48, 0.96);
+  color: rgba(235, 240, 255, 0.94);
+  font-size: 0.72rem;
+  font-weight: 850;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.42);
+}
+
+.futures-log-tab b {
+  color: rgba(146, 232, 177, 0.98);
+  font-size: 0.86rem;
+}
+
+.futures-log-tab.open {
+  right: min(420px, calc(100vw - 54px));
+}
+
+.futures-log-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 430;
+  border: 0;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.futures-log-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 450;
+  width: min(420px, 100vw);
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  transform: translateX(102%);
+  transition: transform 180ms ease;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(10, 13, 19, 0.98);
+  box-shadow: -20px 0 50px rgba(0, 0, 0, 0.46);
+}
+
+.futures-log-drawer.open {
+  transform: translateX(0);
+}
+
+.futures-log-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.futures-log-drawer-head > div {
+  display: grid;
+  gap: 8px;
+}
+
+.futures-log-drawer-list {
+  overflow-y: auto;
+  padding: 8px 10px 18px;
+}
+
+.futures-log-drawer .futures-thinking-row {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  margin-bottom: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.futures-log-drawer-time {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--app-muted);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.futures-log-drawer-time span {
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.78);
+  font-weight: 850;
 }
 
 .futures-thinking-header,
@@ -2945,13 +3068,17 @@ textarea {
   }
 
   .trades-grid {
-    grid-template-columns: 1.15fr 0.98fr 0.65fr 0.55fr 0.72fr 0.72fr 0.72fr 1.6fr;
-    min-width: 1020px;
+    grid-template-columns: 1.12fr 0.98fr 0.98fr 0.62fr 0.52fr 0.68fr 0.68fr 0.7fr 1.5fr;
+    min-width: 1130px;
   }
 
   .trades-grid.has-action {
-    grid-template-columns: 1.15fr 0.98fr 0.65fr 0.55fr 0.72fr 0.72fr 0.72fr 1.6fr 0.68fr;
-    min-width: 1110px;
+    grid-template-columns: 1.12fr 0.98fr 0.98fr 0.62fr 0.52fr 0.68fr 0.68fr 0.7fr 1.5fr 0.66fr;
+    min-width: 1220px;
+  }
+
+  .futures-analytics-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .strategy-grid {
@@ -3017,6 +3144,10 @@ textarea {
 }
 
 @media (max-width: 920px) {
+  .futures-analytics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .app-shell {
     grid-template-columns: 170px 1fr;
   }

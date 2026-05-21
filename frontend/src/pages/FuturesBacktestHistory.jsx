@@ -4,13 +4,14 @@ import { apiFetch } from "../utils/api.js";
 import { formatEstTime } from "../utils/time.js";
 
 const PAGE_SIZE = 8;
+const EMPTY_SEGMENTS = { daily: [], weekly: [], monthly: [], quarterly: [], summary: null };
 
 export default function FuturesBacktestHistory() {
   const [runs, setRuns] = useState([]);
   const [page, setPage] = useState(1);
   const [selectedRunId, setSelectedRunId] = useState(null);
   const [selectedTrades, setSelectedTrades] = useState([]);
-  const [selectedSegments, setSelectedSegments] = useState({ monthly: [], quarterly: [] });
+  const [selectedSegments, setSelectedSegments] = useState(EMPTY_SEGMENTS);
   const [selectedSymbols, setSelectedSymbols] = useState([]);
   const [isClearing, setIsClearing] = useState(false);
 
@@ -31,7 +32,7 @@ export default function FuturesBacktestHistory() {
         });
         if (nextRuns.length === 0) {
           setSelectedTrades([]);
-          setSelectedSegments({ monthly: [], quarterly: [] });
+          setSelectedSegments(EMPTY_SEGMENTS);
           setSelectedSymbols([]);
         }
       })
@@ -41,7 +42,7 @@ export default function FuturesBacktestHistory() {
         setPage(1);
         setSelectedRunId(null);
         setSelectedTrades([]);
-        setSelectedSegments({ monthly: [], quarterly: [] });
+        setSelectedSegments(EMPTY_SEGMENTS);
         setSelectedSymbols([]);
       });
   }, []);
@@ -73,13 +74,16 @@ export default function FuturesBacktestHistory() {
       })
       .then((data) => {
         setSelectedSegments({
+          daily: Array.isArray(data.daily) ? data.daily : [],
+          weekly: Array.isArray(data.weekly) ? data.weekly : [],
           monthly: Array.isArray(data.monthly) ? data.monthly : [],
           quarterly: Array.isArray(data.quarterly) ? data.quarterly : [],
+          summary: data.summary && typeof data.summary === "object" ? data.summary : null,
         });
       })
       .catch((error) => {
         console.error("Error loading futures segments:", error);
-        setSelectedSegments({ monthly: [], quarterly: [] });
+        setSelectedSegments(EMPTY_SEGMENTS);
       });
 
     apiFetch(`/api/futures/portfolio-backtests/${selectedRunId}/symbols`)
@@ -103,7 +107,7 @@ export default function FuturesBacktestHistory() {
       setPage(1);
       setSelectedRunId(null);
       setSelectedTrades([]);
-      setSelectedSegments({ monthly: [], quarterly: [] });
+      setSelectedSegments(EMPTY_SEGMENTS);
       setSelectedSymbols([]);
       loadRuns();
     } catch (error) {
@@ -117,7 +121,7 @@ export default function FuturesBacktestHistory() {
   const boundedPage = Math.min(page, totalPages);
   const pageRuns = runs.slice((boundedPage - 1) * PAGE_SIZE, boundedPage * PAGE_SIZE);
   const selectedRun = runs.find((run) => run.id === selectedRunId) || null;
-  const previewRun = useMemo(() => toPreviewRun(selectedRun), [selectedRun]);
+  const previewRun = useMemo(() => toPreviewRun(selectedRun, selectedSegments.summary), [selectedRun, selectedSegments.summary]);
   const previewTrades = useMemo(() => selectedTrades.map(toPreviewTrade), [selectedTrades]);
 
   return (
@@ -204,8 +208,11 @@ export default function FuturesBacktestHistory() {
         <>
           <div className="app-panel">
             <div className="fw-bold app-kicker">Contribution / Monthly Quality Check</div>
+            <AnalyticsSummary summary={selectedSegments.summary} />
             <div className="row g-3 mt-1">
               <SymbolTable symbols={selectedSymbols} />
+              <SegmentTable title="Daily" segments={selectedSegments.daily} />
+              <SegmentTable title="Weekly" segments={selectedSegments.weekly} />
               <SegmentTable title="Monthly" segments={selectedSegments.monthly} />
               <SegmentTable title="Quarterly" segments={selectedSegments.quarterly} />
             </div>
@@ -223,7 +230,7 @@ export default function FuturesBacktestHistory() {
   );
 }
 
-function toPreviewRun(run) {
+function toPreviewRun(run, summary = null) {
   if (!run) return null;
   const runNumber = run.visibleRunNumber ?? run.id;
   return {
@@ -242,6 +249,14 @@ function toPreviewRun(run) {
     drawdown: run.maxDrawdownPct,
     ruleViolation: run.ruleViolation,
     ruleMessage: run.ruleMessage,
+    expectancy: summary?.expectancy,
+    averageRiskReward: summary?.averageRiskReward,
+    avgWin: summary?.avgWin,
+    avgLoss: summary?.avgLoss,
+    payoffRatio: summary?.payoffRatio,
+    avgDailyPnl: summary?.daily?.avgPnl,
+    avgWeeklyPnl: summary?.weekly?.avgPnl,
+    avgMonthlyPnl: summary?.monthly?.avgPnl,
   };
 }
 
@@ -269,7 +284,7 @@ function decorateRuns(runs) {
 
 function SegmentTable({ title, segments }) {
   return (
-    <div className="col-12 col-xl-4">
+    <div className="col-12 col-xl-3">
       <div className="app-card h-100">
         <div className="fw-bold app-kicker mb-2">{title}</div>
         <div className="app-table-wrap strategy-table-wrap">
@@ -298,7 +313,7 @@ function SegmentTable({ title, segments }) {
 
 function SymbolTable({ symbols }) {
   return (
-    <div className="col-12 col-xl-4">
+    <div className="col-12 col-xl-3">
       <div className="app-card h-100">
         <div className="fw-bold app-kicker mb-2">By Contract</div>
         <div className="app-table-wrap strategy-table-wrap">
@@ -311,7 +326,10 @@ function SymbolTable({ symbols }) {
           </div>
           {symbols.map((symbol) => (
             <div key={symbol.symbol} className="app-grid-row futures-segment-grid">
-              <div>{symbol.symbol}</div>
+              <div>
+                <strong>{symbol.symbol}</strong>
+                {symbol.contractName && <div className="app-muted">{symbol.contractName}</div>}
+              </div>
               <div className={symbol.pnl >= 0 ? "app-pnl-pos" : "app-pnl-neg"}>{formatCurrency(symbol.pnl)}</div>
               <div>{symbol.trades}</div>
               <div>{formatPercent(symbol.winRate)}</div>
@@ -323,6 +341,41 @@ function SymbolTable({ symbols }) {
       </div>
     </div>
   );
+}
+
+function AnalyticsSummary({ summary }) {
+  if (!summary) return null;
+  return (
+    <div className="futures-analytics-grid mt-3">
+      <AnalyticsTile label="Avg Daily P/L" value={formatCurrency(summary.daily?.avgPnl)} accent={summary.daily?.avgPnl} />
+      <AnalyticsTile label="Avg Weekly P/L" value={formatCurrency(summary.weekly?.avgPnl)} accent={summary.weekly?.avgPnl} />
+      <AnalyticsTile label="Avg Monthly P/L" value={formatCurrency(summary.monthly?.avgPnl)} accent={summary.monthly?.avgPnl} />
+      <AnalyticsTile label="Best Day" value={formatPeriodPnl(summary.daily?.best)} accent={summary.daily?.best?.pnl} />
+      <AnalyticsTile label="Worst Day" value={formatPeriodPnl(summary.daily?.worst)} accent={summary.daily?.worst?.pnl} />
+      <AnalyticsTile label="Best Week" value={formatPeriodPnl(summary.weekly?.best)} accent={summary.weekly?.best?.pnl} />
+      <AnalyticsTile label="Worst Week" value={formatPeriodPnl(summary.weekly?.worst)} accent={summary.weekly?.worst?.pnl} />
+      <AnalyticsTile label="Best Month" value={formatPeriodPnl(summary.monthly?.best)} accent={summary.monthly?.best?.pnl} />
+      <AnalyticsTile label="Worst Month" value={formatPeriodPnl(summary.monthly?.worst)} accent={summary.monthly?.worst?.pnl} />
+      <AnalyticsTile label="Positive Days" value={formatPercent(summary.daily?.positivePct)} />
+      <AnalyticsTile label="Expectancy" value={formatCurrency(summary.expectancy)} accent={summary.expectancy} />
+      <AnalyticsTile label="Avg R/R" value={formatNumber(summary.averageRiskReward, 2)} />
+    </div>
+  );
+}
+
+function AnalyticsTile({ label, value, accent = 0 }) {
+  const valueClass = Number(accent || 0) > 0 ? "app-pnl-pos" : Number(accent || 0) < 0 ? "app-pnl-neg" : "";
+  return (
+    <div className="futures-analytics-tile">
+      <div className="app-label">{label}</div>
+      <div className={`fw-bold ${valueClass}`}>{value ?? "--"}</div>
+    </div>
+  );
+}
+
+function formatPeriodPnl(period) {
+  if (!period?.segment) return "--";
+  return `${formatSegmentPeriod(period.segment)} ${formatCurrency(period.pnl)}`;
 }
 
 function formatCurrency(value) {
@@ -348,6 +401,10 @@ function formatSegmentPeriod(value) {
   const quarterly = raw.match(/^(\d{4})-Q([1-4])$/);
   if (quarterly) {
     return `Q${quarterly[2]} ${quarterly[1]}`;
+  }
+  const weekly = raw.match(/^(\d{4})-W(\d{2})$/);
+  if (weekly) {
+    return `W${weekly[2]} ${weekly[1]}`;
   }
   return formatEstTime(raw);
 }

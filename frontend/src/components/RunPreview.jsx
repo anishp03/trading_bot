@@ -92,6 +92,14 @@ export default function RunPreview({
           <MetricCard title="Trades" value={run?.trades ?? "--"} />
           <MetricCard title="Profit Factor" value={run?.profitFactor ?? "--"} />
           <MetricCard title="Drawdown" value={run?.drawdown == null ? "--" : `${formatNumber(run.drawdown)}%`} />
+          {run?.expectancy != null && <MetricCard title="Expectancy" value={formatSignedMoney(run.expectancy)} accent={run.expectancy} />}
+          {run?.averageRiskReward != null && <MetricCard title="Avg R/R" value={formatNumber(run.averageRiskReward)} />}
+          {run?.avgWin != null && <MetricCard title="Avg Win" value={formatSignedMoney(run.avgWin)} accent={run.avgWin} />}
+          {run?.avgLoss != null && <MetricCard title="Avg Loss" value={formatSignedMoney(run.avgLoss)} accent={run.avgLoss} />}
+          {run?.payoffRatio != null && <MetricCard title="Payoff" value={formatNumber(run.payoffRatio)} />}
+          {run?.avgDailyPnl != null && <MetricCard title="Avg Day" value={formatSignedMoney(run.avgDailyPnl)} accent={run.avgDailyPnl} />}
+          {run?.avgWeeklyPnl != null && <MetricCard title="Avg Week" value={formatSignedMoney(run.avgWeeklyPnl)} accent={run.avgWeeklyPnl} />}
+          {run?.avgMonthlyPnl != null && <MetricCard title="Avg Month" value={formatSignedMoney(run.avgMonthlyPnl)} accent={run.avgMonthlyPnl} />}
         </div>
       </div>
 
@@ -191,6 +199,7 @@ export default function RunPreview({
           <div className="app-table-wrap">
             <div className={onOpenTrade ? "app-grid-head trades-grid has-action" : "app-grid-head trades-grid"}>
               <div>Time</div>
+              <div>Contract</div>
               <div>Strategy</div>
               <div>Side</div>
               <div>Qty</div>
@@ -213,6 +222,10 @@ export default function RunPreview({
                     <div className="app-time-cell">
                       <strong>{formatEstTime(trade.time ?? "--")}</strong>
                       {trade.closedAt && <span>{formatEstTime(trade.closedAt)}</span>}
+                    </div>
+                    <div>
+                      <strong>{trade.contractName || trade.symbol || "--"}</strong>
+                      {trade.contractName && trade.symbol && <span className="app-muted d-block">{trade.symbol}</span>}
                     </div>
                     <div>{trade.strategyName || trade.strategyCode || "--"}</div>
                     <div>
