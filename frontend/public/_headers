@@ -3,3 +3,10 @@
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
+  Cache-Control: no-store
+
+/assets/*
+  Cache-Control: no-store
+
+/env-config.js
+  Cache-Control: no-store

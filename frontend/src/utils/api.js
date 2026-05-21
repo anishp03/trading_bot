@@ -1,15 +1,24 @@
-const LIVE_API_BASE_URL = "http://localhost:7070";
 const DEV_API_BASE_URL = "http://localhost:7071";
 export const AUTH_STORAGE_KEY = "tradingbot.auth";
 
 function runtimeApiBaseUrl() {
-  if (typeof window !== "undefined" && window.__TRADINGBOT_CONFIG__?.API_BASE_URL) {
-    return window.__TRADINGBOT_CONFIG__.API_BASE_URL;
+  if (typeof window !== "undefined") {
+    const runtimeUrl = String(window.__TRADINGBOT_CONFIG__?.API_BASE_URL || "").trim();
+    if (runtimeUrl) {
+      return runtimeUrl;
+    }
   }
-  if (import.meta.env.VITE_API_BASE_URL) {
-    return import.meta.env.VITE_API_BASE_URL;
+
+  const buildUrl = String(import.meta.env.VITE_API_BASE_URL || "").trim();
+  if (buildUrl) {
+    return buildUrl;
   }
-  return import.meta.env.DEV ? DEV_API_BASE_URL : LIVE_API_BASE_URL;
+
+  if (!import.meta.env.DEV && typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin;
+  }
+
+  return DEV_API_BASE_URL;
 }
 
 export const API_BASE_URL = runtimeApiBaseUrl().replace(/\/+$/, "");

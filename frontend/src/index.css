@@ -35,6 +35,28 @@ body {
   color: var(--app-text);
 }
 
+.app-boot-error {
+  min-height: 100vh;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  padding: 24px;
+  background: var(--app-bg);
+  color: var(--app-text);
+  text-align: center;
+}
+
+.app-boot-error h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.app-boot-error p {
+  max-width: 760px;
+  margin: 0 auto;
+  color: var(--app-muted);
+}
+
 button,
 input,
 select,
