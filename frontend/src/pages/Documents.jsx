@@ -1,7 +1,7 @@
 const STRATEGY_IMAGE_BASE = "/documents/futures-strategies";
 
 const pipelineChecks = [
-  "Live futures starts only after a Live Strategy snapshot exists; the snapshot is copied/promoted from backtest settings and remains read-only during live trading.",
+  "Live futures starts from the selected Strategy Config preset; missing preset data blocks startup instead of falling back to a legacy slot.",
   "The live cycle runs every 5 seconds, builds 1-minute candles from ProjectX realtime plus warmup bars, and supplies previous-day, 15-minute, and 1-hour context where required.",
   "Every normal strategy signal is generated from a closed signal candle and executes on the next bar open before 15:55 ET.",
   "Entries pass portfolio risk, funded-unit, max-position, per-strategy daily cap, duplicate-symbol, broker-exposure, and Topstep account checks before submission.",

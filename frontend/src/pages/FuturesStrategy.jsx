@@ -57,16 +57,7 @@ const DEFAULT_SETTINGS = {
   maxInitialRiskTicks: 220,
 };
 
-const DEFAULT_RISK_SETTINGS = {
-  accountSize: "50000",
-  maxTrailingDrawdown: "2500",
-  dailyLossLimit: "500",
-  maxRiskPerTrade: "400",
-  maxContracts: "12",
-  commissionPerContract: "1.24",
-  slippageTicks: "1",
-  profitTarget: "0",
-};
+const DEFAULT_STRATEGY_PRESET = "80kprofit";
 
 const MODULES = [
   ["orb", "Opening Range Breakout"],
@@ -83,27 +74,25 @@ const MODULES = [
   ["microScalp", "Micro Trend Scalp"],
 ];
 
-const DEFAULT_PORTFOLIO_SYMBOLS = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K"];
-
 export default function FuturesStrategy() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [riskSettings, setRiskSettings] = useState(DEFAULT_RISK_SETTINGS);
   const [selectedSymbol, setSelectedSymbol] = useState("MNQ");
-  const [selectedSlot, setSelectedSlot] = useState("BACKTEST");
+  const [selectedPreset, setSelectedPreset] = useState(DEFAULT_STRATEGY_PRESET);
+  const [strategyPresets, setStrategyPresets] = useState([]);
+  const [newPresetName, setNewPresetName] = useState("");
   const [instruments, setInstruments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [isUpdatingLive, setIsUpdatingLive] = useState(false);
   const [saveStatus, setSaveStatus] = useState("");
 
   useEffect(() => {
     loadInstruments();
+    loadStrategyPresets();
   }, []);
 
   useEffect(() => {
-    loadSettings(selectedSymbol, selectedSlot);
-    loadRiskSettings(selectedSymbol);
-  }, [selectedSymbol, selectedSlot]);
+    loadSettings(selectedSymbol, selectedPreset);
+  }, [selectedSymbol, selectedPreset]);
 
   function loadInstruments() {
     apiFetch("/api/futures/instruments")
@@ -124,9 +113,28 @@ export default function FuturesStrategy() {
       });
   }
 
-  function loadSettings(symbol = selectedSymbol, slot = selectedSlot) {
+  function loadStrategyPresets() {
+    apiFetch("/api/futures/strategy-presets")
+      .then((response) => {
+        if (!response.ok) throw new Error("Failed to load strategy presets.");
+        return response.json();
+      })
+      .then((data) => {
+        const presets = Array.isArray(data) ? data : [];
+        setStrategyPresets(presets);
+        if (presets.length && !presets.some((preset) => preset.name === selectedPreset)) {
+          setSelectedPreset(presets[0].name);
+        }
+      })
+      .catch((error) => {
+        console.error("Error loading futures strategy presets:", error);
+        setStrategyPresets([{ name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }]);
+      });
+  }
+
+  function loadSettings(symbol = selectedSymbol, preset = selectedPreset) {
     setIsLoading(true);
-    const params = new URLSearchParams({ symbol, slot });
+    const params = new URLSearchParams({ symbol, preset });
     apiFetch(`/api/futures/strategy?${params.toString()}`)
       .then((response) => {
         if (!response.ok) throw new Error("Failed to load futures strategy settings.");
@@ -139,19 +147,6 @@ export default function FuturesStrategy() {
         setSaveStatus(`Loaded local defaults for ${symbol}`);
       })
       .finally(() => setIsLoading(false));
-  }
-
-  function loadRiskSettings(symbol = selectedSymbol) {
-    apiFetch(`/api/futures/risk?symbol=${encodeURIComponent(symbol)}`)
-      .then((response) => {
-        if (!response.ok) throw new Error("Failed to load futures risk settings.");
-        return response.json();
-      })
-      .then((data) => setRiskSettings(normalizeRiskSettings(data)))
-      .catch((error) => {
-        console.error("Error loading futures risk settings:", error);
-        setRiskSettings(DEFAULT_RISK_SETTINGS);
-      });
   }
 
   function updateModule(moduleKey, field, value) {
@@ -168,21 +163,13 @@ export default function FuturesStrategy() {
     setSettings((current) => ({ ...current, [field]: value }));
   }
 
-  function updateRiskField(field, value) {
-    setRiskSettings((current) => ({ ...current, [field]: value }));
-  }
-
   async function saveSettings() {
-    if (selectedSlot === "LIVE") {
-      setSaveStatus("Live Strategy is updated by copying Backtest Strategy.");
-      return;
-    }
     setIsSaving(true);
     setSaveStatus("");
 
     const strategyParams = new URLSearchParams({
       symbol: selectedSymbol,
-      slot: "BACKTEST",
+      preset: selectedPreset,
       orbEnabled: String(settings.orb.enabled),
       orbMaxTradesPerDay: String(settings.orb.maxTradesPerDay),
       openingMomentumEnabled: String(settings.openingMomentum.enabled),
@@ -250,30 +237,13 @@ export default function FuturesStrategy() {
       maxInitialRiskTicks: String(settings.maxInitialRiskTicks),
     });
 
-    const riskParams = new URLSearchParams({
-      symbol: selectedSymbol,
-      accountSize: String(riskSettings.accountSize),
-      maxTrailingDrawdown: String(riskSettings.maxTrailingDrawdown),
-      dailyLossLimit: String(riskSettings.dailyLossLimit),
-      maxRiskPerTrade: String(riskSettings.maxRiskPerTrade),
-      maxContracts: String(riskSettings.maxContracts),
-      commissionPerContract: String(riskSettings.commissionPerContract),
-      slippageTicks: String(riskSettings.slippageTicks),
-      profitTarget: String(riskSettings.profitTarget),
-    });
-
     try {
       const strategyResponse = await apiFetch(`/api/futures/strategy?${strategyParams.toString()}`, { method: "POST" });
       if (!strategyResponse.ok) throw new Error("Failed to save futures strategy settings.");
       const savedStrategy = await strategyResponse.json();
 
-      const riskResponse = await apiFetch(`/api/futures/risk?${riskParams.toString()}`, { method: "POST" });
-      if (!riskResponse.ok) throw new Error("Failed to save futures risk settings.");
-      const savedRisk = await riskResponse.json();
-
       setSettings(normalizeSettings(savedStrategy));
-      setRiskSettings(normalizeRiskSettings(savedRisk));
-      setSaveStatus(`Saved Backtest Strategy for ${savedStrategy.symbol || selectedSymbol}`);
+      setSaveStatus(`Saved ${selectedPreset} for ${savedStrategy.symbol || selectedSymbol}`);
     } catch (error) {
       console.error("Error saving futures strategy settings:", error);
       setSaveStatus(error.message || "Save failed");
@@ -282,76 +252,67 @@ export default function FuturesStrategy() {
     }
   }
 
-  async function updateLiveStrategyConfig() {
-    setIsUpdatingLive(true);
+  async function createPreset() {
+    const presetName = newPresetName.trim();
+    if (!presetName) {
+      setSaveStatus("Enter a preset name first.");
+      return;
+    }
+    setIsSaving(true);
     setSaveStatus("");
-    const copySymbols = DEFAULT_PORTFOLIO_SYMBOLS.join(",");
     try {
-      const params = new URLSearchParams({ symbols: copySymbols });
-      const response = await apiFetch(`/api/futures/strategy-configs/copy-to-live?${params.toString()}`, { method: "POST" });
-      const payload = await readApiResponse(response);
-      if (!response.ok || payload.json?.success === false) {
-        throw new Error(payload.json?.message || payload.text || "Failed to update Live Strategy.");
-      }
-      setSaveStatus(payload.json?.message || "Live Strategy updated from Backtest Strategy.");
-      if (selectedSlot === "LIVE") {
-        loadSettings(selectedSymbol, "LIVE");
-      }
+      const params = new URLSearchParams({ preset: presetName, sourcePreset: selectedPreset });
+      const response = await apiFetch(`/api/futures/strategy-presets?${params.toString()}`, { method: "POST" });
+      const payload = await response.json();
+      if (!response.ok || payload?.success === false) throw new Error(payload?.message || "Failed to create strategy preset.");
+      setStrategyPresets(Array.isArray(payload.presets) ? payload.presets : strategyPresets);
+      setSelectedPreset(payload.preset?.name || presetName);
+      setNewPresetName("");
+      setSaveStatus(payload.message || `Created ${presetName}.`);
     } catch (error) {
-      console.error("Error updating live strategy config:", error);
-      setSaveStatus(error.message || "Failed to update Live Strategy.");
+      console.error("Error creating strategy preset:", error);
+      setSaveStatus(error.message || "Failed to create strategy preset.");
     } finally {
-      setIsUpdatingLive(false);
+      setIsSaving(false);
     }
   }
 
   const selectedInstrument = instruments.find((instrument) => instrument.symbol === selectedSymbol) || null;
   const enabledCount = MODULES.filter(([key]) => settings[key]?.enabled).length;
-  const isLiveSlot = selectedSlot === "LIVE";
+  const presetOptions = strategyPresets.length ? strategyPresets : [{ name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }];
 
   return (
     <div className="app-page futures-config-page">
       <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
         <h2 className="app-title m-0">Futures Strategy Configurations</h2>
         <div className="d-flex gap-2 flex-wrap">
-          <button type="button" className="app-btn app-btn-primary px-3" onClick={saveSettings} disabled={isSaving || isLoading || isLiveSlot}>
-            {isSaving ? "Saving..." : "Save Backtest Strategy"}
-          </button>
-          <button type="button" className="app-btn app-btn-primary px-3" onClick={updateLiveStrategyConfig} disabled={isUpdatingLive || isSaving}>
-            {isUpdatingLive ? "Updating..." : "Update Live Strategy"}
+          <button type="button" className="app-btn app-btn-primary px-3" onClick={saveSettings} disabled={isSaving || isLoading}>
+            {isSaving ? "Saving..." : "Save Strategy Preset"}
           </button>
         </div>
       </div>
 
       <div className="app-panel">
         <div className="row g-3 align-items-end">
-          <div className="col-12 col-lg-3">
-            <div className="app-label mb-1">Configuration</div>
-            <div className="app-timeframe-row">
-              <button
-                type="button"
-                className={selectedSlot === "BACKTEST" ? "app-filter-btn app-btn-selected" : "app-filter-btn"}
-                onClick={() => {
-                  setSaveStatus("");
-                  setSelectedSlot("BACKTEST");
-                }}
-              >
-                Backtest Strategy
-              </button>
-              <button
-                type="button"
-                className={selectedSlot === "LIVE" ? "app-filter-btn app-btn-selected" : "app-filter-btn"}
-                onClick={() => {
-                  setSaveStatus("");
-                  setSelectedSlot("LIVE");
-                }}
-              >
-                Live Strategy
-              </button>
-            </div>
-          </div>
+          <Field label="Strategy Config" className="col-12 col-md-4 col-xl-3">
+            <select
+              value={selectedPreset}
+              onChange={(event) => {
+                setSaveStatus("");
+                setSelectedPreset(event.target.value);
+              }}
+              className="form-select app-input"
+              disabled={isLoading}
+            >
+              {presetOptions.map((preset) => (
+                <option key={preset.name} value={preset.name}>
+                  {preset.label || preset.name}
+                </option>
+              ))}
+            </select>
+          </Field>
 
-          <Field label="Contract" className="col-12 col-lg-3">
+          <Field label="Contract" className="col-12 col-md-4 col-xl-3">
             <select
               value={selectedSymbol}
               onChange={(event) => {
@@ -369,9 +330,24 @@ export default function FuturesStrategy() {
             </select>
           </Field>
 
+          <Field label="New Preset" className="col-12 col-md-4 col-xl-3">
+            <div className="d-flex gap-2">
+              <input
+                type="text"
+                value={newPresetName}
+                onChange={(event) => setNewPresetName(event.target.value)}
+                className="form-control app-input"
+                placeholder="preset-name"
+              />
+              <button type="button" className="app-btn px-3" onClick={createPreset} disabled={isSaving || !newPresetName.trim()}>
+                Create
+              </button>
+            </div>
+          </Field>
+
           <Readout label="Enabled" value={`${enabledCount} / ${MODULES.length}`} />
           <Readout label="Tick Value" value={selectedInstrument ? `$${selectedInstrument.tickValue}` : "--"} />
-          <Readout label="Status" value={saveStatus || (isLiveSlot ? "Live is read-only" : "Ready")} />
+          <Readout label="Status" value={saveStatus || "Ready"} />
         </div>
       </div>
 
@@ -391,7 +367,7 @@ export default function FuturesStrategy() {
                   type="checkbox"
                   checked={Boolean(settings[key]?.enabled)}
                   onChange={(event) => updateModule(key, "enabled", event.target.checked)}
-                  disabled={isLoading || isLiveSlot}
+                  disabled={isLoading}
                 />
                 {settings[key]?.enabled ? "On" : "Off"}
               </label>
@@ -402,31 +378,17 @@ export default function FuturesStrategy() {
                 value={settings[key]?.maxTradesPerDay ?? 1}
                 onChange={(event) => updateModule(key, "maxTradesPerDay", event.target.value)}
                 className="form-control app-input"
-                disabled={isLiveSlot}
+                disabled={isLoading}
               />
             </div>
           ))}
         </div>
       </div>
 
-      <div className="app-panel">
-        <div className="fw-bold app-kicker mb-3">Risk</div>
-        <div className="row g-3">
-          <NumberField label="Account Size ($)" field="accountSize" settings={riskSettings} updateField={updateRiskField} disabled={isLiveSlot} />
-          <NumberField label="Trailing Drawdown ($)" field="maxTrailingDrawdown" settings={riskSettings} updateField={updateRiskField} disabled={isLiveSlot} />
-          <NumberField label="Daily Loss Limit ($)" field="dailyLossLimit" settings={riskSettings} updateField={updateRiskField} disabled={isLiveSlot} />
-          <NumberField label="Max Risk / Trade ($)" field="maxRiskPerTrade" settings={riskSettings} updateField={updateRiskField} disabled={isLiveSlot} />
-          <NumberField label="Max Contracts" field="maxContracts" settings={riskSettings} updateField={updateRiskField} disabled={isLiveSlot} />
-          <NumberField label="Commission / Contract ($)" field="commissionPerContract" settings={riskSettings} updateField={updateRiskField} step="0.01" disabled={isLiveSlot} />
-          <NumberField label="Slippage Ticks" field="slippageTicks" settings={riskSettings} updateField={updateRiskField} step="0.25" disabled={isLiveSlot} />
-          <NumberField label="Profit Target ($)" field="profitTarget" settings={riskSettings} updateField={updateRiskField} disabled={isLiveSlot} />
-        </div>
-      </div>
-
       <details className="app-panel">
         <summary className="fw-bold app-kicker">Advanced Rules</summary>
 
-        <fieldset className="row g-3 mt-2 futures-fieldset" disabled={isLiveSlot}>
+        <fieldset className="row g-3 mt-2 futures-fieldset" disabled={isLoading}>
           <ToggleField label="Early Sweep" field="enableEarlySweep" settings={settings} updateField={updateField} />
           <ToggleField label="Late Sweep" field="enableLateSweep" settings={settings} updateField={updateField} />
           <ToggleField label="Second-Chance Sweep" field="enableSweepSecondChance" settings={settings} updateField={updateField} />
@@ -492,26 +454,6 @@ function normalizeSettings(data) {
     keltnerReversion: { ...DEFAULT_SETTINGS.keltnerReversion, ...(data?.keltnerReversion || {}) },
     microScalp: { ...DEFAULT_SETTINGS.microScalp, ...(data?.microScalp || {}) },
   };
-}
-
-function normalizeRiskSettings(data) {
-  const normalized = { ...DEFAULT_RISK_SETTINGS };
-  Object.keys(DEFAULT_RISK_SETTINGS).forEach((key) => {
-    if (data?.[key] !== undefined && data?.[key] !== null) {
-      normalized[key] = String(data[key]);
-    }
-  });
-  return normalized;
-}
-
-async function readApiResponse(response) {
-  const text = await response.text();
-  if (!text) return { json: null, text: "" };
-  try {
-    return { json: JSON.parse(text), text };
-  } catch {
-    return { json: null, text };
-  }
 }
 
 function Readout({ label, value }) {

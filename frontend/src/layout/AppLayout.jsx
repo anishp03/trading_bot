@@ -293,9 +293,7 @@ function FuturesSidebarStatus({ backendOnline, status }) {
   const tradingOn = Boolean(backendOn && status?.trading?.enabled);
   const strategyOn = Boolean(backendOn && status?.strategyConfig?.active);
   const strategy = status?.strategyConfig || {};
-  const strategyResult = strategyOn
-    ? `${formatSidebarPercent(strategy.winRate)} win | ${formatSidebarCurrency(strategy.totalProfit)} PnL | ${Number(strategy.trades || 0).toLocaleString()} trades`
-    : "Copy Backtest Strategy";
+  const strategyDetail = strategyOn ? strategy.preset || strategy.label || strategy.detail || "80kprofit" : "No preset";
   const cards = [
     {
       label: "Backend Status",
@@ -313,7 +311,7 @@ function FuturesSidebarStatus({ backendOnline, status }) {
       label: "Strategy Config",
       value: strategyOn ? "ON" : "OFF",
       tone: strategyOn ? "on" : "off",
-      detail: strategyResult,
+      detail: strategyDetail,
     },
     {
       label: "Bot Status",
@@ -355,20 +353,4 @@ function shortSidebarTime(value) {
     return "--";
   }
   return formatted.replace(/\s+(EST|EDT|ET)$/i, "");
-}
-
-function formatSidebarCurrency(value) {
-  const number = Number(value || 0);
-  if (!Number.isFinite(number)) return "$0";
-  const abs = Math.abs(number);
-  if (abs >= 1000) {
-    return `${number < 0 ? "-" : ""}$${(abs / 1000).toFixed(abs >= 100000 ? 0 : 1)}k`;
-  }
-  return `${number < 0 ? "-" : ""}$${abs.toFixed(0)}`;
-}
-
-function formatSidebarPercent(value) {
-  const number = Number(value || 0);
-  if (!Number.isFinite(number)) return "0.00%";
-  return `${number.toFixed(2)}%`;
 }

@@ -5,9 +5,10 @@ import { API_BASE_URL, apiFetch } from "../utils/api.js";
 const TOPSTEP_RESEARCH_PROFILE = "TOPSTEP_50K_RESEARCH";
 const MAIN_PORTFOLIO_SYMBOLS = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K"];
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MGC"]);
+const DEFAULT_STRATEGY_PRESET = "80kprofit";
 
 const DEFAULT_CONFIG = {
-  sourcePortfolioBacktestId: "3154",
+  strategyPreset: DEFAULT_STRATEGY_PRESET,
   referenceSymbol: "MNQ",
   fundedProfile: TOPSTEP_RESEARCH_PROFILE,
   startDate: "2025-05-01",
@@ -26,13 +27,6 @@ const DEFAULT_CONFIG = {
   useSavedRisk: "true",
 };
 
-const DEFAULT_SOURCE_SUMMARY = {
-  totalProfit: 80249.81,
-  trades: 999,
-  winRate: 75.28,
-  profitFactor: 2.9,
-};
-
 const DEFAULT_DATA_CONFIG = {
   startDate: DEFAULT_CONFIG.startDate,
   endDate: defaultEndDate(),
@@ -42,7 +36,6 @@ const DEFAULT_DATA_CONFIG = {
 export default function FuturesBacktest() {
   const navigate = useNavigate();
   const [config, setConfig] = useState(DEFAULT_CONFIG);
-  const [sourceSummary, setSourceSummary] = useState(DEFAULT_SOURCE_SUMMARY);
   const [dataConfig, setDataConfig] = useState(DEFAULT_DATA_CONFIG);
   const [instruments, setInstruments] = useState([]);
   const [marketData, setMarketData] = useState({ symbols: [], rowsBySymbol: {}, message: "", storagePath: "" });
@@ -53,11 +46,13 @@ export default function FuturesBacktest() {
   const [dataFeedback, setDataFeedback] = useState("");
   const [batchSymbols, setBatchSymbols] = useState(MAIN_PORTFOLIO_SYMBOLS);
   const [fundedProfiles, setFundedProfiles] = useState([]);
+  const [strategyPresets, setStrategyPresets] = useState([]);
 
   useEffect(() => {
     loadInstruments();
     loadMarketDataStatus(true);
     loadFundedProfiles();
+    loadStrategyPresets();
     loadPortfolioDefaults();
     // The initial page bootstrap should run once; each loader owns its own state updates.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -74,6 +69,8 @@ export default function FuturesBacktest() {
   const selectedInstrument = instruments.find((instrument) => instrument.symbol === config.referenceSymbol) || instruments[0] || null;
   const canRun = Boolean(config.startDate && config.endDate && selectedSymbols.length > 0 && missingDataSymbols.length === 0);
   const canUpdateData = Boolean(dataConfig.startDate && dataConfig.endDate && selectedSymbols.length > 0);
+  const presetOptions = strategyPresets.length ? strategyPresets : [{ name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }];
+  const selectedPresetLabel = presetOptions.find((preset) => preset.name === config.strategyPreset)?.label || config.strategyPreset || DEFAULT_STRATEGY_PRESET;
 
   function loadInstruments() {
     apiFetch("/api/futures/instruments")
@@ -145,11 +142,30 @@ export default function FuturesBacktest() {
       });
   }
 
+  function loadStrategyPresets() {
+    apiFetch("/api/futures/strategy-presets")
+      .then((response) => {
+        if (!response.ok) throw new Error("Failed to load strategy presets.");
+        return response.json();
+      })
+      .then((data) => {
+        const presets = Array.isArray(data) ? data : [];
+        setStrategyPresets(presets);
+        if (presets.length && !presets.some((preset) => preset.name === config.strategyPreset)) {
+          setConfig((current) => ({ ...current, strategyPreset: presets[0].name }));
+        }
+      })
+      .catch((error) => {
+        console.error("Error loading futures strategy presets:", error);
+        setStrategyPresets([{ name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }]);
+      });
+  }
+
   function applyPortfolioDefaults(payload) {
     const symbolList = parseSymbols(payload?.symbolList || payload?.symbols || MAIN_PORTFOLIO_SYMBOLS.join(","));
     const nextSymbols = symbolList.length ? symbolList : MAIN_PORTFOLIO_SYMBOLS;
     const nextConfig = {
-      sourcePortfolioBacktestId: String(payload?.sourcePortfolioBacktestId || DEFAULT_CONFIG.sourcePortfolioBacktestId),
+      strategyPreset: String(payload?.strategyPreset || DEFAULT_CONFIG.strategyPreset),
       referenceSymbol: nextSymbols.includes(DEFAULT_CONFIG.referenceSymbol) ? DEFAULT_CONFIG.referenceSymbol : nextSymbols[0],
       fundedProfile: String(payload?.fundedProfile || DEFAULT_CONFIG.fundedProfile),
       startDate: String(payload?.startDate || DEFAULT_CONFIG.startDate),
@@ -169,12 +185,6 @@ export default function FuturesBacktest() {
     };
     setConfig(nextConfig);
     setBatchSymbols(nextSymbols);
-    setSourceSummary({
-      totalProfit: Number(payload?.sourceMetrics?.totalProfit ?? DEFAULT_SOURCE_SUMMARY.totalProfit),
-      trades: Number(payload?.sourceMetrics?.trades ?? DEFAULT_SOURCE_SUMMARY.trades),
-      winRate: Number(payload?.sourceMetrics?.winRate ?? DEFAULT_SOURCE_SUMMARY.winRate),
-      profitFactor: Number(payload?.sourceMetrics?.profitFactor ?? DEFAULT_SOURCE_SUMMARY.profitFactor),
-    });
   }
 
   function applyMarketDateRangeToData(data) {
@@ -257,7 +267,7 @@ export default function FuturesBacktest() {
     setFeedback(`Starting portfolio run for ${selectedSymbols.join(", ")}...`);
 
     const params = new URLSearchParams({
-      sourcePortfolioBacktestId: config.sourcePortfolioBacktestId,
+      strategyPreset: config.strategyPreset || DEFAULT_STRATEGY_PRESET,
       symbols: selectedSymbols.join(","),
       startDate: config.startDate,
       endDate: config.endDate,
@@ -301,18 +311,27 @@ export default function FuturesBacktest() {
           <h2 className="app-title mb-0">Portfolio Backtest</h2>
         </div>
         <button type="button" className="app-btn px-3" onClick={loadPortfolioDefaults}>
-          Reset Strategy Slot
+          Reset Run Config
         </button>
       </div>
 
       <div className="app-panel">
         <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
-          <div className="fw-bold app-kicker">Backtest Strategy Slot</div>
+          <div className="fw-bold app-kicker">Strategy Config</div>
         </div>
         <div className="app-data-toolbar futures-strategy-slot-toolbar">
-          <Metric label="Win" value={`${formatNumber(sourceSummary.winRate, 2)}%`} />
-          <Metric label="PnL" value={formatCurrency(sourceSummary.totalProfit)} tone="pos" />
-          <Metric label="Trades" value={formatNumber(sourceSummary.trades, 0)} />
+          <div className="app-data-chip">
+            <span className="app-label">Selected Preset</span>
+            <strong>{selectedPresetLabel}</strong>
+          </div>
+          <div className="app-data-chip">
+            <span className="app-label">Mode</span>
+            <strong>Backtest</strong>
+          </div>
+          <div className="app-data-chip">
+            <span className="app-label">Contracts</span>
+            <strong>{selectedSymbols.join(", ")}</strong>
+          </div>
         </div>
       </div>
 
@@ -380,6 +399,20 @@ export default function FuturesBacktest() {
         </div>
 
         <div className="row g-3">
+          <Field label="Strategy Config" className="col-12 col-md-4 col-xl-3">
+            <select
+              value={config.strategyPreset || DEFAULT_STRATEGY_PRESET}
+              onChange={(event) => updateConfig("strategyPreset", event.target.value)}
+              className="form-select app-input"
+            >
+              {presetOptions.map((preset) => (
+                <option key={preset.name} value={preset.name}>
+                  {preset.label || preset.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+
           <Field label="Funded Rule Template" className="col-12 col-md-4 col-xl-3">
             <select
               value={config.fundedProfile}
@@ -513,16 +546,6 @@ function Field({ label, children, className = "col" }) {
   );
 }
 
-function Metric({ label, value, tone = "" }) {
-  const toneClass = tone === "pos" ? "app-pnl-pos" : tone === "neg" ? "app-pnl-neg" : "";
-  return (
-    <div className="app-data-chip">
-      <span className="app-label">{label}</span>
-      <strong className={toneClass}>{value}</strong>
-    </div>
-  );
-}
-
 async function readApiResponse(response) {
   const text = await response.text();
   if (!text) return { json: null, text: "" };
@@ -572,12 +595,6 @@ function defaultEndDate() {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function formatCurrency(value) {
-  const numeric = Number(value || 0);
-  const sign = numeric > 0 ? "+" : "";
-  return `${sign}$${numeric.toFixed(2)}`;
 }
 
 function formatNumber(value, decimals = 2) {

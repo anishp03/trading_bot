@@ -20,6 +20,7 @@ const LIVE_TRADE_CACHE_VERSION = 1;
 const LIVE_TRADE_CACHE_MAX_ROWS = 2000;
 const DEFAULT_PROFILE = "TOPSTEP_150K_RESEARCH";
 const DEFAULT_ACCOUNT_PROFILE = "TOPSTEP_150K_PRACTICE";
+const DEFAULT_STRATEGY_PRESET = "80kprofit";
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MGC"]);
 const LIVE_ACCOUNT_PROFILE_CODES = new Set(["TOPSTEP_150K_PRACTICE", "TOPSTEP_50K_COMBINE"]);
 const PROFILE_ACCOUNTS = {
@@ -71,11 +72,12 @@ export default function FuturesLive() {
   const [selectedTimeframe, setSelectedTimeframe] = useState("1m");
   const [selectedAccountProfileCode, setSelectedAccountProfileCode] = useState(DEFAULT_ACCOUNT_PROFILE);
   const [selectedProfileCode, setSelectedProfileCode] = useState(DEFAULT_PROFILE);
+  const [selectedStrategyPreset, setSelectedStrategyPreset] = useState(DEFAULT_STRATEGY_PRESET);
   const [liveRiskConfig, setLiveRiskConfig] = useState(DEFAULT_LIVE_RISK_CONFIG);
   const [fundedProfiles, setFundedProfiles] = useState([]);
+  const [strategyPresets, setStrategyPresets] = useState([]);
   const [liveStatus, setLiveStatus] = useState(null);
   const [realtimeStatus, setRealtimeStatus] = useState(null);
-  const [snapshotState, setSnapshotState] = useState(null);
   const [liveDecisions, setLiveDecisions] = useState([]);
   const [liveDecisionHistory, setLiveDecisionHistory] = useState([]);
   const [liveOrders, setLiveOrders] = useState([]);
@@ -135,10 +137,13 @@ export default function FuturesLive() {
     return topstepAccountProfiles.find((profile) => profile.code === selectedAccountProfileCode) || topstepAccountProfiles[0] || FALLBACK_PROFILE;
   }, [selectedAccountProfileCode, topstepAccountProfiles]);
 
-  const activeSnapshot = snapshotState?.snapshot || liveStatus?.liveStrategySnapshot || null;
-  const snapshotSymbols = parseSymbolCsv(activeSnapshot?.symbols);
-  const liveStrategySymbols = snapshotSymbols.length ? snapshotSymbols : DEFAULT_SYMBOLS;
   const monitorSymbols = DEFAULT_SYMBOLS;
+  const liveStrategySymbols = monitorSymbols;
+  const presetOptions = useMemo(
+    () => strategyPresets.length ? strategyPresets : [{ name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }],
+    [strategyPresets]
+  );
+  const activeStrategyPreset = liveStatus?.running && liveStatus?.strategyPreset ? liveStatus.strategyPreset : selectedStrategyPreset;
   const accountPreset = PROFILE_ACCOUNTS[selectedAccountProfile.code] || PROFILE_ACCOUNTS[DEFAULT_ACCOUNT_PROFILE];
   const accountScopeId = String(accountPreset.accountId || "").trim();
   const liveRiskAccountSize = Number(liveRiskConfig.accountSize || selectedProfile.accountSize || FALLBACK_PROFILE.accountSize);
@@ -170,6 +175,7 @@ export default function FuturesLive() {
   );
   const brokerSnapshot = accountScopedMetrics?.broker?.success ? accountScopedMetrics.broker : null;
   const brokerAuthoritative = isAuthoritativeTopstepBrokerSnapshot(brokerSnapshot, accountScopedMetrics);
+  const brokerHistoryDataActive = brokerAuthoritative;
   const botAccountDataActive = botStarted && brokerAuthoritative;
   const localTradeProvenance = useMemo(
     () => buildLocalTradeProvenance(liveDecisionHistory, liveOrders, accountScopeId),
@@ -187,13 +193,25 @@ export default function FuturesLive() {
     () => buildLocalClosedTradeCacheRows(localDecisionTradeRows, accountScopeId),
     [accountScopeId, localDecisionTradeRows]
   );
+  const durableBrokerTradeCacheRows = useMemo(
+    () => compactBrokerTradeCacheRows(cachedAllTradeRows, accountScopeId).filter(isBrokerConfirmedTradeCacheRow),
+    [accountScopeId, cachedAllTradeRows]
+  );
   const hydratedTradeCacheRows = useMemo(
-    () => mergeBrokerTradeCacheRows(localClosedTradeCacheRows, cachedAllTradeRows),
-    [cachedAllTradeRows, localClosedTradeCacheRows]
+    () => brokerHistoryDataActive
+      ? mergeBrokerTradeCacheRows(
+          brokerClosedTradeRows,
+          [...durableBrokerTradeCacheRows, ...localClosedTradeCacheRows],
+          { accountId: accountScopeId, includeUnmatchedCached: false }
+        )
+      : [],
+    [accountScopeId, brokerClosedTradeRows, brokerHistoryDataActive, durableBrokerTradeCacheRows, localClosedTradeCacheRows]
   );
   const enrichedClosedTradeRows = useMemo(
-    () => mergeBrokerTradeCacheRows(botAccountDataActive ? brokerClosedTradeRows : [], hydratedTradeCacheRows),
-    [botAccountDataActive, brokerClosedTradeRows, hydratedTradeCacheRows]
+    () => brokerHistoryDataActive
+      ? mergeBrokerTradeCacheRows(hydratedTradeCacheRows, durableBrokerTradeCacheRows, { accountId: accountScopeId })
+      : durableBrokerTradeCacheRows,
+    [accountScopeId, brokerHistoryDataActive, durableBrokerTradeCacheRows, hydratedTradeCacheRows]
   );
   const liveTrades = useMemo(
     () => botAccountDataActive ? brokerOpenTradeRows : [],
@@ -246,7 +264,7 @@ export default function FuturesLive() {
     () => botAccountDataActive ? accountScopedMetrics : defaultLiveAccountMetrics(liveRiskAccountSize, accountScopeId),
     [accountScopeId, accountScopedMetrics, botAccountDataActive, liveRiskAccountSize]
   );
-  const sidebarStartReady = Boolean(futuresSidebarStatus?.strategyConfig?.active && futuresSidebarStatus?.topstepApi?.ready);
+  const sidebarStartReady = Boolean(futuresSidebarStatus?.topstepApi?.ready);
   const brokerChartTradeRows = useMemo(
     () => botAccountDataActive ? [...allTradeRows, ...brokerOpenTradeRows] : allTradeRows,
     [allTradeRows, botAccountDataActive, brokerOpenTradeRows]
@@ -288,17 +306,13 @@ export default function FuturesLive() {
   );
   const thinkingEntries = backendThinkingEntries.length > 0 ? backendThinkingEntries : observedThinking;
   const logDrawerEntries = useMemo(() => coalesceLiveBotLogEntries(thinkingEntries), [thinkingEntries]);
-  const canStartLiveBot = !backendOffline && !selectedAccountDisabled && Boolean(sidebarStartReady && activeSnapshot && !liveStatus?.running);
+  const canStartLiveBot = !backendOffline && !selectedAccountDisabled && Boolean(sidebarStartReady && activeStrategyPreset && !liveStatus?.running);
   const launchTone = backendOffline ? "offline" : botControlActive ? "live" : sidebarStartReady ? "ready" : "pending";
-  const liveStrategySlotSummary = activeSnapshot ? formatStrategySlotSummary(activeSnapshot.sourceMetrics) : "Copy backtest first";
-  const liveStrategySlotStats = useMemo(
-    () => activeSnapshot ? strategySlotSummaryParts(liveStrategySlotSummary) : [],
-    [activeSnapshot, liveStrategySlotSummary]
-  );
   const launchLabel = backendOffline ? "Bot Status: OFF" : botStarted ? "Running" : feedRunning ? "Feed Live" : sidebarStartReady ? "Ready" : marketIdle && !marketSession?.entryWindowOpen ? "Closed" : "Setup";
 
   useEffect(() => {
     loadFundedProfiles();
+    loadStrategyPresets();
   }, []);
 
   useEffect(() => {
@@ -320,6 +334,19 @@ export default function FuturesLive() {
       setSelectedAccountProfileCode(topstepAccountProfiles[0]?.code || DEFAULT_ACCOUNT_PROFILE);
     }
   }, [selectedAccountProfileCode, topstepAccountProfiles]);
+
+  useEffect(() => {
+    if (liveStatus?.running) return;
+    if (presetOptions.some((preset) => preset.name === selectedStrategyPreset)) return;
+    setSelectedStrategyPreset(presetOptions[0]?.name || DEFAULT_STRATEGY_PRESET);
+  }, [liveStatus?.running, presetOptions, selectedStrategyPreset]);
+
+  useEffect(() => {
+    const runningPreset = String(liveStatus?.strategyPreset || "").trim();
+    if (liveStatus?.running && runningPreset && runningPreset !== selectedStrategyPreset) {
+      setSelectedStrategyPreset(runningPreset);
+    }
+  }, [liveStatus?.running, liveStatus?.strategyPreset, selectedStrategyPreset]);
 
   useEffect(() => {
     setLiveTradeFilters(DEFAULT_TRADE_FILTERS);
@@ -456,7 +483,7 @@ export default function FuturesLive() {
         throw new Error(payload.json?.message || payload.text || "Failed to load live trade cache.");
       }
       const remoteRows = compactBrokerTradeCacheRows(payload.json?.rows, cleanAccountId);
-      const mergedRows = compactBrokerTradeCacheRows(mergeBrokerTradeCacheRows(remoteRows, localRows), cleanAccountId);
+      const mergedRows = compactBrokerTradeCacheRows(mergeBrokerTradeCacheRows(remoteRows, localRows, { accountId: cleanAccountId }), cleanAccountId);
       if (tradeCacheAccount.current !== cleanAccountId) return mergedRows;
       setCachedAllTradeRows(mergedRows);
       tradeCachePersistSignature.current = brokerTradeCacheSignature(mergedRows);
@@ -479,7 +506,7 @@ export default function FuturesLive() {
     tradeCachePersistSignature.current = nextSignature;
     writeLocalTradeCacheRows(cleanAccountId, nextRows);
     setCachedAllTradeRows((current) => {
-      const mergedRows = compactBrokerTradeCacheRows(mergeBrokerTradeCacheRows(nextRows, current), cleanAccountId);
+      const mergedRows = compactBrokerTradeCacheRows(mergeBrokerTradeCacheRows(nextRows, current, { accountId: cleanAccountId }), cleanAccountId);
       return brokerTradeCacheSignature(current) === brokerTradeCacheSignature(mergedRows) ? current : mergedRows;
     });
     try {
@@ -504,7 +531,6 @@ export default function FuturesLive() {
   function refreshLiveData() {
     loadLiveStatus({ forceSidecars: true });
     loadRealtimeStatus();
-    loadLiveSnapshot();
     loadLiveOrders();
     loadLiveMetrics();
     loadLiveMonitor();
@@ -586,6 +612,19 @@ export default function FuturesLive() {
       });
   }
 
+  function loadStrategyPresets() {
+    requestJson("strategyPresets", "/api/futures/strategy-presets", (data) => {
+        const presets = Array.isArray(data) ? data : [];
+        setStrategyPresets(presets);
+        if (presets.length && !presets.some((preset) => preset.name === selectedStrategyPreset)) {
+          setSelectedStrategyPreset(presets[0].name);
+        }
+      }, (error) => {
+        noteBackendError("Error loading strategy presets:", error);
+        setStrategyPresets([{ name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }]);
+      });
+  }
+
   function loadLiveStatus(options = {}) {
     requestJson("liveStatus", "/api/futures/live/status", (data) => {
         setLiveStatus(data || null);
@@ -598,12 +637,6 @@ export default function FuturesLive() {
   function loadRealtimeStatus() {
     requestJson("realtimeStatus", "/api/futures/live/realtime/status", (data) => setRealtimeStatus(data || null), (error) => {
         noteBackendError("Error loading realtime status:", error);
-      });
-  }
-
-  function loadLiveSnapshot() {
-    requestJson("liveSnapshot", "/api/futures/live/strategy-snapshot", (data) => setSnapshotState(data || null), (error) => {
-        noteBackendError("Error loading live strategy snapshot:", error);
       });
   }
 
@@ -762,26 +795,8 @@ export default function FuturesLive() {
     chartTransitionTimer.current = window.setTimeout(() => setChartTransitioning(false), 120);
   }
 
-  async function updateLiveStrategy() {
-    await runAction("update-live", async () => {
-      const params = new URLSearchParams({ symbols: symbolsCsv, fundedProfile: selectedProfile.code });
-      const response = await apiFetch(`/api/futures/live/strategy-snapshot?${params.toString()}`, { method: "POST" });
-      const payload = await readApiResponse(response);
-      if (!response.ok || payload.json?.success === false) {
-        throw new Error(payload.json?.message || payload.text || "Failed to update Live Strategy.");
-      }
-      setSnapshotState(payload.json || null);
-      setFeedback(payload.json?.message || "Live Strategy updated.");
-      refreshFuturesSidebarStatus?.();
-      refreshLiveData();
-    });
-  }
-
   async function startLiveBot() {
     await runAction("start", async () => {
-      if (!activeSnapshot) {
-        throw new Error("Copy the Backtest Strategy into the Live Strategy slot before starting the live bot.");
-      }
       const freshSidebarStatus = typeof refreshFuturesSidebarStatus === "function"
         ? await refreshFuturesSidebarStatus()
         : futuresSidebarStatus;
@@ -805,6 +820,8 @@ export default function FuturesLive() {
         maxOpenPositions: String(liveRiskConfig.maxOpenPositions || selectedProfile.maxOpenPositions || 1),
         maxAggregateContracts: String(liveRiskConfig.maxAggregateContracts || selectedProfile.maxAggregateContracts || 50),
         maxAggregateMiniUnits: String(liveRiskConfig.maxAggregateMiniUnits || selectedProfile.maxAggregateMiniUnits || 5),
+        symbols: monitorSymbols.join(","),
+        strategyPreset: selectedStrategyPreset || DEFAULT_STRATEGY_PRESET,
       });
       const response = await apiFetch(`/api/futures/live/start?${params.toString()}`, { method: "POST" });
       const payload = await readApiResponse(response);
@@ -844,9 +861,6 @@ export default function FuturesLive() {
   function validateSidebarStartStatus(status) {
     if (!status?.backend?.online) {
       throw new Error("Backend Status is OFF in the sidebar. Start Live Bot will unlock when the backend status is back on.");
-    }
-    if (!status?.strategyConfig?.active) {
-      throw new Error("Strategy Config is OFF in the sidebar. Copy Backtest Strategy into the Live Strategy slot first.");
     }
     if (!status?.topstepApi?.ready) {
       throw new Error("TopStep API is OFF in the sidebar. Save and test the TopStep API connection first.");
@@ -906,9 +920,6 @@ export default function FuturesLive() {
             >
               {busyAction === "start" ? "Starting..." : busyAction === "stop" ? "Stopping..." : botStarted ? "Stop Live Bot" : feedRunning ? "Stop Market Feed" : "Start Live Bot"}
             </button>
-            <button type="button" className="app-btn px-3" onClick={updateLiveStrategy} disabled={backendOffline || busyAction === "update-live" || liveStatus?.running || !monitorSymbols.length}>
-              {busyAction === "update-live" ? "Copying..." : "Copy Backtest To Live"}
-            </button>
           </div>
         </div>
 
@@ -926,6 +937,21 @@ export default function FuturesLive() {
             </select>
           </Field>
 
+          <Field label="Strategy Config" className="futures-launch-account-field">
+            <select
+              value={activeStrategyPreset || DEFAULT_STRATEGY_PRESET}
+              onChange={(event) => setSelectedStrategyPreset(event.target.value)}
+              className="form-select app-input"
+              disabled={Boolean(liveStatus?.running)}
+            >
+              {presetOptions.map((preset) => (
+                <option key={preset.name} value={preset.name}>
+                  {preset.label || preset.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+
           <Field label="Risk Config" className="futures-launch-account-field">
             <select value={selectedProfileCode} onChange={(event) => setSelectedProfileCode(event.target.value)} className="form-select app-input">
               {liveAccountProfiles.map((profile) => (
@@ -935,20 +961,6 @@ export default function FuturesLive() {
               ))}
             </select>
           </Field>
-
-          <div className={activeSnapshot ? "futures-launch-chip ready" : "futures-launch-chip"}>
-            <span>Live Strategy</span>
-            <strong>{activeSnapshot ? "Live Slot" : "Not Set"}</strong>
-            {activeSnapshot ? (
-              <div className="futures-launch-stat-stack">
-                {liveStrategySlotStats.map((stat) => (
-                  <small key={stat}>{stat}</small>
-                ))}
-              </div>
-            ) : (
-              <small>{liveStrategySlotSummary}</small>
-            )}
-          </div>
 
           <div className="futures-launch-chip">
             <span>Account ID</span>
@@ -2498,13 +2510,14 @@ function scopeBrokerMetricsToAccount(metrics, accountId, accountSizeFallback = 0
 function defaultLiveAccountMetrics(accountSize = 0, accountId = "") {
   const normalizedAccountSize = Number(accountSize || 0);
   const normalizedAccountId = String(accountId || "").trim();
+  const idleBalance = 0;
   return {
     success: true,
     dataSource: "IDLE",
     brokerMetricsReady: false,
     accountSize: normalizedAccountSize,
     currentPnl: 0,
-    currentBalance: normalizedAccountSize,
+    currentBalance: idleBalance,
     returnPct: 0,
     drawdown: 0,
     numberOfTrades: 0,
@@ -2516,7 +2529,7 @@ function defaultLiveAccountMetrics(accountSize = 0, accountId = "") {
       brokerAccountMatched: Boolean(normalizedAccountId),
       accountSize: normalizedAccountSize,
       currentPnl: 0,
-      currentBalance: normalizedAccountSize,
+      currentBalance: idleBalance,
       realizedPnl: 0,
       unrealizedPnl: 0,
       returnPct: 0,
@@ -2933,8 +2946,9 @@ function buildLocalClosedTradeCacheRows(trades, accountId = "") {
     .filter(Boolean);
 }
 
-function mergeBrokerTradeCacheRows(currentRows, cachedRows) {
-  const cacheRows = compactBrokerTradeCacheRows(cachedRows);
+function mergeBrokerTradeCacheRows(currentRows, cachedRows, options = {}) {
+  const cacheRows = compactBrokerTradeCacheRows(cachedRows, options.accountId);
+  const includeUnmatchedCached = options.includeUnmatchedCached !== false;
   if (!cacheRows.length) {
     return (Array.isArray(currentRows) ? currentRows : []).slice().sort(compareTradeRowsDesc);
   }
@@ -2953,12 +2967,14 @@ function mergeBrokerTradeCacheRows(currentRows, cachedRows) {
     return hydrateBrokerTradeRow(row, cachedRow);
   });
 
-  cacheRows.forEach((row) => {
-    const identity = brokerTradeCacheIdentity(row);
-    if (!seenCacheIds.has(identity) && !mergedRows.some((current) => brokerTradeRowsMatch(current, row))) {
-      mergedRows.push(row);
-    }
-  });
+  if (includeUnmatchedCached) {
+    cacheRows.forEach((row) => {
+      const identity = brokerTradeCacheIdentity(row);
+      if (!seenCacheIds.has(identity) && !mergedRows.some((current) => brokerTradeRowsMatch(current, row))) {
+        mergedRows.push(row);
+      }
+    });
+  }
   return mergedRows.sort(compareTradeRowsDesc);
 }
 
@@ -2979,7 +2995,10 @@ function normalizeCachedBrokerTradeRow(row, accountId = "") {
   const strategyCode = usableStrategyCode(row?.strategyCode);
   const symbol = String(row?.symbol || "").toUpperCase();
   const side = String(row?.side || "").toUpperCase() === "SHORT" ? "SHORT" : "LONG";
-  const cleanAccountId = String(accountId || row?.accountId || "").trim();
+  const requiredAccountId = String(accountId || "").trim();
+  const rowAccountId = String(row?.accountId || "").trim();
+  if (requiredAccountId && rowAccountId !== requiredAccountId) return null;
+  const cleanAccountId = rowAccountId || requiredAccountId;
   const entryPrice = finiteNumberOrNull(row?.entryPrice) || 0;
   const exitPrice = finiteNumberOrNull(row?.exitPrice) || 0;
   const contracts = finiteNumberOrNull(row?.contracts) || 0;
@@ -3054,9 +3073,20 @@ function hydrateBrokerTradeRow(row, cachedRow) {
     brokerOrderId: row?.brokerOrderId || cachedRow.brokerOrderId,
     orderId: row?.orderId || cachedRow.orderId,
     customTag: row?.customTag || cachedRow.customTag,
-    cacheSource: row?.cacheSource || cachedRow.cacheSource || "topstep-enriched",
+    cacheSource: hydratedTradeCacheSource(row, cachedRow),
     cachedAt: cachedRow.cachedAt || row?.cachedAt,
   };
+}
+
+function hydratedTradeCacheSource(row, cachedRow) {
+  const rowSource = String(row?.cacheSource || "").trim();
+  if (rowSource) return rowSource;
+  const cachedSource = String(cachedRow?.cacheSource || "").trim();
+  return cachedSource && cachedSource !== "local-decision" ? cachedSource : "topstep-enriched";
+}
+
+function isBrokerConfirmedTradeCacheRow(row) {
+  return String(row?.cacheSource || "").trim() !== "local-decision";
 }
 
 function findCachedBrokerTradeRow(row, cacheRows, cacheIndex) {
@@ -3152,6 +3182,8 @@ function readLocalTradeCacheRows(accountId) {
     const raw = window.localStorage.getItem(liveTradeCacheStorageKey(accountId));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
+    const cleanAccountId = String(accountId || "").trim();
+    if (cleanAccountId && String(parsed?.accountId || "").trim() !== cleanAccountId) return [];
     return Array.isArray(parsed?.rows) ? parsed.rows : [];
   } catch {
     return [];
@@ -4266,44 +4298,6 @@ function formatCompactCurrency(value) {
   const numeric = Number(value || 0);
   if (numeric >= 1000) return `$${Math.round(numeric / 1000)}K`;
   return `$${numeric.toFixed(0)}`;
-}
-
-function formatCompactSignedCurrency(value) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return "";
-  const sign = numeric > 0 ? "+" : numeric < 0 ? "-" : "";
-  const abs = Math.abs(numeric);
-  if (abs >= 1000) {
-    return `${sign}$${(abs / 1000).toFixed(abs >= 100000 ? 0 : 1)}k`;
-  }
-  return `${sign}$${abs.toFixed(0)}`;
-}
-
-function formatStrategySlotSummary(metrics) {
-  const sourceMetrics = metrics || {};
-  const profit = firstFiniteMetric(sourceMetrics, ["totalProfit", "resultTotalProfit", "profit"]);
-  const winRate = firstFiniteMetric(sourceMetrics, ["winRate"]);
-  const tradeCount = firstFiniteMetric(sourceMetrics, ["trades", "numTrades", "resultTrades"]);
-  const parts = [];
-  if (Number.isFinite(winRate)) parts.push(`${winRate.toFixed(2)}% win`);
-  if (Number.isFinite(profit)) parts.push(`${formatCompactSignedCurrency(profit)} PnL`);
-  if (Number.isFinite(tradeCount)) parts.push(`${formatInteger(tradeCount)} trades`);
-  return parts.length ? parts.join(" | ") : "Copy backtest first";
-}
-
-function strategySlotSummaryParts(summary) {
-  return String(summary || "")
-    .split("|")
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-function firstFiniteMetric(metrics, keys) {
-  for (const key of keys) {
-    const numeric = Number(metrics?.[key]);
-    if (Number.isFinite(numeric)) return numeric;
-  }
-  return Number.NaN;
 }
 
 function formatPct(value) {
