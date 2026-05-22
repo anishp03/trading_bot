@@ -1738,17 +1738,24 @@ textarea {
 
 .futures-log-drawer-controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
 }
 
 .futures-log-drawer-controls .app-btn {
-  width: 100%;
+  width: auto;
+  min-width: 76px;
+  min-height: 34px;
+  padding: 6px 12px;
+  font-size: 0.72rem;
 }
 
 .futures-log-drawer-controls .futures-review-status {
   justify-self: center;
+  min-height: 34px;
+  padding: 6px 12px;
+  font-size: 0.72rem;
   white-space: nowrap;
 }
 
@@ -4200,14 +4207,21 @@ textarea {
   }
 
   .futures-log-drawer-controls .app-btn {
-    min-height: 36px;
-    padding: 7px 8px;
-    font-size: 0.72rem;
+    min-width: 58px;
+    min-height: 30px;
+    padding: 5px 9px;
+    font-size: 0.66rem;
   }
 
   .futures-log-drawer-controls .futures-review-status {
-    min-height: 32px;
-    padding: 6px 12px;
+    min-height: 30px;
+    padding: 5px 9px;
+    font-size: 0.66rem;
+  }
+
+  .futures-time-axis-label,
+  .futures-timezone-svg-label {
+    display: none;
   }
 
   .futures-log-drawer-list {

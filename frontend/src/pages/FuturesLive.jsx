@@ -1170,7 +1170,7 @@ function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
 
 function FuturesLiveLogDrawer({ open, onOpen, onClose, entries, status, onClear, clearBusy }) {
   const rows = Array.isArray(entries) ? entries.slice(0, 1000) : [];
-  const statusText = compactLogDrawerStatus(status?.healthLabel || "Waiting");
+  const statusText = `Status : ${compactLogDrawerStatus(status?.healthLabel || "Waiting")}`;
   const drawer = (
     <>
       <button
@@ -1722,6 +1722,7 @@ function FuturesMarketChart({
   const wheelAccumulatorRef = useRef({ x: 0, y: 0 });
   const touchGestureRef = useRef(null);
   const touchPanFrameRef = useRef(null);
+  const touchInertiaFrameRef = useRef(null);
   const touchPanOffsetRef = useRef(0);
   const scrollOffsetRef = useRef(0);
   const displayedDomainRef = useRef(null);
@@ -1788,14 +1789,16 @@ function FuturesMarketChart({
   const setClampedOffset = (next) => setScrollOffset(Math.max(0, Math.min(maxOffset, next)));
   const panBy = (steps) => setClampedOffset(offset + steps);
   const zoomBy = (delta) => setVisibleBars((value) => Math.max(minVisibleBars, Math.min(220, value + delta)));
+  const clampOffsetValue = useCallback((value) => Math.max(0, Math.min(maxOffset, value)), [maxOffset]);
   const queueTouchPanOffset = useCallback((nextOffset) => {
-    touchPanOffsetRef.current = Math.max(0, Math.min(maxOffset, nextOffset));
+    touchPanOffsetRef.current = clampOffsetValue(nextOffset);
     if (touchPanFrameRef.current) return;
     touchPanFrameRef.current = requestAnimationFrame(() => {
       touchPanFrameRef.current = null;
+      scrollOffsetRef.current = touchPanOffsetRef.current;
       setScrollOffset(touchPanOffsetRef.current);
     });
-  }, [maxOffset]);
+  }, [clampOffsetValue]);
   const handleWheel = useCallback((event) => {
     if (!hasCandles) return;
     event.preventDefault();
@@ -1841,6 +1844,12 @@ function FuturesMarketChart({
     if (!node) return undefined;
 
     const clampVisibleBars = (value) => Math.max(minVisibleBars, Math.min(220, value));
+    const stopTouchInertia = () => {
+      if (touchInertiaFrameRef.current) {
+        cancelAnimationFrame(touchInertiaFrameRef.current);
+        touchInertiaFrameRef.current = null;
+      }
+    };
     const touchDistance = (touches) => {
       if (!touches || touches.length < 2) return 0;
       const first = touches[0];
@@ -1850,6 +1859,7 @@ function FuturesMarketChart({
 
     const onTouchStart = (event) => {
       if (!hasCandles) return;
+      stopTouchInertia();
       if (event.touches.length >= 2) {
         const distance = touchDistance(event.touches);
         touchGestureRef.current = {
@@ -1867,6 +1877,9 @@ function FuturesMarketChart({
         startX: touch.clientX,
         startY: touch.clientY,
         startOffset: scrollOffsetRef.current,
+        lastX: touch.clientX,
+        lastAt: performance.now(),
+        velocityBars: 0,
       };
     };
 
@@ -1900,6 +1913,7 @@ function FuturesMarketChart({
 
       const deltaX = touch.clientX - gesture.startX;
       const deltaY = touch.clientY - gesture.startY;
+      const now = performance.now();
       const absX = Math.abs(deltaX);
       const absY = Math.abs(deltaY);
       if (gesture.mode === "pending") {
@@ -1911,10 +1925,34 @@ function FuturesMarketChart({
         gesture.mode = "pan";
       }
 
-      const mobilePanWindow = Math.max(safeVisibleBars * 3, 54);
-      const panSteps = Math.round((-deltaX / Math.max(node.clientWidth, 1)) * mobilePanWindow);
+      const mobilePanWindow = Math.max(safeVisibleBars * 1.35, 32);
+      const panSteps = Math.round((deltaX / Math.max(node.clientWidth, 1)) * mobilePanWindow);
+      const elapsed = Math.max(16, now - Number(gesture.lastAt || now));
+      const deltaBars = ((touch.clientX - Number(gesture.lastX || touch.clientX)) / Math.max(node.clientWidth, 1)) * mobilePanWindow;
+      gesture.velocityBars = deltaBars / elapsed;
+      gesture.lastX = touch.clientX;
+      gesture.lastAt = now;
       queueTouchPanOffset(Number(gesture.startOffset || 0) + panSteps);
       if (event.cancelable) event.preventDefault();
+    };
+
+    const startTouchInertia = () => {
+      const gesture = touchGestureRef.current;
+      let velocity = Number(gesture?.velocityBars || 0) * 16;
+      if (Math.abs(velocity) < 0.08) return;
+      const animate = () => {
+        const current = scrollOffsetRef.current;
+        const next = clampOffsetValue(current + velocity);
+        if (next === current || Math.abs(velocity) < 0.02) {
+          touchInertiaFrameRef.current = null;
+          return;
+        }
+        scrollOffsetRef.current = next;
+        setScrollOffset(next);
+        velocity *= 0.9;
+        touchInertiaFrameRef.current = requestAnimationFrame(animate);
+      };
+      touchInertiaFrameRef.current = requestAnimationFrame(animate);
     };
 
     const onTouchEnd = (event) => {
@@ -1925,8 +1963,14 @@ function FuturesMarketChart({
           startX: touch.clientX,
           startY: touch.clientY,
           startOffset: scrollOffsetRef.current,
+          lastX: touch.clientX,
+          lastAt: performance.now(),
+          velocityBars: 0,
         };
         return;
+      }
+      if (touchGestureRef.current?.mode === "pan") {
+        startTouchInertia();
       }
       touchGestureRef.current = null;
     };
@@ -1944,8 +1988,9 @@ function FuturesMarketChart({
         cancelAnimationFrame(touchPanFrameRef.current);
         touchPanFrameRef.current = null;
       }
+      stopTouchInertia();
     };
-  }, [hasCandles, maxOffset, minVisibleBars, queueTouchPanOffset, safeVisibleBars, symbol, timeframe]);
+  }, [clampOffsetValue, hasCandles, maxOffset, minVisibleBars, queueTouchPanOffset, safeVisibleBars, symbol, timeframe]);
 
   useEffect(() => {
     wheelAccumulatorRef.current = { x: 0, y: 0 };
@@ -1955,6 +2000,10 @@ function FuturesMarketChart({
       cancelAnimationFrame(touchPanFrameRef.current);
       touchPanFrameRef.current = null;
     }
+    if (touchInertiaFrameRef.current) {
+      cancelAnimationFrame(touchInertiaFrameRef.current);
+      touchInertiaFrameRef.current = null;
+    }
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
@@ -1962,7 +2011,7 @@ function FuturesMarketChart({
       setHoveredTradeIndex(null);
       setSelectedTradeKey(null);
       setScrollOffset(0);
-      setVisibleBars(96);
+      setVisibleBars(defaultChartVisibleBars(chartShellRef.current));
     });
     return () => {
       cancelled = true;
@@ -4606,6 +4655,12 @@ function timeframeLabel(value) {
   if (value === "30m") return "30 minute";
   if (value === "1h") return "1 hour";
   return "1 minute";
+}
+
+function defaultChartVisibleBars(node) {
+  const nodeWidth = Number(node?.clientWidth || 0);
+  const mobileViewport = typeof window !== "undefined" && window.matchMedia?.("(max-width: 760px)")?.matches;
+  return mobileViewport || (nodeWidth > 0 && nodeWidth <= 620) ? 48 : 96;
 }
 
 function formatCurrency(value) {
