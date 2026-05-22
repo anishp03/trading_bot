@@ -31,6 +31,22 @@ function navClassName({ isActive }) {
   return isActive ? "app-nav-link active" : "app-nav-link";
 }
 
+function mobileNavClassName({ isActive }) {
+  return isActive ? "app-mobile-nav-link active" : "app-mobile-nav-link";
+}
+
+function mobileNavLabel(label) {
+  const labels = {
+    "Live Futures": "Live",
+    "Futures Strategy": "Strategy",
+    "Backtest": "Test",
+    "Backtest History": "History",
+    "Documents": "Docs",
+    "Settings": "Settings",
+  };
+  return labels[label] || label;
+}
+
 export default function AppLayout({ accountEmail, accountRole, backendMode = "online", onLogout }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -231,6 +247,14 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
           />
         </section>
       </main>
+
+      <nav className="app-mobile-nav" aria-label="Primary mobile navigation">
+        {navItems.map((item) => (
+          <NavLink key={item.to} to={item.to} className={mobileNavClassName}>
+            <span>{mobileNavLabel(item.label)}</span>
+          </NavLink>
+        ))}
+      </nav>
     </div>
   );
 }
@@ -291,9 +315,6 @@ function FuturesSidebarStatus({ backendOnline, status }) {
   );
   const topstepApiOn = Boolean(backendOn && status?.topstepApi?.ready);
   const tradingOn = Boolean(backendOn && status?.trading?.enabled);
-  const strategyOn = Boolean(backendOn && status?.strategyConfig?.active);
-  const strategy = status?.strategyConfig || {};
-  const strategyDetail = strategyOn ? strategy.preset || strategy.label || strategy.detail || "80kprofit" : "No preset";
   const cards = [
     {
       label: "Backend Status",
@@ -306,12 +327,6 @@ function FuturesSidebarStatus({ backendOnline, status }) {
       value: topstepApiOn ? "ON" : "OFF",
       tone: topstepApiOn ? "on" : "off",
       detail: topstepApiOn ? `Acct ${status?.topstepApi?.accountId || "--"}` : "Needs test",
-    },
-    {
-      label: "Strategy Config",
-      value: strategyOn ? "ON" : "OFF",
-      tone: strategyOn ? "on" : "off",
-      detail: strategyDetail,
     },
     {
       label: "Bot Status",

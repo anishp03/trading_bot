@@ -9,6 +9,7 @@ export default function RunPreview({
   onOpenTrade = null,
 }) {
   const [outcomeFilter, setOutcomeFilter] = useState("all");
+  const [symbolFilter, setSymbolFilter] = useState("all");
   const [sideFilter, setSideFilter] = useState("all");
   const [strategyFilter, setStrategyFilter] = useState("all");
   const [tradeSort, setTradeSort] = useState("largestWin");
@@ -16,6 +17,7 @@ export default function RunPreview({
   const [endDateFilter, setEndDateFilter] = useState("");
   const activeFilterCount = [
     outcomeFilter !== "all",
+    symbolFilter !== "all",
     sideFilter !== "all",
     strategyFilter !== "all",
     startDateFilter,
@@ -24,6 +26,7 @@ export default function RunPreview({
 
   useEffect(() => {
     setOutcomeFilter("all");
+    setSymbolFilter("all");
     setSideFilter("all");
     setStrategyFilter("all");
     setTradeSort("largestWin");
@@ -31,6 +34,7 @@ export default function RunPreview({
     setEndDateFilter("");
   }, [run?.id]);
 
+  const symbols = useMemo(() => uniqueTradeValues(trades, "symbol"), [trades]);
   const strategies = useMemo(() => uniqueTradeValues(trades, "strategyName"), [trades]);
 
   const filteredTrades = useMemo(() => {
@@ -41,6 +45,7 @@ export default function RunPreview({
       if (outcomeFilter === "profits" && pnl <= 0) return false;
       if (outcomeFilter === "losses" && pnl >= 0) return false;
       if (outcomeFilter === "flat" && pnl !== 0) return false;
+      if (symbolFilter !== "all" && String(trade?.symbol || "") !== symbolFilter) return false;
       if (sideFilter !== "all" && normalizeSide(trade?.side) !== sideFilter) return false;
       if (strategyFilter !== "all" && String(trade?.strategyName || "") !== strategyFilter) return false;
       if (!isTradeWithinDateRange(trade, startDateFilter, endDateFilter)) return false;
@@ -57,7 +62,7 @@ export default function RunPreview({
     });
 
     return nextTrades;
-  }, [endDateFilter, outcomeFilter, sideFilter, startDateFilter, strategyFilter, tradeSort, trades]);
+  }, [endDateFilter, outcomeFilter, sideFilter, startDateFilter, strategyFilter, symbolFilter, tradeSort, trades]);
 
   const filteredPnl = filteredTrades.reduce((total, trade) => total + Number(trade?.pnl ?? 0), 0);
   const filteredWins = filteredTrades.filter((trade) => Number(trade?.pnl ?? 0) > 0).length;
@@ -117,6 +122,7 @@ export default function RunPreview({
             {activeFilterCount > 0 && (
               <button type="button" className="app-btn app-btn-small px-3" onClick={() => {
                 setOutcomeFilter("all");
+                setSymbolFilter("all");
                 setSideFilter("all");
                 setStrategyFilter("all");
                 setStartDateFilter("");
@@ -129,7 +135,7 @@ export default function RunPreview({
 
           {Array.isArray(trades) && (
             <>
-              <div className="app-trade-toolbar mt-3">
+              <div className="app-trade-toolbar app-backtest-trade-toolbar mt-3">
                 <label className="d-grid gap-1">
                   <span className="app-label">Outcome</span>
                   <select className="form-select app-input" value={outcomeFilter} onChange={(event) => setOutcomeFilter(event.target.value)}>
@@ -137,6 +143,15 @@ export default function RunPreview({
                     <option value="profits">Profits</option>
                     <option value="losses">Losses</option>
                     <option value="flat">Flat</option>
+                  </select>
+                </label>
+                <label className="d-grid gap-1">
+                  <span className="app-label">Symbol</span>
+                  <select className="form-select app-input" value={symbolFilter} onChange={(event) => setSymbolFilter(event.target.value)}>
+                    <option value="all">All Symbols</option>
+                    {symbols.map((symbol) => (
+                      <option key={symbol} value={symbol}>{symbol}</option>
+                    ))}
                   </select>
                 </label>
                 <label className="d-grid gap-1">
@@ -196,7 +211,71 @@ export default function RunPreview({
             </>
           )}
 
-          <div className="app-table-wrap">
+          <div className="mobile-trade-card-list">
+            {!Array.isArray(trades) ? (
+              <div className="app-empty">No trades to display for this run.</div>
+            ) : (
+              <>
+                {filteredTrades.map((trade, index) => (
+                  <article className="mobile-trade-card" key={`preview-${trade.id ?? trade.time ?? "t"}-${index}`}>
+                    <div className="mobile-trade-card-head">
+                      <div>
+                        <span className="app-label">{trade.contractName || trade.symbol || "--"} / {trade.strategyName || trade.strategyCode || "--"}</span>
+                        <strong className={trade?.pnl == null ? "app-muted" : trade?.pnl >= 0 ? "app-pnl-pos" : "app-pnl-neg"}>
+                          {trade?.pnl == null ? "--" : formatSignedMoney(trade.pnl)}
+                        </strong>
+                      </div>
+                      <span className={normalizeSide(trade?.side) === "short" ? "app-side-pill short" : "app-side-pill long"}>
+                        {trade.side ?? "--"}
+                      </span>
+                    </div>
+
+                    <div className="mobile-trade-meta-grid">
+                      <span>
+                        <b>Time</b>
+                        <em>{formatEstTime(trade.time ?? "--")}</em>
+                      </span>
+                      <span>
+                        <b>Qty</b>
+                        <em>{formatNumber(trade.qty)}</em>
+                      </span>
+                      <span>
+                        <b>Entry</b>
+                        <em>{trade.entry == null ? "--" : formatMoney(trade.entry)}</em>
+                      </span>
+                      <span>
+                        <b>Exit</b>
+                        <em>{trade.exit == null ? "--" : formatMoney(trade.exit)}</em>
+                      </span>
+                    </div>
+
+                    <details className="mobile-trade-details">
+                      <summary>Trade details</summary>
+                      <div>
+                        <span>Notes</span>
+                        <p>{trade?.tradeNotes?.trim() ? trade.tradeNotes : "--"}</p>
+                      </div>
+                      {trade.closedAt && (
+                        <div>
+                          <span>Closed</span>
+                          <p>{formatEstTime(trade.closedAt)}</p>
+                        </div>
+                      )}
+                      {onOpenTrade && (
+                        <button type="button" className="app-btn app-btn-small px-3" onClick={() => onOpenTrade(trade)}>
+                          Open
+                        </button>
+                      )}
+                    </details>
+                  </article>
+                ))}
+
+                {filteredTrades.length === 0 && <div className="app-empty">No trades match this filter.</div>}
+              </>
+            )}
+          </div>
+
+          <div className="app-table-wrap desktop-trade-table">
             <div className={onOpenTrade ? "app-grid-head trades-grid has-action" : "app-grid-head trades-grid"}>
               <div>Time</div>
               <div>Contract</div>

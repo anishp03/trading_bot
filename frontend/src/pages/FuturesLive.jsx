@@ -18,7 +18,7 @@ const MIN_OPENING_CHART_BARS = 24;
 const BROKER_SOURCE_TOPSTEPX = "TOPSTEPX";
 const LIVE_TRADE_CACHE_VERSION = 1;
 const LIVE_TRADE_CACHE_MAX_ROWS = 2000;
-const DEFAULT_PROFILE = "TOPSTEP_150K_RESEARCH";
+const DEFAULT_PROFILE = "TOPSTEP_50K_RESEARCH";
 const DEFAULT_ACCOUNT_PROFILE = "TOPSTEP_150K_PRACTICE";
 const DEFAULT_STRATEGY_PRESET = "80kprofit";
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MGC"]);
@@ -26,7 +26,7 @@ const LIVE_ACCOUNT_PROFILE_CODES = new Set(["TOPSTEP_150K_PRACTICE", "TOPSTEP_50
 const PROFILE_ACCOUNTS = {
   TOPSTEP_150K_RESEARCH: { label: "150K Research", accountId: "22539378" },
   TOPSTEP_150K_PRACTICE: { label: "150K Combine", accountId: "22539378" },
-  TOPSTEP_50K_RESEARCH: { label: "50K Research", accountId: "22529998" },
+  TOPSTEP_50K_RESEARCH: { label: "50K Research", accountId: "22539378" },
   TOPSTEP_50K_COMBINE: { label: "50K Combine", accountId: "22529998" },
 };
 const DEFAULT_TRADE_FILTERS = {
@@ -39,32 +39,32 @@ const DEFAULT_TRADE_FILTERS = {
   endDate: "",
 };
 const FALLBACK_PROFILE = {
-  code: "TOPSTEP_150K_RESEARCH",
-  name: "Topstep 150K Research",
-  accountSize: 150000,
-  maxTrailingDrawdown: 4500,
-  dailyLossLimit: 3000,
-  maxRiskPerTrade: 2100,
-  maxContracts: 15,
-  maxMicroContracts: 150,
+  code: "TOPSTEP_50K_RESEARCH",
+  name: "Topstep 50K Research",
+  accountSize: 50000,
+  maxTrailingDrawdown: 2000,
+  dailyLossLimit: 1000,
+  maxRiskPerTrade: 700,
+  maxContracts: 5,
+  maxMicroContracts: 50,
   maxOpenPositions: 3,
-  maxAggregateContracts: 150,
-  maxAggregateMiniUnits: 15,
+  maxAggregateContracts: 50,
+  maxAggregateMiniUnits: 5,
   profitTarget: 0,
 };
 const DEFAULT_LIVE_RISK_CONFIG = {
   referenceSymbol: "MNQ",
-  accountSize: "150000",
-  maxTrailingDrawdown: "4500",
-  dailyLossLimit: "3000",
-  maxRiskPerTrade: "2100",
-  maxContracts: "150",
+  accountSize: "50000",
+  maxTrailingDrawdown: "2000",
+  dailyLossLimit: "1000",
+  maxRiskPerTrade: "700",
+  maxContracts: "50",
   commissionPerContract: "1.24",
   slippageTicks: "1",
   profitTarget: "0",
   maxOpenPositions: "3",
-  maxAggregateContracts: "150",
-  maxAggregateMiniUnits: "15",
+  maxAggregateContracts: "50",
+  maxAggregateMiniUnits: "5",
 };
 
 export default function FuturesLive() {
@@ -323,10 +323,6 @@ export default function FuturesLive() {
 
   useEffect(() => {
     setLiveRiskConfig((current) => applyLiveFundedProfile(current, selectedProfile));
-    setSelectedAccountProfileCode((current) => {
-      const aligned = accountProfileCodeForRiskProfile(selectedProfile.code);
-      return sameFundedAccountSize(current, selectedProfile.code) ? current : aligned;
-    });
   }, [selectedProfile]);
 
   useEffect(() => {
@@ -347,6 +343,39 @@ export default function FuturesLive() {
       setSelectedStrategyPreset(runningPreset);
     }
   }, [liveStatus?.running, liveStatus?.strategyPreset, selectedStrategyPreset]);
+
+  useEffect(() => {
+    const runningProfile = String(liveStatus?.fundedProfile || "").trim();
+    if (
+      liveStatus?.running
+      && runningProfile
+      && runningProfile !== selectedProfileCode
+      && liveAccountProfiles.some((profile) => profile.code === runningProfile)
+    ) {
+      setSelectedProfileCode(runningProfile);
+    }
+  }, [liveStatus?.running, liveStatus?.fundedProfile, selectedProfileCode, liveAccountProfiles]);
+
+  useEffect(() => {
+    const runningAccountId = String(
+      liveStatus?.practiceAccountId
+        || liveStatus?.accountId
+        || liveStatus?.liveStrategySnapshot?.practiceAccountId
+        || ""
+    ).trim();
+    if (!liveStatus?.running || !runningAccountId) return;
+    const runningAccountProfileCode = accountProfileCodeForAccountId(runningAccountId, topstepAccountProfiles);
+    if (runningAccountProfileCode && runningAccountProfileCode !== selectedAccountProfileCode) {
+      setSelectedAccountProfileCode(runningAccountProfileCode);
+    }
+  }, [
+    liveStatus?.running,
+    liveStatus?.practiceAccountId,
+    liveStatus?.accountId,
+    liveStatus?.liveStrategySnapshot?.practiceAccountId,
+    selectedAccountProfileCode,
+    topstepAccountProfiles,
+  ]);
 
   useEffect(() => {
     setLiveTradeFilters(DEFAULT_TRADE_FILTERS);
@@ -668,19 +697,14 @@ export default function FuturesLive() {
       });
   }
 
-  function loadLiveThinking(status = liveStatus) {
-    const sessionId = Number(status?.sessionId || 0);
-    if (!sessionId) {
-      setLiveThinkingStatus("idle");
-      return;
-    }
+  function loadLiveThinking() {
     const key = "liveThinking";
     if (requestControllers.current.has(key)) {
       return;
     }
     const controller = new AbortController();
     requestControllers.current.set(key, controller);
-    apiFetch(`/api/futures/live/thinking?sessionId=${sessionId}&limit=1000`, { signal: controller.signal })
+    apiFetch("/api/futures/live/thinking?limit=1000", { signal: controller.signal })
       .then((response) => {
         if (response.status === 404) {
           setLiveThinkingStatus("observed");
@@ -781,9 +805,6 @@ export default function FuturesLive() {
 
   function changeTopstepAccountProfile(code) {
     setSelectedAccountProfileCode(code);
-    if (!sameFundedAccountSize(code, selectedProfileCode)) {
-      setSelectedProfileCode(riskProfileCodeForAccountProfile(code));
-    }
   }
 
   function transitionChart(update) {
@@ -809,6 +830,7 @@ export default function FuturesLive() {
         symbol: openingSymbol,
         executionMode: "TOPSTEPX",
         fundedProfile: selectedProfile.code,
+        accountId: accountScopeId,
         accountSize: String(liveRiskConfig.accountSize || selectedProfile.accountSize || 50000),
         maxTrailingDrawdown: String(liveRiskConfig.maxTrailingDrawdown || selectedProfile.maxTrailingDrawdown || 2000),
         dailyLossLimit: String(liveRiskConfig.dailyLossLimit || selectedProfile.dailyLossLimit || 1000),
@@ -855,6 +877,20 @@ export default function FuturesLive() {
       refreshFuturesSidebarStatus?.();
       refreshLiveData();
       persistLiveTradeCacheRows(allTradeRows, { force: true });
+    });
+  }
+
+  async function clearLiveLogs() {
+    await runAction("clearLogs", async () => {
+      const response = await apiFetch("/api/futures/live/thinking/clear", { method: "POST" });
+      const payload = await readApiResponse(response);
+      if (!response.ok || payload.json?.success === false) {
+        throw new Error(payload.json?.message || payload.text || "Failed to clear live logs.");
+      }
+      setLiveThinking([]);
+      setObservedThinking([]);
+      setFeedback(payload.json?.message || "Live logs cleared.");
+      loadLiveThinking();
     });
   }
 
@@ -925,7 +961,12 @@ export default function FuturesLive() {
 
         <div className="futures-launch-config">
           <Field label="Topstep Account" className="futures-launch-account-field">
-            <select value={selectedAccountProfileCode} onChange={(event) => changeTopstepAccountProfile(event.target.value)} className="form-select app-input">
+            <select
+              value={selectedAccountProfileCode}
+              onChange={(event) => changeTopstepAccountProfile(event.target.value)}
+              className="form-select app-input"
+              disabled={Boolean(liveStatus?.running)}
+            >
               {topstepAccountProfiles.map((profile) => {
                 const account = PROFILE_ACCOUNTS[profile.code] || {};
                 return (
@@ -953,7 +994,12 @@ export default function FuturesLive() {
           </Field>
 
           <Field label="Risk Config" className="futures-launch-account-field">
-            <select value={selectedProfileCode} onChange={(event) => setSelectedProfileCode(event.target.value)} className="form-select app-input">
+            <select
+              value={selectedProfileCode}
+              onChange={(event) => setSelectedProfileCode(event.target.value)}
+              className="form-select app-input"
+              disabled={Boolean(liveStatus?.running)}
+            >
               {liveAccountProfiles.map((profile) => (
                 <option key={profile.code} value={profile.code}>
                   {profile.name}
@@ -965,7 +1011,6 @@ export default function FuturesLive() {
           <div className="futures-launch-chip">
             <span>Account ID</span>
             <strong>{accountPreset.accountId || "Not connected"}</strong>
-            <small>{formatCompactCurrency(liveRiskConfig.accountSize)}</small>
           </div>
 
           <div className="futures-launch-symbols">
@@ -1061,6 +1106,8 @@ export default function FuturesLive() {
         onClose={() => setLogDrawerOpen(false)}
         entries={logDrawerEntries}
         status={equityReviewStatus}
+        onClear={clearLiveLogs}
+        clearBusy={busyAction === "clearLogs"}
       />
     </div>
   );
@@ -1117,7 +1164,7 @@ function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
   );
 }
 
-function FuturesLiveLogDrawer({ open, onOpen, onClose, entries, status }) {
+function FuturesLiveLogDrawer({ open, onOpen, onClose, entries, status, onClear, clearBusy }) {
   const rows = Array.isArray(entries) ? entries.slice(0, 1000) : [];
   return (
     <>
@@ -1137,7 +1184,17 @@ function FuturesLiveLogDrawer({ open, onOpen, onClose, entries, status }) {
             <div className="fw-bold app-kicker">Live Logs</div>
             <span className={`futures-review-status ${status?.healthTone || "idle"}`}>{status?.healthLabel || "Waiting"}</span>
           </div>
-          <button type="button" className="app-btn app-btn-small" onClick={onClose}>Close</button>
+          <div className="futures-log-drawer-controls">
+            <button
+              type="button"
+              className="app-btn app-btn-small app-btn-danger"
+              onClick={onClear}
+              disabled={clearBusy || rows.length === 0}
+            >
+              {clearBusy ? "Clearing..." : "Clear"}
+            </button>
+            <button type="button" className="app-btn app-btn-small" onClick={onClose}>Close</button>
+          </div>
         </div>
         <div className="futures-log-drawer-list" role="log" aria-label="Live bot log drawer">
           {rows.length ? (
@@ -1325,21 +1382,43 @@ function buildObservedLiveBotLogEntries({
 
   const marketSession = liveStatus?.marketSession || liveMonitor?.marketSession || null;
   if (marketSession) {
-    entries.push(observedLogEntry({
-      key: `entry-gate|${sessionKey}|${marketSession.code || ""}|${marketSession.marketDate || ""}|${Boolean(marketSession.entryWindowOpen)}`,
-      sessionId,
-      createdAt: marketSession.now || liveStatus?.lastUpdatedAt || observedAt,
-      eventType: marketSession.entryWindowOpen ? "ENTRY_GATE_OPENED" : "ENTRY_GATE_CLOSED",
-      phase: "Entry Gate",
-      tone: marketSession.entryWindowOpen ? "active" : "closed",
-      summary: marketSession.entryWindowOpen ? "Trading entries enabled." : "Trading entries disabled.",
-      detail: marketSession.entryWindowOpen ? "Strategy signals may now submit to Topstep if they pass validation." : cleanLogText(marketSession.detail || "New entries are blocked while this gate is closed."),
-      details: {
-        gate: cleanLogText(marketSession.label || ""),
-        code: cleanLogText(marketSession.code || ""),
-        marketDate: cleanLogText(marketSession.marketDate || ""),
-      },
-    }));
+    const marketCode = cleanLogText(marketSession.code || "");
+    const prepCodes = new Set(["BOT_PREP", "DATA_CONNECT", "PREMARKET_WAIT", "RTH_ARMING"]);
+    const closeCodes = new Set(["CLOSING_GUARD", "CANCEL_RESTING_ORDERS", "FLATTEN_WINDOW", "POST_CLOSE_VERIFY", "RTH_CLOSED"]);
+    if (prepCodes.has(marketCode)) {
+      entries.push(observedLogEntry({
+        key: `session-prep|${sessionKey}|${marketSession.marketDate || ""}`,
+        sessionId,
+        createdAt: marketSession.now || liveStatus?.lastUpdatedAt || observedAt,
+        eventType: "SESSION_PREP",
+        phase: "Market Prep",
+        tone: "active",
+        summary: "Market prep started.",
+        detail: "",
+        details: {
+          gate: cleanLogText(marketSession.label || ""),
+          code: marketCode,
+          marketDate: cleanLogText(marketSession.marketDate || ""),
+        },
+      }));
+    }
+    if (marketSession.entryWindowOpen || closeCodes.has(marketCode)) {
+      entries.push(observedLogEntry({
+        key: `entry-gate|${sessionKey}|${marketSession.marketDate || ""}|${Boolean(marketSession.entryWindowOpen)}`,
+        sessionId,
+        createdAt: marketSession.now || liveStatus?.lastUpdatedAt || observedAt,
+        eventType: marketSession.entryWindowOpen ? "ENTRY_GATE_OPENED" : "ENTRY_GATE_CLOSED",
+        phase: "Entry Gate",
+        tone: marketSession.entryWindowOpen ? "active" : "closed",
+        summary: marketSession.entryWindowOpen ? "Trading entries enabled." : "Trading entries disabled.",
+        detail: "",
+        details: {
+          gate: cleanLogText(marketSession.label || ""),
+          code: marketCode,
+          marketDate: cleanLogText(marketSession.marketDate || ""),
+        },
+      }));
+    }
   }
 
   return entries;
@@ -1391,7 +1470,13 @@ function coalesceLiveBotLogKey(entry) {
   const code = eventLogCode(entry);
   const sessionId = entry?.sessionId || "current";
   const details = entry?.details || {};
-  if (["MARKET_DATA_STOPPED", "MARKET_DATA_RESUMED", "ENTRY_GATE_CLOSED", "ENTRY_GATE_OPENED", "POST_CLOSE_CLEANUP"].includes(code)) {
+  if (["BACKEND_RESTARTED", "BOT_STARTED", "BOT_STOPPED", "BOT_START_BLOCKED", "STOP_FLATTEN_SWEEP"].includes(code)) {
+    return [code, sessionId, entry?.createdAt || "", entry?.id || ""].join("|");
+  }
+  if (["ENTRY_GATE_CLOSED", "ENTRY_GATE_OPENED"].includes(code)) {
+    return [code, sessionId, details.marketDate || ""].join("|");
+  }
+  if (["MARKET_DATA_STOPPED", "MARKET_DATA_RESUMED", "POST_CLOSE_CLEANUP"].includes(code)) {
     return [code, sessionId, details.marketDate || "", details.code || "", details.gate || "", details.action || ""].join("|");
   }
   if (code.includes("DATA") || code.includes("METRIC")) {
@@ -1402,7 +1487,7 @@ function coalesceLiveBotLogKey(entry) {
 
 function compactEventSubtext(entry) {
   const code = eventLogCode(entry);
-  if (["MARKET_DATA_STOPPED", "MARKET_DATA_RESUMED", "ENTRY_GATE_CLOSED", "ENTRY_GATE_OPENED", "POST_CLOSE_CLEANUP"].includes(code)) {
+  if (["BACKEND_RESTARTED", "MARKET_DATA_STOPPED", "MARKET_DATA_RESUMED", "ENTRY_GATE_CLOSED", "ENTRY_GATE_OPENED", "POST_CLOSE_CLEANUP", "SESSION_PREP"].includes(code)) {
     return "";
   }
   const text = eventSubtext(entry);
@@ -3493,7 +3578,7 @@ function idleSymbolTracker(symbol) {
     signalTone: "idle",
     healthLabel: "Health Idle",
     healthTone: "idle",
-    healthStatusText: "Market Feed Off",
+    healthStatusText: "Bot Off",
     detail: "Not started",
   };
 }
@@ -3570,7 +3655,7 @@ function trackerHealthLabel(state, botStarted) {
 }
 
 function trackerHealthStatusText(state, health, signal, botStarted, lastPrice, brokerLivePosition) {
-  if (!botStarted) return "Market Feed Off";
+  if (!botStarted) return "Bot Off";
   const errorCode = String(health?.errorCode || state?.errorCode || "").trim().toUpperCase();
   if (["FEED_STOPPED", "FEED_STALE", "MARKET_DATA_STOPPED", "LIVE_CANDLE_MISSING"].includes(errorCode)) {
     return "Market Feed Off";
@@ -4119,41 +4204,97 @@ function TradeFilters({ trades, filteredTrades, filters, onChange }) {
 
 function TradesTable({ trades, mode }) {
   const gridClass = mode === "live" ? "futures-live-trades-grid" : "futures-live-all-trades-grid";
+  const emptyText = mode === "live" ? "No live trade intents yet." : "No live bot trade records yet.";
   return (
-    <div className="app-table-wrap">
-      <div className={`app-grid-head ${gridClass}`}>
-        <div>Time</div>
-        <div>Symbol</div>
-        <div>Strategy</div>
-        <div>Side</div>
-        <div>Qty</div>
-        <div>Entry</div>
-        <div>Exit</div>
-        <div>PnL</div>
-        <div>Entry Reason</div>
-        <div>Exit Reason</div>
-        <div>Fees</div>
+    <>
+      <div className="mobile-trade-card-list">
+        {trades.length ? (
+          trades.map((trade, index) => (
+            <article className="mobile-trade-card" key={`${mode}-${trade.id || trade.entryTime || trade.createdAt || index}`}>
+              <div className="mobile-trade-card-head">
+                <div>
+                  <span className="app-label">{trade.symbol || "--"} / {displayTradeStrategyLabel(trade)}</span>
+                  <strong className={Number(trade.pnl || 0) > 0 ? "app-pnl-pos" : Number(trade.pnl || 0) < 0 ? "app-pnl-neg" : ""}>{formatCurrency(trade.pnl)}</strong>
+                </div>
+                <span className={String(trade.side || "").toUpperCase() === "SHORT" ? "app-side-pill short" : "app-side-pill long"}>
+                  {trade.side || "--"}
+                </span>
+              </div>
+              <div className="mobile-trade-meta-grid">
+                <span>
+                  <b>Time</b>
+                  <em>{formatEstTime(trade.entryTime || trade.signalTime || trade.createdAt || "--")}</em>
+                </span>
+                <span>
+                  <b>Qty</b>
+                  <em>{trade.contracts || 0}</em>
+                </span>
+                <span>
+                  <b>Entry</b>
+                  <em>{formatPrice(trade.entryPrice)}</em>
+                </span>
+                <span>
+                  <b>Exit</b>
+                  <em>{formatPrice(trade.exitPrice)}</em>
+                </span>
+              </div>
+              <details className="mobile-trade-details">
+                <summary>Trade details</summary>
+                <div>
+                  <span>Entry Reason</span>
+                  <p>{entryReasonForTrade(trade)}</p>
+                </div>
+                <div>
+                  <span>Exit Reason</span>
+                  <p>{mode === "live" ? "--" : exitReasonForTrade(trade)}</p>
+                </div>
+                <div>
+                  <span>Fees</span>
+                  <p>{mode === "live" ? "--" : formatFees(trade.fees)}</p>
+                </div>
+              </details>
+            </article>
+          ))
+        ) : (
+          <div className="app-empty">{emptyText}</div>
+        )}
       </div>
-      {trades.length ? (
-        trades.map((trade) => (
-          <div className={`app-grid-row ${gridClass}`} key={trade.id}>
-            <div className="app-time-cell">{formatEstTime(trade.entryTime || trade.signalTime || trade.createdAt || "--")}</div>
-            <div>{trade.symbol || "--"}</div>
-            <div>{displayTradeStrategyLabel(trade)}</div>
-            <div>{trade.side || "--"}</div>
-            <div>{trade.contracts || 0}</div>
-            <div>{formatPrice(trade.entryPrice)}</div>
-            <div>{formatPrice(trade.exitPrice)}</div>
-            <div className={Number(trade.pnl || 0) > 0 ? "app-pnl-pos" : Number(trade.pnl || 0) < 0 ? "app-pnl-neg" : ""}>{formatCurrency(trade.pnl)}</div>
-            <div className="app-trade-notes">{entryReasonForTrade(trade)}</div>
-            <div className="app-trade-notes">{mode === "live" ? "--" : exitReasonForTrade(trade)}</div>
-            <div className="app-trade-fees">{mode === "live" ? "--" : formatFees(trade.fees)}</div>
-          </div>
-        ))
-      ) : (
-        <div className="app-empty">{mode === "live" ? "No live trade intents yet." : "No live bot trade records yet."}</div>
-      )}
-    </div>
+
+      <div className="app-table-wrap desktop-trade-table">
+        <div className={`app-grid-head ${gridClass}`}>
+          <div>Time</div>
+          <div>Symbol</div>
+          <div>Strategy</div>
+          <div>Side</div>
+          <div>Qty</div>
+          <div>Entry</div>
+          <div>Exit</div>
+          <div>PnL</div>
+          <div>Entry Reason</div>
+          <div>Exit Reason</div>
+          <div>Fees</div>
+        </div>
+        {trades.length ? (
+          trades.map((trade) => (
+            <div className={`app-grid-row ${gridClass}`} key={trade.id}>
+              <div className="app-time-cell">{formatEstTime(trade.entryTime || trade.signalTime || trade.createdAt || "--")}</div>
+              <div>{trade.symbol || "--"}</div>
+              <div>{displayTradeStrategyLabel(trade)}</div>
+              <div>{trade.side || "--"}</div>
+              <div>{trade.contracts || 0}</div>
+              <div>{formatPrice(trade.entryPrice)}</div>
+              <div>{formatPrice(trade.exitPrice)}</div>
+              <div className={Number(trade.pnl || 0) > 0 ? "app-pnl-pos" : Number(trade.pnl || 0) < 0 ? "app-pnl-neg" : ""}>{formatCurrency(trade.pnl)}</div>
+              <div className="app-trade-notes">{entryReasonForTrade(trade)}</div>
+              <div className="app-trade-notes">{mode === "live" ? "--" : exitReasonForTrade(trade)}</div>
+              <div className="app-trade-fees">{mode === "live" ? "--" : formatFees(trade.fees)}</div>
+            </div>
+          ))
+        ) : (
+          <div className="app-empty">{emptyText}</div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -4234,18 +4375,14 @@ function contractLimitForProfile(profile, symbol) {
     : profile.maxContracts || 5;
 }
 
-function accountProfileCodeForRiskProfile(code) {
-  return String(code || "").includes("50K") ? "TOPSTEP_50K_COMBINE" : DEFAULT_ACCOUNT_PROFILE;
-}
-
-function riskProfileCodeForAccountProfile(code) {
-  return String(code || "").includes("50K") ? "TOPSTEP_50K_RESEARCH" : DEFAULT_PROFILE;
-}
-
-function sameFundedAccountSize(accountProfileCode, riskProfileCode) {
-  const accountIs50K = String(accountProfileCode || "").includes("50K");
-  const riskIs50K = String(riskProfileCode || "").includes("50K");
-  return accountIs50K === riskIs50K;
+function accountProfileCodeForAccountId(accountId, profiles = []) {
+  const cleanAccountId = String(accountId || "").trim();
+  if (!cleanAccountId) return "";
+  const match = profiles.find((profile) => {
+    const profileAccountId = String(PROFILE_ACCOUNTS[profile.code]?.accountId || "").trim();
+    return profileAccountId === cleanAccountId;
+  });
+  return match?.code || "";
 }
 
 async function readApiResponse(response) {
@@ -4325,14 +4462,6 @@ function timeframeLabel(value) {
   if (value === "30m") return "30 minute";
   if (value === "1h") return "1 hour";
   return "1 minute";
-}
-
-function parseSymbolCsv(value) {
-  if (!value) return [];
-  return String(value)
-    .split(",")
-    .map((symbol) => symbol.trim().toUpperCase())
-    .filter(Boolean);
 }
 
 function formatCurrency(value) {

@@ -136,7 +136,55 @@ export default function FuturesBacktestHistory() {
           </button>
         </div>
 
-        <div className="app-table-wrap">
+        <div className="mobile-run-card-list">
+          {pageRuns.map((run) => {
+            const selected = run.id === selectedRunId;
+            return (
+              <article key={`mobile-${run.id}`} className={selected ? "mobile-run-card selected" : "mobile-run-card"}>
+                <div className="mobile-run-card-head">
+                  <div>
+                    <span className="app-label">Run #{run.visibleRunNumber}</span>
+                    <strong>{run.symbols}</strong>
+                  </div>
+                  <span className={run.trades === 0 ? "app-badge app-neutral-badge" : run.ruleViolation ? "app-badge app-risk-badge" : "app-badge app-positive-badge"}>
+                    {run.trades === 0 ? "No Trades" : run.ruleViolation ? "Violation" : "Pass"}
+                  </span>
+                </div>
+                <div className="mobile-run-meta-grid">
+                  <span>
+                    <b>Profit</b>
+                    <em className={run.totalProfit >= 0 ? "app-pnl-pos" : "app-pnl-neg"}>{formatCurrency(run.totalProfit)}</em>
+                  </span>
+                  <span>
+                    <b>Return</b>
+                    <em>{formatPercent(run.returnPct)}</em>
+                  </span>
+                  <span>
+                    <b>Win</b>
+                    <em>{formatPercent(run.winRate)}</em>
+                  </span>
+                  <span>
+                    <b>Trades</b>
+                    <em>{run.trades}</em>
+                  </span>
+                </div>
+                <div className="mobile-run-card-foot">
+                  <span>{formatEstTime(run.startDate)} to {formatEstTime(run.endDate)}</span>
+                  <button
+                    type="button"
+                    className={selected ? "app-btn app-btn-selected px-3" : "app-btn px-3"}
+                    onClick={() => setSelectedRunId(run.id)}
+                  >
+                    {selected ? "Selected" : "Select"}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+          {runs.length === 0 && <div className="app-empty">No futures portfolio runs yet.</div>}
+        </div>
+
+        <div className="app-table-wrap desktop-run-table">
           <div className="app-grid-head futures-portfolio-run-grid">
             <div>Run</div>
             <div>Contracts</div>

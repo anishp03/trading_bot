@@ -85,15 +85,6 @@ export default function FuturesStrategy() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState("");
 
-  useEffect(() => {
-    loadInstruments();
-    loadStrategyPresets();
-  }, []);
-
-  useEffect(() => {
-    loadSettings(selectedSymbol, selectedPreset);
-  }, [selectedSymbol, selectedPreset]);
-
   function loadInstruments() {
     apiFetch("/api/futures/instruments")
       .then((response) => {
@@ -148,6 +139,15 @@ export default function FuturesStrategy() {
       })
       .finally(() => setIsLoading(false));
   }
+
+  useEffect(() => {
+    loadInstruments();
+    loadStrategyPresets();
+  }, []);
+
+  useEffect(() => {
+    loadSettings(selectedSymbol, selectedPreset);
+  }, [selectedSymbol, selectedPreset]);
 
   function updateModule(moduleKey, field, value) {
     setSettings((current) => ({
