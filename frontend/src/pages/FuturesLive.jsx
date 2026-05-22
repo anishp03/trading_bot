@@ -1711,6 +1711,7 @@ function FuturesMarketChart({
   const [displayedVolumeMax, setDisplayedVolumeMax] = useState(null);
   const chartShellRef = useRef(null);
   const wheelAccumulatorRef = useRef({ x: 0, y: 0 });
+  const touchGestureRef = useRef(null);
   const displayedDomainRef = useRef(null);
   const domainAnimationFrameRef = useRef(null);
   const domainResetSymbolRef = useRef("");
@@ -1722,11 +1723,11 @@ function FuturesMarketChart({
 
   const width = 1680;
   const height = 560;
-  const priceTop = 14;
-  const priceBottom = 400;
-  const volumeTop = 424;
-  const volumeHeight = 58;
-  const axisY = 540;
+  const priceTop = 8;
+  const priceBottom = 430;
+  const volumeTop = 450;
+  const volumeHeight = 52;
+  const axisY = 536;
   const rightAxisGutter = 58;
   const plotWidth = width - rightAxisGutter;
   const maxVisibleBars = Math.min(220, Math.max(24, candleSeries.length));
@@ -1773,7 +1774,17 @@ function FuturesMarketChart({
   const findVisibleIndex = (time) => findNearestCandleIndex(visibleCandles, time, visibleCandleToleranceMs);
   const setClampedOffset = (next) => setScrollOffset(Math.max(0, Math.min(maxOffset, next)));
   const panBy = (steps) => setClampedOffset(offset + steps);
+  const panByDelta = useCallback((steps) => {
+    if (!Number.isFinite(steps) || steps === 0) return;
+    setScrollOffset((value) => Math.max(0, Math.min(maxOffset, value + steps)));
+  }, [maxOffset]);
   const zoomBy = (delta) => setVisibleBars((value) => Math.max(24, Math.min(220, value + delta)));
+  const touchDistance = (touches) => {
+    if (!touches || touches.length < 2) return 0;
+    const first = touches[0];
+    const second = touches[1];
+    return Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY);
+  };
   const handleWheel = useCallback((event) => {
     if (!hasCandles) return;
     event.preventDefault();
@@ -1811,7 +1822,112 @@ function FuturesMarketChart({
   }, [handleWheel, hasCandles, symbol, timeframe]);
 
   useEffect(() => {
+    const node = chartShellRef.current;
+    if (!node) return undefined;
+
+    const clampVisibleBars = (value) => Math.max(24, Math.min(220, value));
+
+    const onTouchStart = (event) => {
+      if (!hasCandles) return;
+      if (event.touches.length >= 2) {
+        const distance = touchDistance(event.touches);
+        touchGestureRef.current = {
+          mode: "pinch",
+          startDistance: distance,
+          startVisibleBars: safeVisibleBars,
+        };
+        if (event.cancelable) event.preventDefault();
+        return;
+      }
+
+      const touch = event.touches[0];
+      touchGestureRef.current = {
+        mode: "pending",
+        startX: touch.clientX,
+        startY: touch.clientY,
+        lastPanSteps: 0,
+      };
+    };
+
+    const onTouchMove = (event) => {
+      if (!hasCandles || !touchGestureRef.current) return;
+
+      if (event.touches.length >= 2) {
+        const gesture = touchGestureRef.current;
+        const distance = touchDistance(event.touches);
+        if (gesture.mode !== "pinch" || !gesture.startDistance) {
+          touchGestureRef.current = {
+            mode: "pinch",
+            startDistance: distance,
+            startVisibleBars: safeVisibleBars,
+          };
+          if (event.cancelable) event.preventDefault();
+          return;
+        }
+
+        if (distance > 8) {
+          const scale = gesture.startDistance / distance;
+          setVisibleBars(clampVisibleBars(Math.round(gesture.startVisibleBars * scale)));
+        }
+        if (event.cancelable) event.preventDefault();
+        return;
+      }
+
+      const gesture = touchGestureRef.current;
+      const touch = event.touches[0];
+      if (!touch || gesture.mode === "pinch") return;
+
+      const deltaX = touch.clientX - gesture.startX;
+      const deltaY = touch.clientY - gesture.startY;
+      const absX = Math.abs(deltaX);
+      const absY = Math.abs(deltaY);
+      if (gesture.mode === "pending") {
+        if (absY > 12 && absY > absX * 1.15) {
+          touchGestureRef.current = null;
+          return;
+        }
+        if (absX < 12 || absX < absY * 1.05) return;
+        gesture.mode = "pan";
+      }
+
+      const panSteps = Math.round(-deltaX / 22);
+      const deltaSteps = panSteps - Number(gesture.lastPanSteps || 0);
+      if (deltaSteps !== 0) {
+        gesture.lastPanSteps = panSteps;
+        panByDelta(deltaSteps);
+      }
+      if (event.cancelable) event.preventDefault();
+    };
+
+    const onTouchEnd = (event) => {
+      if (event.touches.length === 1) {
+        const touch = event.touches[0];
+        touchGestureRef.current = {
+          mode: "pending",
+          startX: touch.clientX,
+          startY: touch.clientY,
+          lastPanSteps: 0,
+        };
+        return;
+      }
+      touchGestureRef.current = null;
+    };
+
+    node.addEventListener("touchstart", onTouchStart, { passive: false });
+    node.addEventListener("touchmove", onTouchMove, { passive: false });
+    node.addEventListener("touchend", onTouchEnd, { passive: false });
+    node.addEventListener("touchcancel", onTouchEnd, { passive: false });
+    return () => {
+      node.removeEventListener("touchstart", onTouchStart);
+      node.removeEventListener("touchmove", onTouchMove);
+      node.removeEventListener("touchend", onTouchEnd);
+      node.removeEventListener("touchcancel", onTouchEnd);
+    };
+  }, [hasCandles, panByDelta, safeVisibleBars, symbol, timeframe]);
+
+  useEffect(() => {
     wheelAccumulatorRef.current = { x: 0, y: 0 };
+    touchGestureRef.current = null;
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
@@ -3816,7 +3932,7 @@ function buildChartPriceDomain({ candles, trades, latestPrice, includeLatestPric
     domainMax = mid + minimumRange / 2;
   }
 
-  const padding = Math.max((domainMax - domainMin) * 0.14, tick * 12);
+  const padding = Math.max((domainMax - domainMin) * 0.08, tick * 8);
   return {
     min: domainMin - padding,
     max: domainMax + padding,
@@ -4473,12 +4589,6 @@ function formatCurrency(value) {
 function formatAccountCurrency(value) {
   const numeric = Number(value || 0);
   return `$${numeric.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function formatCompactCurrency(value) {
-  const numeric = Number(value || 0);
-  if (numeric >= 1000) return `$${Math.round(numeric / 1000)}K`;
-  return `$${numeric.toFixed(0)}`;
 }
 
 function formatPct(value) {

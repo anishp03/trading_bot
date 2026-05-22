@@ -3516,25 +3516,27 @@ textarea {
     z-index: 520;
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 4px;
-    padding: 8px max(8px, env(safe-area-inset-left)) calc(8px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-right));
+    gap: 3px;
+    min-height: 52px;
+    padding: 6px max(6px, env(safe-area-inset-left)) 6px max(6px, env(safe-area-inset-right));
+    align-items: center;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
     background: rgba(8, 12, 19, 0.98);
-    box-shadow: 0 -16px 36px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 -10px 26px rgba(0, 0, 0, 0.34);
   }
 
   .app-mobile-nav-link {
     min-width: 0;
-    min-height: 50px;
+    min-height: 40px;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 10px;
+    border-radius: 9px;
     border: 1px solid transparent;
     color: var(--app-muted);
     text-decoration: none;
     text-align: center;
-    font-size: 0.68rem;
+    font-size: 0.63rem;
     font-weight: 850;
     line-height: 1;
   }
@@ -3737,12 +3739,13 @@ textarea {
     gap: 3px;
     padding-left: 5px;
     padding-right: 5px;
+    min-height: 48px;
   }
 
   .app-mobile-nav-link {
-    min-height: 48px;
+    min-height: 38px;
     border-radius: 8px;
-    font-size: 0.62rem;
+    font-size: 0.58rem;
   }
 
   .futures-analytics-grid,
@@ -4010,7 +4013,7 @@ textarea {
   }
 
   .futures-market-chart-shell {
-    padding: 6px;
+    padding: 5px;
     touch-action: pan-y;
   }
 
@@ -4022,7 +4025,7 @@ textarea {
   .futures-chart-left-controls,
   .futures-chart-bottom-bar {
     align-items: stretch;
-    gap: 8px;
+    gap: 5px;
   }
 
   .futures-chart-left-controls,
@@ -4045,8 +4048,8 @@ textarea {
   .futures-timeframe-btn,
   .futures-chart-actions button {
     min-width: 42px;
-    min-height: 34px;
-    height: 34px;
+    min-height: 30px;
+    height: 30px;
   }
 
   .futures-chart-actions button {
@@ -4061,18 +4064,30 @@ textarea {
     line-height: 0.95rem;
   }
 
+  .futures-chart-status-copy {
+    gap: 1px;
+  }
+
+  .futures-chart-status-copy strong {
+    font-size: 0.76rem;
+    line-height: 0.98rem;
+  }
+
   .app-chart-hover {
     display: grid;
-    gap: 4px;
+    grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 2px;
   }
 
   .futures-market-chart-shell .app-chart-hover {
-    margin-bottom: 2px;
+    margin-bottom: 0;
   }
 
   .futures-market-chart-shell .app-chart-hover div {
     display: flex;
-    gap: 8px;
+    gap: 10px;
     flex-wrap: nowrap;
     overflow-x: auto;
     white-space: nowrap;
@@ -4090,14 +4105,27 @@ textarea {
 
   .app-market-svg.futures-market-svg,
   .futures-market-svg {
-    aspect-ratio: 1.45 / 1;
-    max-height: 330px;
-    min-height: 220px;
+    aspect-ratio: 1.28 / 1;
+    max-height: 380px;
+    min-height: 250px;
   }
 
   .futures-chart-range-row {
     grid-template-columns: minmax(0, 1fr);
-    gap: 4px;
+    gap: 2px;
+    margin-top: 2px;
+    font-size: 0.64rem;
+    line-height: 0.9rem;
+  }
+
+  .futures-chart-range-row input {
+    height: 14px;
+  }
+
+  .futures-market-chart-shell .app-chart-caption {
+    margin-top: 1px;
+    font-size: 0.66rem;
+    line-height: 0.9rem;
   }
 
   .futures-chart-sync-empty {
