@@ -1669,7 +1669,7 @@ textarea {
   position: fixed;
   top: 42%;
   right: 0;
-  z-index: 730;
+  z-index: 1830;
   display: inline-grid;
   gap: 2px;
   place-items: center;
@@ -1697,7 +1697,7 @@ textarea {
 .futures-log-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 700;
+  z-index: 1800;
   border: 0;
   background: rgba(0, 0, 0, 0.28);
 }
@@ -1706,7 +1706,7 @@ textarea {
   position: fixed;
   top: 0;
   right: 0;
-  z-index: 720;
+  z-index: 1820;
   width: min(420px, 100vw);
   height: 100vh;
   display: grid;
@@ -4173,7 +4173,7 @@ textarea {
     top: 45%;
     min-width: 48px;
     min-height: 82px;
-    z-index: 760;
+    z-index: 1830;
   }
 
   .futures-log-tab.open {

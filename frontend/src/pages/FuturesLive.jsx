@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useOutletContext } from "react-router-dom";
 import { apiFetch, isApiNetworkError } from "../utils/api.js";
 import { EASTERN_TIME_LABEL, formatEstTime } from "../utils/time.js";
@@ -1170,7 +1171,7 @@ function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
 function FuturesLiveLogDrawer({ open, onOpen, onClose, entries, status, onClear, clearBusy }) {
   const rows = Array.isArray(entries) ? entries.slice(0, 1000) : [];
   const statusText = compactLogDrawerStatus(status?.healthLabel || "Waiting");
-  return (
+  const drawer = (
     <>
       <button
         type="button"
@@ -1233,6 +1234,7 @@ function FuturesLiveLogDrawer({ open, onOpen, onClose, entries, status, onClear,
       </aside>
     </>
   );
+  return typeof document === "undefined" ? drawer : createPortal(drawer, document.body);
 }
 
 function compactLogDrawerStatus(value) {
@@ -1719,6 +1721,8 @@ function FuturesMarketChart({
   const chartShellRef = useRef(null);
   const wheelAccumulatorRef = useRef({ x: 0, y: 0 });
   const touchGestureRef = useRef(null);
+  const touchPanFrameRef = useRef(null);
+  const touchPanOffsetRef = useRef(0);
   const scrollOffsetRef = useRef(0);
   const displayedDomainRef = useRef(null);
   const domainAnimationFrameRef = useRef(null);
@@ -1784,6 +1788,14 @@ function FuturesMarketChart({
   const setClampedOffset = (next) => setScrollOffset(Math.max(0, Math.min(maxOffset, next)));
   const panBy = (steps) => setClampedOffset(offset + steps);
   const zoomBy = (delta) => setVisibleBars((value) => Math.max(minVisibleBars, Math.min(220, value + delta)));
+  const queueTouchPanOffset = useCallback((nextOffset) => {
+    touchPanOffsetRef.current = Math.max(0, Math.min(maxOffset, nextOffset));
+    if (touchPanFrameRef.current) return;
+    touchPanFrameRef.current = requestAnimationFrame(() => {
+      touchPanFrameRef.current = null;
+      setScrollOffset(touchPanOffsetRef.current);
+    });
+  }, [maxOffset]);
   const handleWheel = useCallback((event) => {
     if (!hasCandles) return;
     event.preventDefault();
@@ -1899,9 +1911,9 @@ function FuturesMarketChart({
         gesture.mode = "pan";
       }
 
-      const mobilePanWindow = Math.max(safeVisibleBars, 32);
+      const mobilePanWindow = Math.max(safeVisibleBars * 3, 54);
       const panSteps = Math.round((-deltaX / Math.max(node.clientWidth, 1)) * mobilePanWindow);
-      setScrollOffset(Math.max(0, Math.min(maxOffset, Number(gesture.startOffset || 0) + panSteps)));
+      queueTouchPanOffset(Number(gesture.startOffset || 0) + panSteps);
       if (event.cancelable) event.preventDefault();
     };
 
@@ -1928,12 +1940,21 @@ function FuturesMarketChart({
       node.removeEventListener("touchmove", onTouchMove);
       node.removeEventListener("touchend", onTouchEnd);
       node.removeEventListener("touchcancel", onTouchEnd);
+      if (touchPanFrameRef.current) {
+        cancelAnimationFrame(touchPanFrameRef.current);
+        touchPanFrameRef.current = null;
+      }
     };
-  }, [hasCandles, maxOffset, minVisibleBars, safeVisibleBars, symbol, timeframe]);
+  }, [hasCandles, maxOffset, minVisibleBars, queueTouchPanOffset, safeVisibleBars, symbol, timeframe]);
 
   useEffect(() => {
     wheelAccumulatorRef.current = { x: 0, y: 0 };
     touchGestureRef.current = null;
+    touchPanOffsetRef.current = 0;
+    if (touchPanFrameRef.current) {
+      cancelAnimationFrame(touchPanFrameRef.current);
+      touchPanFrameRef.current = null;
+    }
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
