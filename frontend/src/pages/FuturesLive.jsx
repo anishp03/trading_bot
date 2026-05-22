@@ -250,7 +250,10 @@ export default function FuturesLive() {
   );
   const chartHasWarmupWindow = chartCandles.some((candle) => !candle.live) || chartCandles.length >= MIN_OPENING_CHART_BARS;
   const warmupPending = graphBuilding || (graphReady && chartCandles.length > 0 && !chartHasWarmupWindow);
-  const chartDisplayCandles = chartCandles;
+  const chartDisplayCandles = useMemo(
+    () => latestSessionChartCandles(chartCandles),
+    [chartCandles]
+  );
   const selectedSymbolState = useMemo(
     () => symbolStates.find((state) => String(state.symbol || "").toUpperCase() === selectedChartSymbol) || null,
     [selectedChartSymbol, symbolStates]
@@ -1166,6 +1169,7 @@ function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
 
 function FuturesLiveLogDrawer({ open, onOpen, onClose, entries, status, onClear, clearBusy }) {
   const rows = Array.isArray(entries) ? entries.slice(0, 1000) : [];
+  const statusText = compactLogDrawerStatus(status?.healthLabel || "Waiting");
   return (
     <>
       <button
@@ -1180,10 +1184,7 @@ function FuturesLiveLogDrawer({ open, onOpen, onClose, entries, status, onClear,
       {open && <button type="button" className="futures-log-backdrop" aria-label="Close live logs" onClick={onClose} />}
       <aside className={open ? "futures-log-drawer open" : "futures-log-drawer"} aria-hidden={!open}>
         <div className="futures-log-drawer-head">
-          <div>
-            <div className="fw-bold app-kicker">Live Logs</div>
-            <span className={`futures-review-status ${status?.healthTone || "idle"}`}>{status?.healthLabel || "Waiting"}</span>
-          </div>
+          <div className="futures-log-drawer-title">Live Logs</div>
           <div className="futures-log-drawer-controls">
             <button
               type="button"
@@ -1193,6 +1194,7 @@ function FuturesLiveLogDrawer({ open, onOpen, onClose, entries, status, onClear,
             >
               {clearBusy ? "Clearing..." : "Clear"}
             </button>
+            <span className={`futures-review-status ${status?.healthTone || "idle"}`}>{statusText}</span>
             <button type="button" className="app-btn app-btn-small" onClick={onClose}>Close</button>
           </div>
         </div>
@@ -1231,6 +1233,11 @@ function FuturesLiveLogDrawer({ open, onOpen, onClose, entries, status, onClear,
       </aside>
     </>
   );
+}
+
+function compactLogDrawerStatus(value) {
+  const label = String(value || "Waiting").trim();
+  return label.replace(/^Health[:\s-]*/i, "") || "Waiting";
 }
 
 function FuturesThinkingLog({ entries, status }) {
@@ -1712,6 +1719,7 @@ function FuturesMarketChart({
   const chartShellRef = useRef(null);
   const wheelAccumulatorRef = useRef({ x: 0, y: 0 });
   const touchGestureRef = useRef(null);
+  const scrollOffsetRef = useRef(0);
   const displayedDomainRef = useRef(null);
   const domainAnimationFrameRef = useRef(null);
   const domainResetSymbolRef = useRef("");
@@ -1730,8 +1738,9 @@ function FuturesMarketChart({
   const axisY = 536;
   const rightAxisGutter = 58;
   const plotWidth = width - rightAxisGutter;
-  const maxVisibleBars = Math.min(220, Math.max(24, candleSeries.length));
-  const safeVisibleBars = Math.max(24, Math.min(visibleBars, maxVisibleBars));
+  const minVisibleBars = candleSeries.length > 0 ? Math.min(24, Math.max(8, candleSeries.length)) : 8;
+  const maxVisibleBars = Math.min(220, Math.max(minVisibleBars, candleSeries.length));
+  const safeVisibleBars = Math.max(minVisibleBars, Math.min(visibleBars, maxVisibleBars));
   const maxOffset = Math.max(0, candleSeries.length - safeVisibleBars);
   const offset = Math.min(scrollOffset, maxOffset);
   const endIndex = Math.max(0, candleSeries.length - offset);
@@ -1774,17 +1783,7 @@ function FuturesMarketChart({
   const findVisibleIndex = (time) => findNearestCandleIndex(visibleCandles, time, visibleCandleToleranceMs);
   const setClampedOffset = (next) => setScrollOffset(Math.max(0, Math.min(maxOffset, next)));
   const panBy = (steps) => setClampedOffset(offset + steps);
-  const panByDelta = useCallback((steps) => {
-    if (!Number.isFinite(steps) || steps === 0) return;
-    setScrollOffset((value) => Math.max(0, Math.min(maxOffset, value + steps)));
-  }, [maxOffset]);
-  const zoomBy = (delta) => setVisibleBars((value) => Math.max(24, Math.min(220, value + delta)));
-  const touchDistance = (touches) => {
-    if (!touches || touches.length < 2) return 0;
-    const first = touches[0];
-    const second = touches[1];
-    return Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY);
-  };
+  const zoomBy = (delta) => setVisibleBars((value) => Math.max(minVisibleBars, Math.min(220, value + delta)));
   const handleWheel = useCallback((event) => {
     if (!hasCandles) return;
     event.preventDefault();
@@ -1799,7 +1798,7 @@ function FuturesMarketChart({
       const units = Math.max(-1, Math.min(1, Math.trunc(wheelAccumulatorRef.current.y / threshold)));
       if (units !== 0) {
         wheelAccumulatorRef.current.y -= units * threshold;
-        setVisibleBars((value) => Math.max(24, Math.min(220, value + units * 2)));
+        setVisibleBars((value) => Math.max(minVisibleBars, Math.min(220, value + units * 2)));
       }
       return;
     }
@@ -1812,7 +1811,7 @@ function FuturesMarketChart({
       wheelAccumulatorRef.current.x -= units * threshold;
       setScrollOffset((value) => Math.max(0, Math.min(maxOffset, value + units)));
     }
-  }, [hasCandles, maxOffset]);
+  }, [hasCandles, maxOffset, minVisibleBars]);
 
   useEffect(() => {
     const node = chartShellRef.current;
@@ -1822,10 +1821,20 @@ function FuturesMarketChart({
   }, [handleWheel, hasCandles, symbol, timeframe]);
 
   useEffect(() => {
+    scrollOffsetRef.current = offset;
+  }, [offset]);
+
+  useEffect(() => {
     const node = chartShellRef.current;
     if (!node) return undefined;
 
-    const clampVisibleBars = (value) => Math.max(24, Math.min(220, value));
+    const clampVisibleBars = (value) => Math.max(minVisibleBars, Math.min(220, value));
+    const touchDistance = (touches) => {
+      if (!touches || touches.length < 2) return 0;
+      const first = touches[0];
+      const second = touches[1];
+      return Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY);
+    };
 
     const onTouchStart = (event) => {
       if (!hasCandles) return;
@@ -1845,7 +1854,7 @@ function FuturesMarketChart({
         mode: "pending",
         startX: touch.clientX,
         startY: touch.clientY,
-        lastPanSteps: 0,
+        startOffset: scrollOffsetRef.current,
       };
     };
 
@@ -1890,12 +1899,9 @@ function FuturesMarketChart({
         gesture.mode = "pan";
       }
 
-      const panSteps = Math.round(-deltaX / 22);
-      const deltaSteps = panSteps - Number(gesture.lastPanSteps || 0);
-      if (deltaSteps !== 0) {
-        gesture.lastPanSteps = panSteps;
-        panByDelta(deltaSteps);
-      }
+      const mobilePanWindow = Math.max(safeVisibleBars, 32);
+      const panSteps = Math.round((-deltaX / Math.max(node.clientWidth, 1)) * mobilePanWindow);
+      setScrollOffset(Math.max(0, Math.min(maxOffset, Number(gesture.startOffset || 0) + panSteps)));
       if (event.cancelable) event.preventDefault();
     };
 
@@ -1906,7 +1912,7 @@ function FuturesMarketChart({
           mode: "pending",
           startX: touch.clientX,
           startY: touch.clientY,
-          lastPanSteps: 0,
+          startOffset: scrollOffsetRef.current,
         };
         return;
       }
@@ -1923,7 +1929,7 @@ function FuturesMarketChart({
       node.removeEventListener("touchend", onTouchEnd);
       node.removeEventListener("touchcancel", onTouchEnd);
     };
-  }, [hasCandles, panByDelta, safeVisibleBars, symbol, timeframe]);
+  }, [hasCandles, maxOffset, minVisibleBars, safeVisibleBars, symbol, timeframe]);
 
   useEffect(() => {
     wheelAccumulatorRef.current = { x: 0, y: 0 };
@@ -2265,6 +2271,7 @@ function FuturesMarketChart({
 
       <svg
         viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
         className="app-market-svg futures-market-svg"
         role="img"
         aria-label={`${symbol} live futures market candles`}

@@ -1724,23 +1724,32 @@ textarea {
 }
 
 .futures-log-drawer-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
   gap: 12px;
   padding: 16px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.futures-log-drawer-head > div {
-  display: grid;
-  gap: 8px;
+.futures-log-drawer-title {
+  color: var(--app-link);
+  font-size: 0.9rem;
+  font-weight: 900;
 }
 
 .futures-log-drawer-controls {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+}
+
+.futures-log-drawer-controls .app-btn {
+  width: 100%;
+}
+
+.futures-log-drawer-controls .futures-review-status {
+  justify-self: center;
+  white-space: nowrap;
 }
 
 .futures-log-drawer-list {
@@ -4161,25 +4170,44 @@ textarea {
   }
 
   .futures-log-tab {
-    display: none;
+    top: 45%;
+    min-width: 48px;
+    min-height: 82px;
+    z-index: 760;
+  }
+
+  .futures-log-tab.open {
+    right: calc(100vw - 54px);
   }
 
   .futures-log-drawer {
-    inset: 0 0 auto auto;
-    width: 100vw;
+    top: 0;
+    right: 0;
+    width: calc(100vw - 54px);
     height: 100dvh;
     max-height: 100dvh;
-    border-left: 0;
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
     background: #080c13;
   }
 
   .futures-log-drawer-head {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    flex-wrap: wrap;
-    padding: calc(12px + env(safe-area-inset-top)) 12px 12px;
+    padding: calc(10px + env(safe-area-inset-top)) 10px 10px;
     background: rgba(10, 13, 19, 0.99);
+  }
+
+  .futures-log-drawer-controls {
+    gap: 8px;
+  }
+
+  .futures-log-drawer-controls .app-btn {
+    min-height: 36px;
+    padding: 7px 8px;
+    font-size: 0.72rem;
+  }
+
+  .futures-log-drawer-controls .futures-review-status {
+    min-height: 32px;
+    padding: 6px 12px;
   }
 
   .futures-log-drawer-list {
