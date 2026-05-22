@@ -251,10 +251,7 @@ export default function FuturesLive() {
   );
   const chartHasWarmupWindow = chartCandles.some((candle) => !candle.live) || chartCandles.length >= MIN_OPENING_CHART_BARS;
   const warmupPending = graphBuilding || (graphReady && chartCandles.length > 0 && !chartHasWarmupWindow);
-  const chartDisplayCandles = useMemo(
-    () => latestSessionChartCandles(chartCandles),
-    [chartCandles]
-  );
+  const chartDisplayCandles = chartCandles;
   const selectedSymbolState = useMemo(
     () => symbolStates.find((state) => String(state.symbol || "").toUpperCase() === selectedChartSymbol) || null,
     [selectedChartSymbol, symbolStates]
