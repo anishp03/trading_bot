@@ -1669,7 +1669,7 @@ textarea {
   position: fixed;
   top: 42%;
   right: 0;
-  z-index: 455;
+  z-index: 730;
   display: inline-grid;
   gap: 2px;
   place-items: center;
@@ -1697,7 +1697,7 @@ textarea {
 .futures-log-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 430;
+  z-index: 700;
   border: 0;
   background: rgba(0, 0, 0, 0.28);
 }
@@ -1706,7 +1706,7 @@ textarea {
   position: fixed;
   top: 0;
   right: 0;
-  z-index: 450;
+  z-index: 720;
   width: min(420px, 100vw);
   height: 100vh;
   display: grid;
@@ -4010,12 +4010,12 @@ textarea {
   }
 
   .futures-market-chart-shell {
-    padding: 8px;
+    padding: 6px;
     touch-action: pan-y;
   }
 
   .futures-market-chart-shell-empty {
-    min-height: 260px;
+    min-height: auto;
   }
 
   .futures-chart-actionbar,
@@ -4074,8 +4074,9 @@ textarea {
 
   .app-market-svg.futures-market-svg,
   .futures-market-svg {
-    aspect-ratio: 1.08 / 1;
-    max-height: none;
+    aspect-ratio: 1.45 / 1;
+    max-height: 330px;
+    min-height: 220px;
   }
 
   .futures-chart-range-row {
@@ -4084,8 +4085,9 @@ textarea {
   }
 
   .futures-chart-sync-empty {
-    min-height: 180px;
+    min-height: 148px;
     justify-items: stretch;
+    padding: 16px;
   }
 
   .futures-chart-sync-grid {
@@ -4119,12 +4121,21 @@ textarea {
   }
 
   .futures-log-drawer {
+    inset: 0 0 auto auto;
     width: 100vw;
     height: 100dvh;
+    max-height: 100dvh;
+    border-left: 0;
+    background: #080c13;
   }
 
   .futures-log-drawer-head {
-    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    flex-wrap: wrap;
+    padding: calc(12px + env(safe-area-inset-top)) 12px 12px;
+    background: rgba(10, 13, 19, 0.99);
   }
 
   .futures-log-drawer-list {
