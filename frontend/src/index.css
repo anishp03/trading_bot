@@ -4063,13 +4063,29 @@ textarea {
 
   .app-chart-hover {
     display: grid;
-    gap: 6px;
+    gap: 4px;
   }
 
-  .app-chart-hover div {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 4px 8px;
+  .futures-market-chart-shell .app-chart-hover {
+    margin-bottom: 2px;
+  }
+
+  .futures-market-chart-shell .app-chart-hover div {
+    display: flex;
+    gap: 8px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .futures-market-chart-shell .app-chart-hover div::-webkit-scrollbar {
+    display: none;
+  }
+
+  .futures-market-chart-shell .app-chart-hover span {
+    flex: 0 0 auto;
   }
 
   .app-market-svg.futures-market-svg,
