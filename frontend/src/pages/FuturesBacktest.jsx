@@ -2,10 +2,68 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_BASE_URL, apiFetch } from "../utils/api.js";
 
-const TOPSTEP_RESEARCH_PROFILE = "TOPSTEP_50K_RESEARCH";
+const TOPSTEP_RESEARCH_PROFILE = "TOPSTEP_150K_RESEARCH";
 const MAIN_PORTFOLIO_SYMBOLS = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K"];
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MGC"]);
 const DEFAULT_STRATEGY_PRESET = "80kprofit";
+const RISK_PROFILE_FALLBACKS = [
+  {
+    code: "CUSTOM",
+    name: "Custom",
+    accountSize: 50000,
+    maxTrailingDrawdown: 2000,
+    dailyLossLimit: 1000,
+    maxRiskPerTrade: 400,
+    maxContracts: 5,
+    maxMicroContracts: 50,
+    maxOpenPositions: 1,
+    maxAggregateContracts: 50,
+    maxAggregateMiniUnits: 0,
+    profitTarget: 0,
+  },
+  {
+    code: "TOPSTEP_50K_RESEARCH",
+    name: "50K",
+    accountSize: 50000,
+    maxTrailingDrawdown: 2000,
+    dailyLossLimit: 1000,
+    maxRiskPerTrade: 700,
+    maxContracts: 5,
+    maxMicroContracts: 50,
+    maxOpenPositions: 3,
+    maxAggregateContracts: 50,
+    maxAggregateMiniUnits: 5,
+    profitTarget: 0,
+  },
+  {
+    code: "TOPSTEP_100K_RESEARCH",
+    name: "100K",
+    accountSize: 100000,
+    maxTrailingDrawdown: 3000,
+    dailyLossLimit: 2000,
+    maxRiskPerTrade: 1400,
+    maxContracts: 10,
+    maxMicroContracts: 100,
+    maxOpenPositions: 3,
+    maxAggregateContracts: 100,
+    maxAggregateMiniUnits: 10,
+    profitTarget: 0,
+  },
+  {
+    code: "TOPSTEP_150K_RESEARCH",
+    name: "150K",
+    accountSize: 150000,
+    maxTrailingDrawdown: 4500,
+    dailyLossLimit: 3000,
+    maxRiskPerTrade: 2100,
+    maxContracts: 15,
+    maxMicroContracts: 150,
+    maxOpenPositions: 3,
+    maxAggregateContracts: 150,
+    maxAggregateMiniUnits: 15,
+    profitTarget: 0,
+  },
+];
 
 const DEFAULT_CONFIG = {
   strategyPreset: DEFAULT_STRATEGY_PRESET,
@@ -13,17 +71,17 @@ const DEFAULT_CONFIG = {
   fundedProfile: TOPSTEP_RESEARCH_PROFILE,
   startDate: "2025-05-01",
   endDate: "2026-05-04",
-  accountSize: "50000",
-  maxTrailingDrawdown: "2000",
-  dailyLossLimit: "1000",
-  maxRiskPerTrade: "700",
-  maxContracts: "50",
+  accountSize: "150000",
+  maxTrailingDrawdown: "4500",
+  dailyLossLimit: "3000",
+  maxRiskPerTrade: "2100",
+  maxContracts: "150",
   commissionPerContract: "1.24",
   slippageTicks: "1",
   profitTarget: "0",
   maxOpenPositions: "3",
-  maxAggregateContracts: "50",
-  maxAggregateMiniUnits: "5",
+  maxAggregateContracts: "150",
+  maxAggregateMiniUnits: "15",
   useSavedRisk: "true",
 };
 
@@ -71,6 +129,7 @@ export default function FuturesBacktest() {
   const canUpdateData = Boolean(dataConfig.startDate && dataConfig.endDate && selectedSymbols.length > 0);
   const presetOptions = strategyPresets.length ? strategyPresets : [{ name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }];
   const selectedPresetLabel = presetOptions.find((preset) => preset.name === config.strategyPreset)?.label || config.strategyPreset || DEFAULT_STRATEGY_PRESET;
+  const riskProfileOptions = useMemo(() => buildRiskProfileOptions(fundedProfiles), [fundedProfiles]);
 
   function loadInstruments() {
     apiFetch("/api/futures/instruments")
@@ -167,7 +226,7 @@ export default function FuturesBacktest() {
     const nextConfig = {
       strategyPreset: String(payload?.strategyPreset || DEFAULT_CONFIG.strategyPreset),
       referenceSymbol: nextSymbols.includes(DEFAULT_CONFIG.referenceSymbol) ? DEFAULT_CONFIG.referenceSymbol : nextSymbols[0],
-      fundedProfile: String(payload?.fundedProfile || DEFAULT_CONFIG.fundedProfile),
+      fundedProfile: normalizeRiskProfileCode(payload?.fundedProfile || DEFAULT_CONFIG.fundedProfile),
       startDate: String(payload?.startDate || DEFAULT_CONFIG.startDate),
       endDate: String(payload?.endDate || DEFAULT_CONFIG.endDate),
       accountSize: String(payload?.accountSize ?? DEFAULT_CONFIG.accountSize),
@@ -197,7 +256,7 @@ export default function FuturesBacktest() {
     setConfig((current) => {
       const next = { ...current, [field]: value };
       if (field === "fundedProfile") {
-        const selectedProfile = fundedProfiles.find((profile) => profile.code === value);
+        const selectedProfile = riskProfileOptions.find((profile) => profile.code === value);
         return selectedProfile ? applyFundedProfile(next, selectedProfile) : next;
       }
       return next;
@@ -283,7 +342,7 @@ export default function FuturesBacktest() {
       maxOpenPositions: config.maxOpenPositions,
       maxAggregateContracts: config.maxAggregateContracts,
       maxAggregateMiniUnits: config.maxAggregateMiniUnits,
-      useSavedRisk: config.useSavedRisk,
+      useSavedRisk: config.fundedProfile === "CUSTOM" ? "false" : "true",
     });
 
     try {
@@ -413,16 +472,13 @@ export default function FuturesBacktest() {
             </select>
           </Field>
 
-          <Field label="Funded Rule Template" className="col-12 col-md-4 col-xl-3">
+          <Field label="Risk Config" className="col-12 col-md-4 col-xl-3">
             <select
               value={config.fundedProfile}
               onChange={(event) => updateConfig("fundedProfile", event.target.value)}
               className="form-select app-input"
             >
-              {(fundedProfiles.length ? fundedProfiles : [
-                { code: "TOPSTEP_150K_RESEARCH", name: "Topstep 150K Research" },
-                { code: TOPSTEP_RESEARCH_PROFILE, name: "Topstep 50K Research" },
-              ]).map((profile) => (
+              {riskProfileOptions.map((profile) => (
                 <option key={profile.code} value={profile.code}>
                   {profile.name}
                 </option>
@@ -613,6 +669,26 @@ function formatDataUpdateMessage(payload) {
     .map((symbol) => `${symbol.symbol}: ${formatNumber(symbol.finalRows, 0)} rows`)
     .join(", ");
   return updated ? `${payload.message} ${updated}.` : payload.message || "Backtest data updated.";
+}
+
+function buildRiskProfileOptions(fundedProfiles = []) {
+  return RISK_PROFILE_FALLBACKS.map((fallback) => {
+    const backendProfile = fundedProfiles.find((profile) => profile.code === fallback.code);
+    return {
+      ...fallback,
+      ...(backendProfile || {}),
+      name: fallback.name,
+    };
+  });
+}
+
+function normalizeRiskProfileCode(code) {
+  const normalized = String(code || "").trim().toUpperCase();
+  if (normalized === "TOPSTEP_50K_COMBINE") return "TOPSTEP_50K_RESEARCH";
+  if (normalized === "TOPSTEP_100K_COMBINE") return "TOPSTEP_100K_RESEARCH";
+  if (normalized === "TOPSTEP_150K_PRACTICE") return "TOPSTEP_150K_RESEARCH";
+  if (RISK_PROFILE_FALLBACKS.some((profile) => profile.code === normalized)) return normalized;
+  return TOPSTEP_RESEARCH_PROFILE;
 }
 
 function applyFundedProfile(config, profile) {

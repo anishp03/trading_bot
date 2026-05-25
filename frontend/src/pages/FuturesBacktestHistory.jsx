@@ -4,7 +4,7 @@ import { apiFetch } from "../utils/api.js";
 import { formatEstTime } from "../utils/time.js";
 
 const PAGE_SIZE = 8;
-const EMPTY_SEGMENTS = { daily: [], weekly: [], monthly: [], quarterly: [], summary: null };
+const EMPTY_SEGMENTS = { daily: [], weekly: [], monthly: [], summary: null };
 
 export default function FuturesBacktestHistory() {
   const [runs, setRuns] = useState([]);
@@ -77,7 +77,6 @@ export default function FuturesBacktestHistory() {
           daily: Array.isArray(data.daily) ? data.daily : [],
           weekly: Array.isArray(data.weekly) ? data.weekly : [],
           monthly: Array.isArray(data.monthly) ? data.monthly : [],
-          quarterly: Array.isArray(data.quarterly) ? data.quarterly : [],
           summary: data.summary && typeof data.summary === "object" ? data.summary : null,
         });
       })
@@ -262,7 +261,6 @@ export default function FuturesBacktestHistory() {
               <SegmentTable title="Daily" segments={selectedSegments.daily} />
               <SegmentTable title="Weekly" segments={selectedSegments.weekly} />
               <SegmentTable title="Monthly" segments={selectedSegments.monthly} />
-              <SegmentTable title="Quarterly" segments={selectedSegments.quarterly} />
             </div>
           </div>
 
@@ -332,10 +330,10 @@ function decorateRuns(runs) {
 
 function SegmentTable({ title, segments }) {
   return (
-    <div className="col-12 col-xl-3">
-      <div className="app-card h-100">
+    <div className="col-12 col-lg-6">
+      <div className="app-card h-100 futures-segment-card">
         <div className="fw-bold app-kicker mb-2">{title}</div>
-        <div className="app-table-wrap strategy-table-wrap">
+        <div className="app-table-wrap strategy-table-wrap futures-segment-scroll">
           <div className="app-grid-head futures-segment-grid">
             <div>Period</div>
             <div>P/L</div>
@@ -361,10 +359,10 @@ function SegmentTable({ title, segments }) {
 
 function SymbolTable({ symbols }) {
   return (
-    <div className="col-12 col-xl-3">
-      <div className="app-card h-100">
+    <div className="col-12 col-lg-6">
+      <div className="app-card h-100 futures-segment-card">
         <div className="fw-bold app-kicker mb-2">By Contract</div>
-        <div className="app-table-wrap strategy-table-wrap">
+        <div className="app-table-wrap strategy-table-wrap futures-segment-scroll">
           <div className="app-grid-head futures-segment-grid">
             <div>Symbol</div>
             <div>P/L</div>

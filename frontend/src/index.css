@@ -823,6 +823,38 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.trade-reason-stack {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.trade-reason-line {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.trade-reason-line b {
+  color: rgba(142, 190, 255, 0.98);
+  font-size: 0.62rem;
+  line-height: 0.9rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.trade-reason-line span,
+.trade-reason-empty {
+  color: rgba(221, 226, 236, 0.78);
+  font-size: 0.76rem;
+  line-height: 1.18rem;
+  overflow-wrap: anywhere;
+}
+
+.trade-reason-empty {
+  color: var(--app-muted);
+}
+
 .app-trade-fees {
   color: rgba(255, 255, 255, 0.74);
   font-weight: 800;
@@ -983,8 +1015,73 @@ textarea {
 }
 
 .futures-segment-grid {
-  grid-template-columns: 1fr 0.9fr 0.62fr 0.62fr 0.78fr;
-  min-width: 520px;
+  grid-template-columns: minmax(0, 1.42fr) minmax(0, 0.72fr) minmax(0, 0.42fr) minmax(0, 0.42fr) minmax(0, 0.58fr);
+  min-width: 0;
+}
+
+.futures-segment-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.futures-segment-scroll {
+  max-height: 430px;
+  min-height: 430px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(5, 8, 13, 0.35);
+  scrollbar-color: rgba(255, 255, 255, 0.26) rgba(255, 255, 255, 0.04);
+  scrollbar-width: thin;
+}
+
+.futures-segment-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.futures-segment-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 999px;
+}
+
+.futures-segment-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border: 2px solid rgba(5, 8, 13, 0.85);
+  border-radius: 999px;
+}
+
+.futures-segment-scroll .app-grid-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  border-top: 0;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08), 0 10px 18px rgba(0, 0, 0, 0.16);
+}
+
+.futures-segment-scroll .app-grid-head,
+.futures-segment-scroll .app-grid-row {
+  min-width: 0;
+}
+
+.futures-segment-scroll .app-grid-head > div,
+.futures-segment-scroll .app-grid-row > div {
+  min-width: 0;
+}
+
+.futures-segment-scroll .app-grid-head > div:not(:first-child),
+.futures-segment-scroll .app-grid-row > div:not(:first-child) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.futures-segment-scroll .app-grid-head > div:first-child,
+.futures-segment-scroll .app-grid-row > div:first-child {
+  overflow-wrap: anywhere;
 }
 
 .futures-lab-grid {
@@ -1022,6 +1119,10 @@ textarea {
 .futures-history-page {
   font-family: inherit;
   gap: 1rem;
+}
+
+.futures-live-page {
+  padding-right: 58px;
 }
 
 .futures-live-page .app-title,
@@ -1277,6 +1378,70 @@ textarea {
 .futures-launch-state.offline span {
   background: var(--app-negative);
   box-shadow: 0 0 10px rgba(255, 140, 140, 0.45);
+}
+
+.futures-feature-toggle {
+  --toggle-color: #ef6f6c;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border-radius: 999px;
+  border: 1px solid rgba(239, 111, 108, 0.42);
+  background: rgba(239, 111, 108, 0.11);
+  color: #ffd7d5;
+  padding: 5px 10px 5px 6px;
+  font-size: 0.74rem;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+}
+
+.futures-feature-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.futures-feature-toggle span {
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.28);
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.futures-feature-toggle span::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--toggle-color);
+  box-shadow: 0 0 10px rgba(239, 111, 108, 0.4);
+  transition: transform 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+
+.futures-feature-toggle.is-on {
+  --toggle-color: #78dca0;
+  border-color: rgba(120, 220, 160, 0.42);
+  background: rgba(120, 220, 160, 0.12);
+  color: #c7f9df;
+}
+
+.futures-feature-toggle.is-on span::after {
+  transform: translateX(14px);
+  box-shadow: 0 0 10px rgba(120, 220, 160, 0.45);
+}
+
+.futures-feature-toggle:has(input:disabled) {
+  cursor: default;
+  opacity: 0.72;
 }
 
 .futures-launch-config {
@@ -1884,6 +2049,29 @@ textarea {
   box-shadow: inset 3px 0 0 rgba(255, 176, 72, 0.8);
 }
 
+.futures-thinking-row.dtm-decision {
+  color: rgba(255, 232, 178, 0.98);
+  background: rgba(255, 214, 112, 0.09);
+  box-shadow: inset 3px 0 0 rgba(255, 214, 112, 0.72);
+}
+
+.futures-thinking-row.dtm-decision .futures-event-tag {
+  background: rgba(255, 214, 112, 0.16);
+  color: rgba(255, 224, 142, 0.98);
+}
+
+.futures-thinking-row.order-flow-pass {
+  color: rgba(199, 249, 223, 0.98);
+  background: rgba(120, 220, 160, 0.08);
+  box-shadow: inset 3px 0 0 rgba(120, 220, 160, 0.62);
+}
+
+.futures-thinking-row.order-flow-blocked {
+  color: rgba(255, 210, 210, 0.98);
+  background: rgba(255, 120, 120, 0.08);
+  box-shadow: inset 3px 0 0 rgba(255, 120, 120, 0.72);
+}
+
 .futures-thinking-row.bracket-alert time,
 .futures-thinking-row.bracket-alert .futures-event-tag {
   color: rgba(255, 209, 128, 0.98);
@@ -2026,6 +2214,117 @@ textarea {
   font-size: 0.76rem;
 }
 
+.futures-near-miss-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.futures-near-miss-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.futures-near-miss-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.futures-near-miss-card {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(10, 14, 21, 0.78);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.28);
+  contain: paint;
+  overflow: hidden;
+  padding: 10px;
+}
+
+.futures-near-miss-card.disabled {
+  opacity: 0.66;
+}
+
+.futures-near-miss-topline {
+  display: grid;
+  grid-template-columns: auto minmax(32px, 0.45fr) minmax(0, 1.75fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.futures-near-miss-topline strong {
+  min-width: 0;
+  color: var(--app-link);
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.futures-near-miss-topline span,
+.futures-near-miss-topline time {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--app-muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.futures-near-miss-reason {
+  min-width: 0;
+  border-radius: 7px;
+  background: rgba(255, 214, 112, 0.1);
+  color: rgba(255, 224, 146, 0.96);
+  padding: 7px 8px;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.futures-near-miss-meta,
+.futures-near-miss-detail {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.futures-near-miss-detail {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.futures-near-miss-meta span,
+.futures-near-miss-detail span {
+  min-width: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--app-muted);
+  padding: 6px 5px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.12;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.futures-near-miss-meta b {
+  color: var(--app-link);
+}
+
 .futures-bot-tracker-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2116,6 +2415,12 @@ textarea {
 
 .futures-bot-tracker-stats b {
   color: var(--app-link);
+}
+
+.futures-order-flow-chip {
+  grid-column: 1 / -1;
+  color: #c7d6ff !important;
+  background: rgba(122, 162, 255, 0.1) !important;
 }
 
 .futures-bot-signal.trading {
@@ -3419,6 +3724,7 @@ textarea {
   .futures-launch-config,
   .futures-chart-symbol-row,
   .futures-symbol-state-grid,
+  .futures-near-miss-grid,
   .futures-bot-tracker-grid,
   .documents-flow-grid,
   .strategy-doc-body {
@@ -3661,7 +3967,7 @@ textarea {
   }
 
   .futures-segment-grid {
-    grid-template-columns: minmax(72px, 1fr) minmax(68px, 0.84fr) minmax(42px, 0.5fr) minmax(44px, 0.5fr) minmax(62px, 0.7fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0.84fr) minmax(0, 0.5fr) minmax(0, 0.5fr) minmax(0, 0.7fr);
     min-width: 0;
     gap: 6px;
   }
@@ -3773,6 +4079,7 @@ textarea {
 @media(max-width: 760px) {
   .futures-live-page {
     gap: 0.78rem;
+    padding-right: 0;
   }
 
   .futures-live-page > .d-flex:first-child {
@@ -3818,6 +4125,11 @@ textarea {
 
   .futures-launch-actions {
     width: 100%;
+  }
+
+  .futures-feature-toggle {
+    flex: 1 1 calc(50% - 4px);
+    justify-content: center;
   }
 
   .futures-launch-actions .app-btn {

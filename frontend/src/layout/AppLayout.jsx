@@ -54,6 +54,7 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
   const [selectedMarket, setSelectedMarket] = useState(routeMarket || "futures");
   const [futuresSidebarStatus, setFuturesSidebarStatus] = useState(null);
   const [futuresSidebarOnline, setFuturesSidebarOnline] = useState(backendMode !== "offline");
+  const [futuresSelectedAccountId, setFuturesSelectedAccountId] = useState("");
   const [backendUpdate, setBackendUpdate] = useState({ busy: false, message: "" });
   const [backendUpdatePopup, setBackendUpdatePopup] = useState(null);
   const activeMarket = marketSections[selectedMarket] || marketSections.futures;
@@ -165,6 +166,7 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
               <FuturesSidebarStatus
                 backendOnline={backendMode !== "offline" && futuresSidebarOnline}
                 status={futuresSidebarStatus}
+                selectedAccountId={futuresSelectedAccountId}
               />
             )}
           </div>
@@ -243,6 +245,7 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
               futuresSidebarOnline,
               futuresSidebarStatus,
               refreshFuturesSidebarStatus: loadFuturesSidebarStatus,
+              setFuturesSidebarAccountId: setFuturesSelectedAccountId,
             }}
           />
         </section>
@@ -304,7 +307,7 @@ function marketForPath(pathname) {
   return "";
 }
 
-function FuturesSidebarStatus({ backendOnline, status }) {
+function FuturesSidebarStatus({ backendOnline, status, selectedAccountId = "" }) {
   const backendOn = Boolean(backendOnline && status?.backend?.online !== false);
   const botOn = Boolean(backendOn && status?.bot?.running);
   const marketDataOn = Boolean(backendOn && status?.marketData?.receiving);
@@ -314,6 +317,7 @@ function FuturesSidebarStatus({ backendOnline, status }) {
       && Number(status?.marketData?.staleSeconds ?? -1) > FUTURES_MARKET_DATA_STALE_SECONDS
   );
   const topstepApiOn = Boolean(backendOn && status?.topstepApi?.ready);
+  const topstepAccountId = String(selectedAccountId || status?.topstepApi?.accountId || "").trim();
   const tradingOn = Boolean(backendOn && status?.trading?.enabled);
   const cards = [
     {
@@ -326,7 +330,7 @@ function FuturesSidebarStatus({ backendOnline, status }) {
       label: "TopStep API",
       value: topstepApiOn ? "ON" : "OFF",
       tone: topstepApiOn ? "on" : "off",
-      detail: topstepApiOn ? `Acct ${status?.topstepApi?.accountId || "--"}` : "Needs test",
+      detail: topstepApiOn ? `Acct ${topstepAccountId || "--"}` : "Needs test",
     },
     {
       label: "Bot Status",
