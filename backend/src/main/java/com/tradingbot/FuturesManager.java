@@ -7523,8 +7523,9 @@ public class FuturesManager {
 		int acceptedEntries = 0;
 		int completedTrades = 0;
 		int orderFlowRejected = 0;
+		int noExtensionManagedTrades = 0;
 
-		LivePortfolioSignalCandidate managedCandidate = selfTestLifecycleCandidate("MES", "ORB", "LONG");
+		LivePortfolioSignalCandidate managedCandidate = selfTestLifecycleCandidate("MES", "ORB", "LONG", 1.20);
 		contexts.put(managedCandidate.symbol, managedCandidate.context);
 		seedSyntheticOrderFlow(managedCandidate.symbol, true);
 		OrderFlowEntryDecision managedFlow = evaluateLiveEntryOrderFlow(session, managedCandidate);
@@ -7578,7 +7579,7 @@ public class FuturesManager {
 			));
 			closeTriggeredLivePositions(session, snapshot, openPositions, contexts, singleBarMap(
 				managedCandidate.symbol,
-				selfTestDtmBar(managedCandidate.context, managedOrder.position, 7, 1.05, false, false)
+				selfTestDtmBar(managedCandidate.context, managedOrder.position, 7, 0.75, false, false)
 			));
 			List<FuturesTrade> targetTrades = closeTriggeredLivePositions(session, snapshot, openPositions, contexts, singleBarMap(
 				managedCandidate.symbol,
@@ -7590,6 +7591,81 @@ public class FuturesManager {
 				FuturesTrade trade = targetTrades.get(0);
 				insertLiveExitDecision(session.sessionId, snapshot.snapshotId, trade, "SIMULATED_TARGET_EXIT", trade.exitReason);
 				pushSyntheticPositionExitedEvent(session.sessionId, trade, "SIMULATED_TARGET_EXIT", trade.exitReason);
+				completedTrades++;
+			}
+		}
+
+		LivePortfolioSignalCandidate noExtensionCandidate = selfTestLifecycleCandidate("MES", "PDB", "LONG");
+		contexts.put(noExtensionCandidate.symbol, noExtensionCandidate.context);
+		seedSyntheticOrderFlow(noExtensionCandidate.symbol, true);
+		OrderFlowEntryDecision noExtensionFlow = evaluateLiveEntryOrderFlow(session, noExtensionCandidate);
+		if (!noExtensionFlow.enabled || !noExtensionFlow.passed || !"ORDER_FLOW_PASS_CONFIRMED".equals(noExtensionFlow.actionCode)) {
+			failures.add("No-extension lifecycle entry optimizer did not produce ORDER_FLOW_PASS_CONFIRMED.");
+		}
+		pushSyntheticCandidateAndOrderFlowEvents(session.sessionId, noExtensionCandidate, noExtensionFlow);
+		LiveSignalOrder noExtensionOrder = validateLivePortfolioSignal(
+			session,
+			portfolioConfig,
+			contexts,
+			noExtensionCandidate,
+			new ArrayList<PortfolioPosition>(),
+			new HashMap<String, Integer>(),
+			new LiveBrokerExposure()
+		);
+		if (!noExtensionOrder.accepted || noExtensionOrder.position == null) {
+			failures.add("No-extension lifecycle candidate failed live sizing: " + noExtensionOrder.reason);
+		} else {
+			noExtensionOrder.diagnosticsJson = mergeSimpleJson(
+				noExtensionOrder.diagnosticsJson,
+				"\"orderFlowAction\":" + jsonString(noExtensionFlow.actionCode)
+					+ ",\"orderFlowReason\":" + jsonString(noExtensionFlow.reason)
+					+ ",\"orderFlow\":" + jsonObjectOrDefault(noExtensionFlow.metricsJson, "{}")
+			);
+			insertLiveSignalDecisionFromSignal(
+				session.sessionId,
+				snapshot.snapshotId,
+				noExtensionCandidate.symbol,
+				noExtensionCandidate.event.signal,
+				noExtensionCandidate.signalTime,
+				noExtensionCandidate.entryTime,
+				noExtensionOrder.contracts,
+				noExtensionOrder.entryPrice,
+				noExtensionOrder.stopPrice,
+				noExtensionOrder.targetPrice,
+				noExtensionOrder.fundedMiniUnits,
+				"ACCEPTED_SIMULATED_LIVE",
+				"Synthetic lifecycle signal accepted in simulated mode.",
+				"",
+				noExtensionOrder.diagnosticsJson
+			);
+			pushSyntheticOrderSubmittedEvent(session.sessionId, noExtensionCandidate, noExtensionOrder);
+			acceptedEntries++;
+
+			List<PortfolioPosition> standardTargetPositions = new ArrayList<PortfolioPosition>();
+			standardTargetPositions.add(noExtensionOrder.position);
+			closeTriggeredLivePositions(session, snapshot, standardTargetPositions, contexts, singleBarMap(
+				noExtensionCandidate.symbol,
+				selfTestDtmBar(noExtensionCandidate.context, noExtensionOrder.position, 6, 0.80, false, false)
+			));
+			closeTriggeredLivePositions(session, snapshot, standardTargetPositions, contexts, singleBarMap(
+				noExtensionCandidate.symbol,
+				selfTestDtmBar(noExtensionCandidate.context, noExtensionOrder.position, 7, 1.05, false, false)
+			));
+			closeTriggeredLivePositions(session, snapshot, standardTargetPositions, contexts, singleBarMap(
+				noExtensionCandidate.symbol,
+				selfTestDtmBar(noExtensionCandidate.context, noExtensionOrder.position, 8, 1.30, false, false)
+			));
+			List<FuturesTrade> noExtensionTrades = closeTriggeredLivePositions(session, snapshot, standardTargetPositions, contexts, singleBarMap(
+				noExtensionCandidate.symbol,
+				selfTestDtmBar(noExtensionCandidate.context, noExtensionOrder.position, 9, 4.00, true, false)
+			));
+			if (noExtensionTrades.isEmpty()) {
+				failures.add("No-extension lifecycle position did not complete through the exit engine.");
+			} else {
+				FuturesTrade trade = noExtensionTrades.get(0);
+				insertLiveExitDecision(session.sessionId, snapshot.snapshotId, trade, "SIMULATED_TARGET_EXIT", trade.exitReason);
+				pushSyntheticPositionExitedEvent(session.sessionId, trade, "SIMULATED_TARGET_EXIT", trade.exitReason);
+				noExtensionManagedTrades++;
 				completedTrades++;
 			}
 		}
@@ -7699,13 +7775,15 @@ public class FuturesManager {
 		boolean exitReasonOk = decisionsJson.contains("\"exitReasonText\"")
 			&& decisionsJson.contains("\"exitReasoning\"")
 			&& decisionsJson.contains("\"DTM_CUT_EARLY_THESIS_FAILED\"")
-			&& decisionsJson.contains("\"DTM_EXTEND_TARGET_CONTINUATION\"");
+			&& decisionsJson.contains("\"DTM_EXTEND_TARGET_CONTINUATION\"")
+			&& decisionsJson.contains("\"DTM_TRAIL_STOP\"");
 		boolean thinkingOk = dtmEvents >= 3 && submittedEvents == acceptedEntries && exitedEvents == completedTrades && orderFlowBlockedEvents == orderFlowRejected;
 		boolean success = failures.isEmpty()
-			&& acceptedEntries == 2
-			&& completedTrades == 2
+			&& acceptedEntries == 3
+			&& completedTrades == 3
+			&& noExtensionManagedTrades == 1
 			&& orderFlowRejected == 1
-			&& decisionRows == 5
+			&& decisionRows == 7
 			&& entryReasonOk
 			&& exitReasonOk
 			&& thinkingOk;
@@ -7725,6 +7803,7 @@ public class FuturesManager {
 			+ "\"snapshotId\":" + snapshot.snapshotId + ","
 			+ "\"acceptedEntries\":" + acceptedEntries + ","
 			+ "\"completedTrades\":" + completedTrades + ","
+			+ "\"noExtensionManagedTrades\":" + noExtensionManagedTrades + ","
 			+ "\"orderFlowRejected\":" + orderFlowRejected + ","
 			+ "\"decisionRows\":" + decisionRows + ","
 			+ "\"thinkingEvents\":{"
@@ -8034,19 +8113,24 @@ public class FuturesManager {
 	}
 
 	private static LivePortfolioSignalCandidate selfTestLifecycleCandidate(String symbol, String strategyCode, String side) {
+		return selfTestLifecycleCandidate(symbol, strategyCode, side, 4.0);
+	}
+
+	private static LivePortfolioSignalCandidate selfTestLifecycleCandidate(String symbol, String strategyCode, String side, double rewardMultiple) {
 		LivePortfolioSignalCandidate candidate = selfTestCandidate(symbol, strategyCode, side);
 		InstrumentSpec spec = candidate.context.spec;
 		double entry = roundToTick(spec, candidate.entryBar.open);
 		double risk = Math.max(spec.tickSize * 4.0, 1.0);
+		double reward = risk * Math.max(0.50, rewardMultiple);
 		Signal signal = candidate.event.signal;
 		signal.entryPrice = entry;
 		signal.notes = selfTestStrategyName(strategyCode) + " synthetic lifecycle setup.";
 		if ("SHORT".equals(signal.side)) {
 			signal.stopPrice = roundToTick(spec, entry + risk);
-			signal.targetPrice = roundToTick(spec, entry - (risk * 4.0));
+			signal.targetPrice = roundToTick(spec, entry - reward);
 		} else {
 			signal.stopPrice = roundToTick(spec, entry - risk);
-			signal.targetPrice = roundToTick(spec, entry + (risk * 4.0));
+			signal.targetPrice = roundToTick(spec, entry + reward);
 		}
 		return candidate;
 	}
@@ -8441,6 +8525,7 @@ public class FuturesManager {
 		candidate.entryBar = syntheticEntryBar;
 		candidate.signalTime = bars.get(5).displayTime;
 		candidate.entryTime = syntheticEntryBar.displayTime;
+		candidate.syntheticSelfTest = true;
 		return candidate;
 	}
 
@@ -10144,7 +10229,7 @@ public class FuturesManager {
 		String normalizedTimeframe = normalizeLiveMonitorTimeframe(timeframe);
 		int minutesPerCandle = liveMonitorTimeframeMinutes(normalizedTimeframe);
 		int requestedBars = Math.max(liveMonitorDefaultLimit(normalizedTimeframe), Math.max(40, limit));
-		List<Bar> oneMinuteBars = rollingRthWarmupBars(minuteBars, requestedBars * minutesPerCandle + 390);
+		List<Bar> oneMinuteBars = rollingExtendedWarmupBars(minuteBars, requestedBars * minutesPerCandle + 390);
 		List<Bar> timeframeBars = aggregateBarsForTimeframe(oneMinuteBars, normalizedTimeframe, limit);
 		enrichLiveBars(timeframeBars, instrumentFor(symbol));
 		warmup.bars = selectLastBars(timeframeBars, limit);
@@ -10199,6 +10284,26 @@ public class FuturesManager {
 				continue;
 			}
 			if (bar.marketDate.isAfter(today)) {
+				continue;
+			}
+			selected.add(copyBar(bar));
+		}
+		return selectLastBars(selected, Math.max(1, limit));
+	}
+
+	private static List<Bar> rollingExtendedWarmupBars(List<Bar> bars, int limit) {
+		List<Bar> selected = new ArrayList<Bar>();
+		if (bars == null || bars.isEmpty()) {
+			return selected;
+		}
+		LocalDateTime latestAllowed = ZonedDateTime.now(NEW_YORK_ZONE).toLocalDateTime().plusMinutes(1);
+		for (int index = 0; index < bars.size(); index++) {
+			Bar bar = bars.get(index);
+			if (bar == null || bar.marketDate == null || bar.marketTime == null || bar.close <= 0.0) {
+				continue;
+			}
+			LocalDateTime barTime = LocalDateTime.of(bar.marketDate, bar.marketTime);
+			if (barTime.isAfter(latestAllowed)) {
 				continue;
 			}
 			selected.add(copyBar(bar));
@@ -10854,7 +10959,7 @@ public class FuturesManager {
 		if ("5m".equals(normalized)) {
 			return 360;
 		}
-		return 240;
+		return 520;
 	}
 
 	private static int liveMonitorTimeframeMinutes(String timeframe) {
@@ -14934,6 +15039,7 @@ public class FuturesManager {
 		private Bar entryBar;
 		private String signalTime;
 		private String entryTime;
+		private boolean syntheticSelfTest;
 	}
 
 	private static class LiveBrokerExposure {
@@ -15136,8 +15242,8 @@ public class FuturesManager {
 		Bar source = candidate.entryBar;
 		Bar execution = copyBar(source);
 		Signal signal = candidate.event.signal;
-		LiveRuntimeState.OrderFlowSnapshot flow = LiveRuntimeState.orderFlowSnapshot(candidate.symbol);
 		double executablePrice = 0.0;
+		LiveRuntimeState.OrderFlowSnapshot flow = candidate.syntheticSelfTest ? null : LiveRuntimeState.orderFlowSnapshot(candidate.symbol);
 		if (flow != null && flow.available && flow.fresh) {
 			if ("LONG".equals(signal.side)) {
 				executablePrice = flow.bestAsk > 0.0 ? flow.bestAsk : flow.bestBid;

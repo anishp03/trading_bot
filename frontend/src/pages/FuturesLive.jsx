@@ -5342,7 +5342,7 @@ function monitorLimitForTimeframe(value) {
   if (value === "1h") return 160;
   if (value === "30m") return 220;
   if (value === "5m") return 360;
-  return 240;
+  return 520;
 }
 
 function timeframeLabel(value) {
