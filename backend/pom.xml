@@ -1,0 +1,112 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  
+  <groupId>com.tradingbot</groupId>
+  <artifactId>backend</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+  
+  <properties>
+  	<maven.compiler.source>1.8</maven.compiler.source>
+  	<maven.compiler.target>1.8</maven.compiler.target>
+  	<junit.jupiter.version>5.10.2</junit.jupiter.version>
+  	<jacoco.maven.plugin.version>0.8.12</jacoco.maven.plugin.version>
+  	<maven.shade.plugin.version>3.6.1</maven.shade.plugin.version>
+  </properties>
+  
+  <dependencies>
+  	<dependency>
+  		<groupId>org.xerial</groupId>
+  		<artifactId>sqlite-jdbc</artifactId>
+  		<version>3.45.2.0</version>
+  	</dependency>
+  	
+  	<dependency>
+  		<groupId>org.junit.jupiter</groupId>
+  		<artifactId>junit-jupiter-api</artifactId>
+  		<version>${junit.jupiter.version}</version>
+  		<scope>test</scope>
+  	</dependency>
+
+  	<dependency>
+  		<groupId>org.junit.jupiter</groupId>
+  		<artifactId>junit-jupiter-engine</artifactId>
+  		<version>${junit.jupiter.version}</version>
+  		<scope>test</scope>
+  	</dependency>
+  	
+  	<dependency>
+  		<groupId>io.javalin</groupId>
+  		<artifactId>javalin</artifactId>
+  		<version>4.6.8</version>
+  	</dependency>
+
+  	<dependency>
+  		<groupId>com.microsoft.signalr</groupId>
+  		<artifactId>signalr</artifactId>
+  		<version>10.0.7</version>
+  	</dependency>
+  	
+  	<dependency>
+  		<groupId>org.slf4j</groupId>
+  		<artifactId>slf4j-simple</artifactId>
+  		<version>1.7.36</version>
+  	</dependency>
+  </dependencies>
+
+  <build>
+  	<plugins>
+  		<plugin>
+  			<groupId>org.apache.maven.plugins</groupId>
+  			<artifactId>maven-shade-plugin</artifactId>
+  			<version>${maven.shade.plugin.version}</version>
+  			<executions>
+  				<execution>
+  					<phase>package</phase>
+  					<goals>
+  						<goal>shade</goal>
+  					</goals>
+  					<configuration>
+  						<createDependencyReducedPom>false</createDependencyReducedPom>
+  						<shadedArtifactAttached>true</shadedArtifactAttached>
+  						<shadedClassifierName>all</shadedClassifierName>
+  						<filters>
+  							<filter>
+  								<artifact>*:*</artifact>
+  								<excludes>
+  									<exclude>META-INF/*.SF</exclude>
+  									<exclude>META-INF/*.DSA</exclude>
+  									<exclude>META-INF/*.RSA</exclude>
+  								</excludes>
+  							</filter>
+  						</filters>
+  						<transformers>
+  							<transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+  								<mainClass>com.tradingbot.MainServer</mainClass>
+  							</transformer>
+  						</transformers>
+  					</configuration>
+  				</execution>
+  			</executions>
+  		</plugin>
+  		<plugin>
+  			<groupId>org.jacoco</groupId>
+  			<artifactId>jacoco-maven-plugin</artifactId>
+  			<version>${jacoco.maven.plugin.version}</version>
+  			<executions>
+  				<execution>
+  					<goals>
+  						<goal>prepare-agent</goal>
+  					</goals>
+  				</execution>
+  				<execution>
+  					<id>report</id>
+  					<phase>test</phase>
+  					<goals>
+  						<goal>report</goal>
+  					</goals>
+  				</execution>
+  			</executions>
+  		</plugin>
+  	</plugins>
+  </build>
+</project>
