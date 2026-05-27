@@ -301,26 +301,25 @@ export default function FuturesLive() {
   );
   const tradeMetricCount = allTradeRows.length;
   const displayMonitor = useMemo(
-    () => resolveDisplayMonitor(liveMonitor, monitorCache, selectedTimeframe, monitorDataActive),
-    [monitorDataActive, liveMonitor, monitorCache, selectedTimeframe]
+    () => resolveDisplayMonitor(liveMonitor, monitorCache, selectedTimeframe, monitorDataActive, selectedChartSymbol),
+    [monitorDataActive, liveMonitor, monitorCache, selectedChartSymbol, selectedTimeframe]
   );
   const rawChartCandles = useMemo(
-    () => (graphReady ? displayMonitor?.marketData?.[selectedChartSymbol] || [] : []),
-    [graphReady, displayMonitor, selectedChartSymbol]
+    () => displayMonitor?.marketData?.[selectedChartSymbol] || [],
+    [displayMonitor, selectedChartSymbol]
   );
   const chartCandles = useMemo(
     () => {
-      if (!graphReady) return [];
       const normalized = rawChartCandles
         .map(normalizeCandle)
         .filter((candle) => candle.time && Number(candle.close || 0) > 0);
       return normalized;
     },
-    [graphReady, rawChartCandles]
+    [rawChartCandles]
   );
   const chartHasWarmupWindow = chartCandles.some((candle) => !candle.live) || chartCandles.length >= MIN_OPENING_CHART_BARS;
   const warmupPending = graphBuilding || (graphReady && chartCandles.length > 0 && !chartHasWarmupWindow);
-  const chartDisplayCandles = chartCandles;
+  const chartDisplayCandles = chartHasWarmupWindow ? chartCandles : [];
   const selectedSymbolState = useMemo(
     () => symbolStates.find((state) => String(state.symbol || "").toUpperCase() === selectedChartSymbol) || null,
     [selectedChartSymbol, symbolStates]
@@ -858,10 +857,10 @@ export default function FuturesLive() {
           const responseTimeframe = normalizeClientTimeframe(data.timeframe || selectedTimeframe);
           const monitorWithTimeframe = { ...data, timeframe: responseTimeframe };
           const monitorWithMarks = mergeMonitorWithMarks(monitorWithTimeframe, liveMarksRef.current, responseTimeframe) || monitorWithTimeframe;
-          setLiveMonitor(monitorWithMarks);
+          setLiveMonitor((current) => mergeMonitorWithCachedMarketData(monitorWithMarks, current));
           setMonitorCache((current) => ({
             ...current,
-            [responseTimeframe]: monitorWithMarks,
+            [responseTimeframe]: mergeMonitorWithCachedMarketData(monitorWithMarks, current?.[responseTimeframe]),
           }));
         } else {
           setLiveMonitor((current) => current);
@@ -2877,6 +2876,55 @@ function mergeCurrentCandleIntoSeries(series, currentCandle) {
   return candles;
 }
 
+function mergeMonitorWithCachedMarketData(primary, fallback) {
+  if (!primary) return fallback || null;
+  if (!fallback) return primary;
+  const primaryTimeframe = normalizeClientTimeframe(primary.timeframe);
+  const fallbackTimeframe = normalizeClientTimeframe(fallback.timeframe);
+  if (primaryTimeframe !== fallbackTimeframe) return primary;
+  const marketData = { ...(fallback.marketData || {}), ...(primary.marketData || {}) };
+  const symbols = new Set([
+    ...Object.keys(fallback.marketData || {}),
+    ...Object.keys(primary.marketData || {}),
+  ]);
+  symbols.forEach((symbol) => {
+    marketData[symbol] = mergeCandleSeriesByTime(fallback.marketData?.[symbol], primary.marketData?.[symbol]);
+  });
+  return {
+    ...fallback,
+    ...primary,
+    marketData,
+  };
+}
+
+function mergeCandleSeriesByTime(baseSeries, patchSeries) {
+  const base = Array.isArray(baseSeries) ? baseSeries : [];
+  const patches = Array.isArray(patchSeries) ? patchSeries : [];
+  if (!base.length) return patches;
+  if (!patches.length) return base;
+  const byTime = new Map();
+  [...base, ...patches].forEach((rawCandle) => {
+    const candle = normalizeCandle(rawCandle);
+    if (!candle.time || Number(candle.close || 0) <= 0) return;
+    const existing = byTime.get(candle.time);
+    if (!existing) {
+      byTime.set(candle.time, candle);
+      return;
+    }
+    byTime.set(candle.time, {
+      ...existing,
+      ...candle,
+      high: Math.max(Number(existing.high || 0), Number(candle.high || candle.close || 0)),
+      low: Math.min(Number(existing.low || existing.close || 0), Number(candle.low || candle.close || 0)),
+      volume: Math.max(Number(existing.volume || 0), Number(candle.volume || 0)),
+      live: Boolean(existing.live || candle.live),
+    });
+  });
+  return Array.from(byTime.values())
+    .sort((first, second) => (parseChartTime(first.time) || 0) - (parseChartTime(second.time) || 0))
+    .slice(-Math.max(base.length, patches.length));
+}
+
 function mergeSymbolStatesWithMarks(symbolStates, marks) {
   const bySymbol = new Map((Array.isArray(symbolStates) ? symbolStates : []).map((state) => [String(state.symbol || "").toUpperCase(), state]));
   const feedStaleSeconds = Number(marks?.feedStaleSeconds ?? -1);
@@ -2923,13 +2971,27 @@ function latestSessionChartCandles(candles) {
   return latestSession.length > 0 ? latestSession : series;
 }
 
-function resolveDisplayMonitor(liveMonitor, monitorCache, selectedTimeframe, monitorActive) {
+function resolveDisplayMonitor(liveMonitor, monitorCache, selectedTimeframe, monitorActive, selectedSymbol) {
   if (!monitorActive) return null;
   const normalizedTimeframe = normalizeClientTimeframe(selectedTimeframe);
   const liveTimeframe = normalizeClientTimeframe(liveMonitor?.timeframe);
-  if (liveMonitor && liveTimeframe === normalizedTimeframe) return liveMonitor;
-  if (monitorCache?.[normalizedTimeframe]) return monitorCache[normalizedTimeframe];
+  const cachedMonitor = monitorCache?.[normalizedTimeframe] || null;
+  if (liveMonitor && liveTimeframe === normalizedTimeframe) {
+    return chooseBestDisplayMonitor(liveMonitor, cachedMonitor, selectedSymbol);
+  }
+  if (cachedMonitor) return cachedMonitor;
   return null;
+}
+
+function chooseBestDisplayMonitor(liveMonitor, cachedMonitor, selectedSymbol) {
+  if (!cachedMonitor) return liveMonitor;
+  const merged = mergeMonitorWithCachedMarketData(liveMonitor, cachedMonitor);
+  const symbol = String(selectedSymbol || "").toUpperCase();
+  const liveLength = Array.isArray(liveMonitor?.marketData?.[symbol]) ? liveMonitor.marketData[symbol].length : 0;
+  const cachedLength = Array.isArray(cachedMonitor?.marketData?.[symbol]) ? cachedMonitor.marketData[symbol].length : 0;
+  const mergedLength = Array.isArray(merged?.marketData?.[symbol]) ? merged.marketData[symbol].length : 0;
+  if (mergedLength >= Math.max(liveLength, cachedLength, MIN_OPENING_CHART_BARS)) return merged;
+  return cachedLength > liveLength ? cachedMonitor : liveMonitor;
 }
 
 function normalizeClientTimeframe(value) {
