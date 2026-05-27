@@ -6,6 +6,17 @@ const TOPSTEP_RESEARCH_PROFILE = "TOPSTEP_150K_RESEARCH";
 const MAIN_PORTFOLIO_SYMBOLS = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K", "MYM", "MCL"];
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MYM", "MGC", "MCL"]);
 const DEFAULT_STRATEGY_PRESET = "94k";
+const INSTRUMENT_FALLBACKS = [
+  { symbol: "MES", name: "Micro E-mini S&P 500", exchange: "CME", tickSize: 0.25, tickValue: 1.25 },
+  { symbol: "MNQ", name: "Micro E-mini Nasdaq-100", exchange: "CME", tickSize: 0.25, tickValue: 0.5 },
+  { symbol: "NQ", name: "E-mini Nasdaq-100", exchange: "CME", tickSize: 0.25, tickValue: 5 },
+  { symbol: "MGC", name: "Micro Gold", exchange: "COMEX", tickSize: 0.1, tickValue: 1 },
+  { symbol: "ES", name: "E-mini S&P 500", exchange: "CME", tickSize: 0.25, tickValue: 12.5 },
+  { symbol: "M2K", name: "Micro E-mini Russell 2000", exchange: "CME", tickSize: 0.1, tickValue: 0.5 },
+  { symbol: "MYM", name: "Micro E-mini Dow", exchange: "CBOT", tickSize: 1, tickValue: 0.5 },
+  { symbol: "MCL", name: "Micro WTI Crude Oil", exchange: "NYMEX", tickSize: 0.01, tickValue: 1 },
+  { symbol: "GC", name: "Gold", exchange: "COMEX", tickSize: 0.1, tickValue: 10 },
+];
 const RISK_PROFILE_FALLBACKS = [
   {
     code: "CUSTOM",
@@ -117,17 +128,17 @@ export default function FuturesBacktest() {
   }, []);
 
   const selectedSymbols = useMemo(() => {
-    const available = new Set((instruments.length ? instruments : MAIN_PORTFOLIO_SYMBOLS.map((symbol) => ({ symbol }))).map((instrument) => instrument.symbol));
+    const available = new Set((instruments.length ? instruments : INSTRUMENT_FALLBACKS).map((instrument) => instrument.symbol));
     const filtered = batchSymbols.map((symbol) => symbol.toUpperCase()).filter((symbol) => available.has(symbol));
     return filtered.length ? filtered : MAIN_PORTFOLIO_SYMBOLS;
   }, [batchSymbols, instruments]);
 
   const selectedRows = selectedSymbols.reduce((total, symbol) => total + Number(marketData.rowsBySymbol?.[symbol] || 0), 0);
   const missingDataSymbols = selectedSymbols.filter((symbol) => Number(marketData.rowsBySymbol?.[symbol] || 0) <= 0);
-  const selectedInstrument = instruments.find((instrument) => instrument.symbol === config.referenceSymbol) || instruments[0] || null;
+  const selectedInstrument = (instruments.length ? instruments : INSTRUMENT_FALLBACKS).find((instrument) => instrument.symbol === config.referenceSymbol) || INSTRUMENT_FALLBACKS[0] || null;
   const canRun = Boolean(config.startDate && config.endDate && selectedSymbols.length > 0 && missingDataSymbols.length === 0);
   const canUpdateData = Boolean(dataConfig.startDate && dataConfig.endDate && selectedSymbols.length > 0);
-  const presetOptions = strategyPresets.length ? strategyPresets : [{ name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }];
+  const presetOptions = mergeStrategyPresets(strategyPresets);
   const selectedPresetLabel = presetOptions.find((preset) => preset.name === config.strategyPreset)?.label || config.strategyPreset || DEFAULT_STRATEGY_PRESET;
   const riskProfileOptions = useMemo(() => buildRiskProfileOptions(fundedProfiles), [fundedProfiles]);
 
@@ -137,10 +148,10 @@ export default function FuturesBacktest() {
         if (!response.ok) throw new Error("Failed to load futures instruments.");
         return response.json();
       })
-      .then((data) => setInstruments(Array.isArray(data) ? data : []))
+      .then((data) => setInstruments(buildInstrumentOptions(data)))
       .catch((error) => {
         console.error("Error loading futures instruments:", error);
-        setInstruments([]);
+        setInstruments(INSTRUMENT_FALLBACKS);
       });
   }
 
@@ -208,7 +219,7 @@ export default function FuturesBacktest() {
         return response.json();
       })
       .then((data) => {
-        const presets = Array.isArray(data) ? data : [];
+        const presets = mergeStrategyPresets(data);
         setStrategyPresets(presets);
         if (presets.length && !presets.some((preset) => preset.name === config.strategyPreset)) {
           setConfig((current) => ({ ...current, strategyPreset: presets[0].name }));
@@ -222,9 +233,9 @@ export default function FuturesBacktest() {
 
   function applyPortfolioDefaults(payload) {
     const symbolList = parseSymbols(payload?.symbolList || payload?.symbols || MAIN_PORTFOLIO_SYMBOLS.join(","));
-    const nextSymbols = symbolList.length ? symbolList : MAIN_PORTFOLIO_SYMBOLS;
+    const nextSymbols = mainPortfolioOrPayloadSymbols(symbolList);
     const nextConfig = {
-      strategyPreset: String(payload?.strategyPreset || DEFAULT_CONFIG.strategyPreset),
+      strategyPreset: DEFAULT_CONFIG.strategyPreset,
       referenceSymbol: nextSymbols.includes(DEFAULT_CONFIG.referenceSymbol) ? DEFAULT_CONFIG.referenceSymbol : nextSymbols[0],
       fundedProfile: normalizeRiskProfileCode(payload?.fundedProfile || DEFAULT_CONFIG.fundedProfile),
       startDate: String(payload?.startDate || DEFAULT_CONFIG.startDate),
@@ -544,7 +555,7 @@ export default function FuturesBacktest() {
               onChange={(event) => updateConfig("referenceSymbol", event.target.value)}
               className="form-select app-input"
             >
-              {(instruments.length ? instruments : MAIN_PORTFOLIO_SYMBOLS.map((symbol) => ({ symbol, name: symbol }))).map((instrument) => (
+              {(instruments.length ? instruments : INSTRUMENT_FALLBACKS).map((instrument) => (
                 <option key={instrument.symbol} value={instrument.symbol}>
                   {instrument.symbol} - {instrument.name}
                 </option>
@@ -571,7 +582,7 @@ export default function FuturesBacktest() {
               </div>
 
               <div className="futures-contract-selector">
-                {(instruments.length ? instruments : MAIN_PORTFOLIO_SYMBOLS.map((symbol) => ({ symbol }))).map((instrument) => {
+                {(instruments.length ? instruments : INSTRUMENT_FALLBACKS).map((instrument) => {
                   const rows = Number(marketData.rowsBySymbol?.[instrument.symbol] || 0);
                   return (
                     <label className="app-toggle-row" key={instrument.symbol}>
@@ -669,6 +680,51 @@ function formatDataUpdateMessage(payload) {
     .map((symbol) => `${symbol.symbol}: ${formatNumber(symbol.finalRows, 0)} rows`)
     .join(", ");
   return updated ? `${payload.message} ${updated}.` : payload.message || "Backtest data updated.";
+}
+
+function buildInstrumentOptions(apiInstruments = []) {
+  const bySymbol = new Map(INSTRUMENT_FALLBACKS.map((instrument) => [instrument.symbol, { ...instrument }]));
+  const apiList = Array.isArray(apiInstruments) ? apiInstruments : [];
+  apiList.forEach((instrument) => {
+    const symbol = String(instrument?.symbol || "").trim().toUpperCase();
+    if (!symbol) return;
+    bySymbol.set(symbol, { ...(bySymbol.get(symbol) || {}), ...instrument, symbol });
+  });
+
+  const orderedSymbols = [...MAIN_PORTFOLIO_SYMBOLS, "GC"];
+  const ordered = [];
+  const seen = new Set();
+  orderedSymbols.forEach((symbol) => {
+    const instrument = bySymbol.get(symbol);
+    if (instrument && !seen.has(symbol)) {
+      ordered.push(instrument);
+      seen.add(symbol);
+    }
+  });
+  apiList.forEach((instrument) => {
+    const symbol = String(instrument?.symbol || "").trim().toUpperCase();
+    if (!symbol || seen.has(symbol)) return;
+    ordered.push(bySymbol.get(symbol));
+    seen.add(symbol);
+  });
+  return ordered.length ? ordered : INSTRUMENT_FALLBACKS;
+}
+
+function mergeStrategyPresets(apiPresets = []) {
+  const byName = new Map([[DEFAULT_STRATEGY_PRESET, { name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }]]);
+  const presets = Array.isArray(apiPresets) ? apiPresets : [];
+  presets.forEach((preset) => {
+    const name = String(preset?.name || "").trim();
+    if (!name) return;
+    byName.set(name, { ...preset, name, label: preset.label || name });
+  });
+  return Array.from(byName.values());
+}
+
+function mainPortfolioOrPayloadSymbols(symbols = []) {
+  const cleaned = symbols.filter(Boolean);
+  const hasAllMainSymbols = MAIN_PORTFOLIO_SYMBOLS.every((symbol) => cleaned.includes(symbol));
+  return hasAllMainSymbols ? cleaned : MAIN_PORTFOLIO_SYMBOLS;
 }
 
 function buildRiskProfileOptions(fundedProfiles = []) {

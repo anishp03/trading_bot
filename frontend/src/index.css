@@ -2382,12 +2382,6 @@ textarea {
   background: rgba(100, 180, 255, 0.1);
 }
 
-.futures-bot-tracker-card.reserved {
-  border-style: dashed;
-  background: rgba(255, 255, 255, 0.02);
-  opacity: 0.78;
-}
-
 .futures-bot-tracker-topline,
 .futures-bot-tracker-pnl,
 .futures-bot-tracker-foot {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../utils/api.js";
 
 const DEFAULT_SETTINGS = {
@@ -146,6 +146,17 @@ const DEFAULT_SETTINGS = {
 };
 
 const DEFAULT_STRATEGY_PRESET = "94k";
+const INSTRUMENT_FALLBACKS = [
+  { symbol: "MES", name: "Micro E-mini S&P 500", exchange: "CME", tickSize: 0.25, tickValue: 1.25 },
+  { symbol: "MNQ", name: "Micro E-mini Nasdaq-100", exchange: "CME", tickSize: 0.25, tickValue: 0.5 },
+  { symbol: "NQ", name: "E-mini Nasdaq-100", exchange: "CME", tickSize: 0.25, tickValue: 5 },
+  { symbol: "MGC", name: "Micro Gold", exchange: "COMEX", tickSize: 0.1, tickValue: 1 },
+  { symbol: "ES", name: "E-mini S&P 500", exchange: "CME", tickSize: 0.25, tickValue: 12.5 },
+  { symbol: "M2K", name: "Micro E-mini Russell 2000", exchange: "CME", tickSize: 0.1, tickValue: 0.5 },
+  { symbol: "MYM", name: "Micro E-mini Dow", exchange: "CBOT", tickSize: 1, tickValue: 0.5 },
+  { symbol: "MCL", name: "Micro WTI Crude Oil", exchange: "NYMEX", tickSize: 0.01, tickValue: 1 },
+  { symbol: "GC", name: "Gold", exchange: "COMEX", tickSize: 0.1, tickValue: 10 },
+];
 
 const MODULES = [
   ["orb", "Opening Range Breakout"],
@@ -196,7 +207,7 @@ export default function FuturesStrategy() {
         return response.json();
       })
       .then((data) => {
-        const nextInstruments = Array.isArray(data) ? data : [];
+        const nextInstruments = buildInstrumentOptions(data);
         setInstruments(nextInstruments);
         if (nextInstruments.length && !nextInstruments.some((instrument) => instrument.symbol === selectedSymbol)) {
           setSelectedSymbol(nextInstruments[0].symbol);
@@ -204,7 +215,7 @@ export default function FuturesStrategy() {
       })
       .catch((error) => {
         console.error("Error loading futures instruments:", error);
-        setInstruments([]);
+        setInstruments(INSTRUMENT_FALLBACKS);
       });
   }
 
@@ -215,7 +226,7 @@ export default function FuturesStrategy() {
         return response.json();
       })
       .then((data) => {
-        const presets = Array.isArray(data) ? data : [];
+        const presets = mergeStrategyPresets(data);
         setStrategyPresets(presets);
         if (presets.length && !presets.some((preset) => preset.name === selectedPreset)) {
           setSelectedPreset(presets[0].name);
@@ -463,7 +474,7 @@ export default function FuturesStrategy() {
       const response = await apiFetch(`/api/futures/strategy-presets?${params.toString()}`, { method: "POST" });
       const payload = await response.json();
       if (!response.ok || payload?.success === false) throw new Error(payload?.message || "Failed to create strategy preset.");
-      setStrategyPresets(Array.isArray(payload.presets) ? payload.presets : strategyPresets);
+      setStrategyPresets(mergeStrategyPresets(payload.presets || strategyPresets));
       setSelectedPreset(payload.preset?.name || presetName);
       setNewPresetName("");
       setSaveStatus(payload.message || `Created ${presetName}.`);
@@ -475,9 +486,10 @@ export default function FuturesStrategy() {
     }
   }
 
-  const selectedInstrument = instruments.find((instrument) => instrument.symbol === selectedSymbol) || null;
+  const instrumentOptions = useMemo(() => instruments.length ? instruments : INSTRUMENT_FALLBACKS, [instruments]);
+  const selectedInstrument = instrumentOptions.find((instrument) => instrument.symbol === selectedSymbol) || null;
   const enabledCount = MODULES.filter(([key]) => settings[key]?.enabled).length;
-  const presetOptions = strategyPresets.length ? strategyPresets : [{ name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }];
+  const presetOptions = mergeStrategyPresets(strategyPresets);
 
   return (
     <div className="app-page futures-config-page">
@@ -520,7 +532,7 @@ export default function FuturesStrategy() {
               className="form-select app-input"
               disabled={isLoading}
             >
-              {(instruments.length ? instruments : [{ symbol: "MNQ", name: "Micro E-mini Nasdaq-100" }]).map((instrument) => (
+              {instrumentOptions.map((instrument) => (
                 <option key={instrument.symbol} value={instrument.symbol}>
                   {instrument.symbol} - {instrument.name}
                 </option>
@@ -745,6 +757,45 @@ function normalizeSettings(data) {
 function moduleMaxTrades(key) {
   if (CUSTOM_MODULE_CAPS[key]) return String(CUSTOM_MODULE_CAPS[key]);
   return HIGH_CAP_MODULES.has(key) ? "20" : "5";
+}
+
+function buildInstrumentOptions(apiInstruments = []) {
+  const bySymbol = new Map(INSTRUMENT_FALLBACKS.map((instrument) => [instrument.symbol, { ...instrument }]));
+  const apiList = Array.isArray(apiInstruments) ? apiInstruments : [];
+  apiList.forEach((instrument) => {
+    const symbol = String(instrument?.symbol || "").trim().toUpperCase();
+    if (!symbol) return;
+    bySymbol.set(symbol, { ...(bySymbol.get(symbol) || {}), ...instrument, symbol });
+  });
+
+  const orderedSymbols = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K", "MYM", "MCL", "GC"];
+  const ordered = [];
+  const seen = new Set();
+  orderedSymbols.forEach((symbol) => {
+    const instrument = bySymbol.get(symbol);
+    if (instrument && !seen.has(symbol)) {
+      ordered.push(instrument);
+      seen.add(symbol);
+    }
+  });
+  apiList.forEach((instrument) => {
+    const symbol = String(instrument?.symbol || "").trim().toUpperCase();
+    if (!symbol || seen.has(symbol)) return;
+    ordered.push(bySymbol.get(symbol));
+    seen.add(symbol);
+  });
+  return ordered.length ? ordered : INSTRUMENT_FALLBACKS;
+}
+
+function mergeStrategyPresets(apiPresets = []) {
+  const byName = new Map([[DEFAULT_STRATEGY_PRESET, { name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }]]);
+  const presets = Array.isArray(apiPresets) ? apiPresets : [];
+  presets.forEach((preset) => {
+    const name = String(preset?.name || "").trim();
+    if (!name) return;
+    byName.set(name, { ...preset, name, label: preset.label || name });
+  });
+  return Array.from(byName.values());
 }
 
 function Readout({ label, value }) {

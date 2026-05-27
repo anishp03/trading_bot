@@ -201,7 +201,7 @@ export default function FuturesLive() {
   const monitorSymbols = DEFAULT_SYMBOLS;
   const liveStrategySymbols = monitorSymbols;
   const presetOptions = useMemo(
-    () => strategyPresets.length ? strategyPresets : [{ name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }],
+    () => mergeStrategyPresets(strategyPresets),
     [strategyPresets]
   );
   const activeStrategyPreset = liveStatus?.running && liveStatus?.strategyPreset ? liveStatus.strategyPreset : selectedStrategyPreset;
@@ -722,7 +722,7 @@ export default function FuturesLive() {
 
   function loadStrategyPresets() {
     requestJson("strategyPresets", "/api/futures/strategy-presets", (data) => {
-        const presets = Array.isArray(data) ? data : [];
+        const presets = mergeStrategyPresets(data);
         setStrategyPresets(presets);
         if (presets.length && !presets.some((preset) => preset.name === selectedStrategyPreset)) {
           setSelectedStrategyPreset(presets[0].name);
@@ -1379,11 +1379,6 @@ function sortNearMissDisplayRows(rows) {
 function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
   const activeCount = trackers.filter((tracker) => tracker.liveTrades > 0).length;
   const totalPnl = trackers.reduce((total, tracker) => total + Number(tracker.pnl || 0), 0);
-  const trackerTiles = [
-    ...trackers,
-    reservedTrackerTile("NEXT", "Future equity slot"),
-    reservedTrackerTile("NEXT 2", "Future equity slot"),
-  ];
   return (
     <div className="futures-bot-tracker-panel">
       <div className="futures-bot-tracker-header">
@@ -1396,13 +1391,12 @@ function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
         </span>
       </div>
       <div className="futures-bot-tracker-grid">
-        {trackerTiles.map((tracker) => (
+        {trackers.map((tracker) => (
           <div
             key={tracker.symbol}
             className={[
               "futures-bot-tracker-card",
               selectedSymbol === tracker.symbol ? "active" : "",
-              tracker.reserved ? "reserved" : "",
             ].filter(Boolean).join(" ")}
           >
             <div className="futures-bot-tracker-topline">
@@ -1419,7 +1413,7 @@ function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
               <span className="futures-order-flow-chip">{tracker.orderFlowLabel}</span>
             </div>
             <div className="futures-bot-tracker-health">
-              <span className={`futures-health-pill ${tracker.healthTone}`}>{tracker.reserved ? tracker.healthStatusText : `Health: ${tracker.healthStatusText || tracker.healthLabel || "Waiting"}`}</span>
+              <span className={`futures-health-pill ${tracker.healthTone}`}>{`Health: ${tracker.healthStatusText || tracker.healthLabel || "Waiting"}`}</span>
             </div>
           </div>
         ))}
@@ -1952,23 +1946,6 @@ function thinkingLogRowClass(entry) {
   const text = `${entry?.summary || ""} ${entry?.detail || ""} ${entry?.title || ""} ${entry?.subtext || ""}`.toLowerCase();
   const bracketAlert = text.includes("auto oco brackets") || text.includes("position brackets");
   return `futures-thinking-row ${eventToneClass(entry)} ${eventLogCode(entry).toLowerCase().replaceAll("_", "-")}${bracketAlert ? " bracket-alert" : ""}`;
-}
-
-function reservedTrackerTile(symbol, detail) {
-  return {
-    symbol,
-    reserved: true,
-    lastPrice: 0,
-    pnl: 0,
-    changePct: 0,
-    totalTrades: 0,
-    liveTrades: 0,
-    signal: "Reserved",
-    signalTone: "idle",
-    healthLabel: "Reserved",
-    healthTone: "idle",
-    healthStatusText: detail,
-  };
 }
 
 function FuturesMarketChart({
@@ -4525,6 +4502,17 @@ function latestChartPrice(candles) {
   return Number(candles[candles.length - 1]?.close || 0);
 }
 
+function mergeStrategyPresets(apiPresets = []) {
+  const byName = new Map([[DEFAULT_STRATEGY_PRESET, { name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }]]);
+  const presets = Array.isArray(apiPresets) ? apiPresets : [];
+  presets.forEach((preset) => {
+    const name = String(preset?.name || "").trim();
+    if (!name) return;
+    byName.set(name, { ...preset, name, label: preset.label || name });
+  });
+  return Array.from(byName.values());
+}
+
 function calculateFuturesPnl(symbol, side, entryPrice, markPrice, contracts) {
   if (!entryPrice || !markPrice || !contracts) return 0;
   const spec = instrumentSpec(symbol);
@@ -4538,9 +4526,11 @@ function instrumentSpec(symbol) {
     MES: { tickSize: 0.25, tickValue: 1.25 },
     MNQ: { tickSize: 0.25, tickValue: 0.5 },
     M2K: { tickSize: 0.1, tickValue: 0.5 },
+    MYM: { tickSize: 1, tickValue: 0.5 },
     ES: { tickSize: 0.25, tickValue: 12.5 },
     NQ: { tickSize: 0.25, tickValue: 5 },
     MGC: { tickSize: 0.1, tickValue: 1 },
+    MCL: { tickSize: 0.01, tickValue: 1 },
     GC: { tickSize: 0.1, tickValue: 10 },
   };
   return specs[String(symbol || "").toUpperCase()] || specs.MNQ;
