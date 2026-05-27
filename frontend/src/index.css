@@ -2244,6 +2244,7 @@ textarea {
   contain: paint;
   overflow: hidden;
   padding: 10px;
+  animation: futures-near-miss-in 220ms ease-out both;
 }
 
 .futures-near-miss-card.disabled {
@@ -2252,9 +2253,23 @@ textarea {
 
 .futures-near-miss-topline {
   display: grid;
-  grid-template-columns: auto minmax(32px, 0.45fr) minmax(0, 1.75fr);
+  grid-template-columns: 22px minmax(34px, 0.5fr) minmax(32px, 0.45fr) minmax(0, 1.7fr);
   align-items: center;
   gap: 6px;
+}
+
+.futures-near-miss-topline .futures-near-miss-rank {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(132, 166, 255, 0.14);
+  color: rgba(222, 232, 255, 0.96);
+  border: 1px solid rgba(132, 166, 255, 0.3);
+  font-size: 0.66rem;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .futures-near-miss-topline strong {
@@ -2323,6 +2338,23 @@ textarea {
 
 .futures-near-miss-meta b {
   color: var(--app-link);
+}
+
+@keyframes futures-near-miss-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .futures-near-miss-card {
+    animation: none;
+  }
 }
 
 .futures-bot-tracker-grid {

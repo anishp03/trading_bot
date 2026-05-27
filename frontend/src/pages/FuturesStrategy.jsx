@@ -14,6 +14,12 @@ const DEFAULT_SETTINGS = {
   keltnerScalp: { enabled: false, maxTradesPerDay: 8 },
   keltnerReversion: { enabled: false, maxTradesPerDay: 6 },
   microScalp: { enabled: false, maxTradesPerDay: 6 },
+  mclEiaContinuation: { enabled: false, maxTradesPerDay: 2 },
+  mclCrudeSessionOpen: { enabled: false, maxTradesPerDay: 2 },
+  mymIndexConfirmation: { enabled: false, maxTradesPerDay: 3 },
+  mymOrbRetest: { enabled: false, maxTradesPerDay: 2 },
+  mymBreadthConfirmation: { enabled: false, maxTradesPerDay: 6 },
+  mclTrendContinuation: { enabled: false, maxTradesPerDay: 6 },
   enableEarlySweep: true,
   enableLateSweep: true,
   enableSweepSecondChance: true,
@@ -54,10 +60,92 @@ const DEFAULT_SETTINGS = {
   keltnerMinBandWidthTicks: 8,
   keltnerMaxHoldBars: 10,
   keltnerBucketMinutes: 12,
+  allowMclEiaLongs: true,
+  allowMclEiaShorts: true,
+  mclEiaRangeStartMinute: 626,
+  mclEiaRangeEndMinute: 630,
+  mclEiaStartMinute: 660,
+  mclEiaEndMinute: 750,
+  mclEiaBreakoutBufferTicks: 1,
+  mclEiaStopTicks: 24,
+  mclEiaRewardRisk: 1.35,
+  mclEiaMinVolumeRatio: 0,
+  mclEiaMinBodyPct: 0,
+  mclEiaMaxHoldBars: 60,
+  allowMclCrudeOpenLongs: true,
+  allowMclCrudeOpenShorts: true,
+  mclCrudeOpenRangeStartMinute: 540,
+  mclCrudeOpenRangeEndMinute: 550,
+  mclCrudeOpenStartMinute: 551,
+  mclCrudeOpenEndMinute: 660,
+  mclCrudeOpenBreakoutBufferTicks: 2,
+  mclCrudeOpenStopTicks: 22,
+  mclCrudeOpenRewardRisk: 1.1,
+  mclCrudeOpenMinVolumeRatio: 0.35,
+  mclCrudeOpenMinBodyPct: 20,
+  mclCrudeOpenMaxHoldBars: 45,
+  allowMymIndexConfirmationLongs: true,
+  allowMymIndexConfirmationShorts: true,
+  mymIndexConfirmationStartMinute: 570,
+  mymIndexConfirmationEndMinute: 920,
+  mymIndexConfirmationBucketMinutes: 20,
+  mymIndexConfirmationLookbackBars: 12,
+  mymIndexConfirmationMaxRiskTicks: 90,
+  mymIndexConfirmationRewardRisk: 0.85,
+  mymIndexConfirmationMinVolumeRatio: 0.55,
+  mymIndexConfirmationMinBodyPct: 20,
+  mymIndexConfirmationMinTrendSlopeTicks: 0.5,
+  mymIndexConfirmationMaxHoldBars: 35,
+  allowMymOrbRetestLongs: true,
+  allowMymOrbRetestShorts: true,
+  mymOrbRetestStartMinute: 590,
+  mymOrbRetestEndMinute: 690,
+  mymOrbRetestBreakoutBufferTicks: 2,
+  mymOrbRetestRetestTicks: 5,
+  mymOrbRetestMaxRiskTicks: 110,
+  mymOrbRetestRewardRisk: 0.9,
+  mymOrbRetestMinVolumeRatio: 0.55,
+  mymOrbRetestMinBodyPct: 20,
+  mymOrbRetestMaxHoldBars: 45,
+  allowMymBreadthLongs: true,
+  allowMymBreadthShorts: true,
+  mymBreadthStartMinute: 585,
+  mymBreadthEndMinute: 900,
+  mymBreadthBucketMinutes: 18,
+  mymBreadthLookbackBars: 12,
+  mymBreadthMinAlignedMarkets: 2,
+  mymBreadthMaxRiskTicks: 90,
+  mymBreadthRewardRisk: 0.95,
+  mymBreadthMinVolumeRatio: 0.65,
+  mymBreadthMinBodyPct: 22,
+  mymBreadthMinTrendSlopeTicks: 0.75,
+  mymBreadthMaxHoldBars: 35,
+  allowMclTrendLongs: true,
+  allowMclTrendShorts: true,
+  mclTrendStartMinute: 570,
+  mclTrendEndMinute: 900,
+  mclTrendBucketMinutes: 30,
+  mclTrendLookbackBars: 12,
+  mclTrendBreakoutBufferTicks: 1,
+  mclTrendMinOpenMoveTicks: 18,
+  mclTrendMaxRiskTicks: 30,
+  mclTrendRewardRisk: 1.1,
+  mclTrendMinVolumeRatio: 0.7,
+  mclTrendMinBodyPct: 18,
+  mclTrendMinTrendSlopeTicks: 0.6,
+  mclTrendMaxHoldBars: 40,
   maxInitialRiskTicks: 220,
+  managedStopBreakevenTriggerR: 0.75,
+  managedStopTrailTriggerR: 1.15,
+  managedStopTrailDistanceR: 0.55,
+  managedStopMinTrailTicks: 8,
+  enableManagedGivebackExit: false,
+  managedGivebackTriggerR: 0.95,
+  managedGivebackR: 0.45,
+  managedGivebackMinBars: 3,
 };
 
-const DEFAULT_STRATEGY_PRESET = "80kprofit";
+const DEFAULT_STRATEGY_PRESET = "94k";
 
 const MODULES = [
   ["orb", "Opening Range Breakout"],
@@ -72,7 +160,23 @@ const MODULES = [
   ["keltnerScalp", "Keltner ATR Scalp"],
   ["keltnerReversion", "Keltner Reversion"],
   ["microScalp", "Micro Trend Scalp"],
+  ["mclEiaContinuation", "MCL EIA Continuation"],
+  ["mclCrudeSessionOpen", "MCL Crude Session Open"],
+  ["mymIndexConfirmation", "MYM Index Confirmation"],
+  ["mymOrbRetest", "MYM ORB Retest"],
+  ["mymBreadthConfirmation", "MYM Breadth Fade"],
+  ["mclTrendContinuation", "MCL Trend Fade"],
 ];
+
+const HIGH_CAP_MODULES = new Set(["keltnerScalp", "keltnerReversion", "microScalp"]);
+const CUSTOM_MODULE_CAPS = {
+  mclEiaContinuation: 8,
+  mclCrudeSessionOpen: 8,
+  mymIndexConfirmation: 12,
+  mymOrbRetest: 8,
+  mymBreadthConfirmation: 20,
+  mclTrendContinuation: 20,
+};
 
 export default function FuturesStrategy() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
@@ -194,6 +298,18 @@ export default function FuturesStrategy() {
       keltnerReversionMaxTradesPerDay: String(settings.keltnerReversion.maxTradesPerDay),
       microScalpEnabled: String(settings.microScalp.enabled),
       microScalpMaxTradesPerDay: String(settings.microScalp.maxTradesPerDay),
+      mclEiaContinuationEnabled: String(settings.mclEiaContinuation.enabled),
+      mclEiaContinuationMaxTradesPerDay: String(settings.mclEiaContinuation.maxTradesPerDay),
+      mclCrudeSessionOpenEnabled: String(settings.mclCrudeSessionOpen.enabled),
+      mclCrudeSessionOpenMaxTradesPerDay: String(settings.mclCrudeSessionOpen.maxTradesPerDay),
+      mymIndexConfirmationEnabled: String(settings.mymIndexConfirmation.enabled),
+      mymIndexConfirmationMaxTradesPerDay: String(settings.mymIndexConfirmation.maxTradesPerDay),
+      mymOrbRetestEnabled: String(settings.mymOrbRetest.enabled),
+      mymOrbRetestMaxTradesPerDay: String(settings.mymOrbRetest.maxTradesPerDay),
+      mymBreadthConfirmationEnabled: String(settings.mymBreadthConfirmation.enabled),
+      mymBreadthConfirmationMaxTradesPerDay: String(settings.mymBreadthConfirmation.maxTradesPerDay),
+      mclTrendContinuationEnabled: String(settings.mclTrendContinuation.enabled),
+      mclTrendContinuationMaxTradesPerDay: String(settings.mclTrendContinuation.maxTradesPerDay),
       enableEarlySweep: String(settings.enableEarlySweep),
       enableLateSweep: String(settings.enableLateSweep),
       enableSweepSecondChance: String(settings.enableSweepSecondChance),
@@ -234,7 +350,89 @@ export default function FuturesStrategy() {
       keltnerMinBandWidthTicks: String(settings.keltnerMinBandWidthTicks),
       keltnerMaxHoldBars: String(settings.keltnerMaxHoldBars),
       keltnerBucketMinutes: String(settings.keltnerBucketMinutes),
+      allowMclEiaLongs: String(settings.allowMclEiaLongs),
+      allowMclEiaShorts: String(settings.allowMclEiaShorts),
+      mclEiaRangeStartMinute: String(settings.mclEiaRangeStartMinute),
+      mclEiaRangeEndMinute: String(settings.mclEiaRangeEndMinute),
+      mclEiaStartMinute: String(settings.mclEiaStartMinute),
+      mclEiaEndMinute: String(settings.mclEiaEndMinute),
+      mclEiaBreakoutBufferTicks: String(settings.mclEiaBreakoutBufferTicks),
+      mclEiaStopTicks: String(settings.mclEiaStopTicks),
+      mclEiaRewardRisk: String(settings.mclEiaRewardRisk),
+      mclEiaMinVolumeRatio: String(settings.mclEiaMinVolumeRatio),
+      mclEiaMinBodyPct: String(settings.mclEiaMinBodyPct),
+      mclEiaMaxHoldBars: String(settings.mclEiaMaxHoldBars),
+      allowMclCrudeOpenLongs: String(settings.allowMclCrudeOpenLongs),
+      allowMclCrudeOpenShorts: String(settings.allowMclCrudeOpenShorts),
+      mclCrudeOpenRangeStartMinute: String(settings.mclCrudeOpenRangeStartMinute),
+      mclCrudeOpenRangeEndMinute: String(settings.mclCrudeOpenRangeEndMinute),
+      mclCrudeOpenStartMinute: String(settings.mclCrudeOpenStartMinute),
+      mclCrudeOpenEndMinute: String(settings.mclCrudeOpenEndMinute),
+      mclCrudeOpenBreakoutBufferTicks: String(settings.mclCrudeOpenBreakoutBufferTicks),
+      mclCrudeOpenStopTicks: String(settings.mclCrudeOpenStopTicks),
+      mclCrudeOpenRewardRisk: String(settings.mclCrudeOpenRewardRisk),
+      mclCrudeOpenMinVolumeRatio: String(settings.mclCrudeOpenMinVolumeRatio),
+      mclCrudeOpenMinBodyPct: String(settings.mclCrudeOpenMinBodyPct),
+      mclCrudeOpenMaxHoldBars: String(settings.mclCrudeOpenMaxHoldBars),
+      allowMymIndexConfirmationLongs: String(settings.allowMymIndexConfirmationLongs),
+      allowMymIndexConfirmationShorts: String(settings.allowMymIndexConfirmationShorts),
+      mymIndexConfirmationStartMinute: String(settings.mymIndexConfirmationStartMinute),
+      mymIndexConfirmationEndMinute: String(settings.mymIndexConfirmationEndMinute),
+      mymIndexConfirmationBucketMinutes: String(settings.mymIndexConfirmationBucketMinutes),
+      mymIndexConfirmationLookbackBars: String(settings.mymIndexConfirmationLookbackBars),
+      mymIndexConfirmationMaxRiskTicks: String(settings.mymIndexConfirmationMaxRiskTicks),
+      mymIndexConfirmationRewardRisk: String(settings.mymIndexConfirmationRewardRisk),
+      mymIndexConfirmationMinVolumeRatio: String(settings.mymIndexConfirmationMinVolumeRatio),
+      mymIndexConfirmationMinBodyPct: String(settings.mymIndexConfirmationMinBodyPct),
+      mymIndexConfirmationMinTrendSlopeTicks: String(settings.mymIndexConfirmationMinTrendSlopeTicks),
+      mymIndexConfirmationMaxHoldBars: String(settings.mymIndexConfirmationMaxHoldBars),
+      allowMymOrbRetestLongs: String(settings.allowMymOrbRetestLongs),
+      allowMymOrbRetestShorts: String(settings.allowMymOrbRetestShorts),
+      mymOrbRetestStartMinute: String(settings.mymOrbRetestStartMinute),
+      mymOrbRetestEndMinute: String(settings.mymOrbRetestEndMinute),
+      mymOrbRetestBreakoutBufferTicks: String(settings.mymOrbRetestBreakoutBufferTicks),
+      mymOrbRetestRetestTicks: String(settings.mymOrbRetestRetestTicks),
+      mymOrbRetestMaxRiskTicks: String(settings.mymOrbRetestMaxRiskTicks),
+      mymOrbRetestRewardRisk: String(settings.mymOrbRetestRewardRisk),
+      mymOrbRetestMinVolumeRatio: String(settings.mymOrbRetestMinVolumeRatio),
+      mymOrbRetestMinBodyPct: String(settings.mymOrbRetestMinBodyPct),
+      mymOrbRetestMaxHoldBars: String(settings.mymOrbRetestMaxHoldBars),
+      allowMymBreadthLongs: String(settings.allowMymBreadthLongs),
+      allowMymBreadthShorts: String(settings.allowMymBreadthShorts),
+      mymBreadthStartMinute: String(settings.mymBreadthStartMinute),
+      mymBreadthEndMinute: String(settings.mymBreadthEndMinute),
+      mymBreadthBucketMinutes: String(settings.mymBreadthBucketMinutes),
+      mymBreadthLookbackBars: String(settings.mymBreadthLookbackBars),
+      mymBreadthMinAlignedMarkets: String(settings.mymBreadthMinAlignedMarkets),
+      mymBreadthMaxRiskTicks: String(settings.mymBreadthMaxRiskTicks),
+      mymBreadthRewardRisk: String(settings.mymBreadthRewardRisk),
+      mymBreadthMinVolumeRatio: String(settings.mymBreadthMinVolumeRatio),
+      mymBreadthMinBodyPct: String(settings.mymBreadthMinBodyPct),
+      mymBreadthMinTrendSlopeTicks: String(settings.mymBreadthMinTrendSlopeTicks),
+      mymBreadthMaxHoldBars: String(settings.mymBreadthMaxHoldBars),
+      allowMclTrendLongs: String(settings.allowMclTrendLongs),
+      allowMclTrendShorts: String(settings.allowMclTrendShorts),
+      mclTrendStartMinute: String(settings.mclTrendStartMinute),
+      mclTrendEndMinute: String(settings.mclTrendEndMinute),
+      mclTrendBucketMinutes: String(settings.mclTrendBucketMinutes),
+      mclTrendLookbackBars: String(settings.mclTrendLookbackBars),
+      mclTrendBreakoutBufferTicks: String(settings.mclTrendBreakoutBufferTicks),
+      mclTrendMinOpenMoveTicks: String(settings.mclTrendMinOpenMoveTicks),
+      mclTrendMaxRiskTicks: String(settings.mclTrendMaxRiskTicks),
+      mclTrendRewardRisk: String(settings.mclTrendRewardRisk),
+      mclTrendMinVolumeRatio: String(settings.mclTrendMinVolumeRatio),
+      mclTrendMinBodyPct: String(settings.mclTrendMinBodyPct),
+      mclTrendMinTrendSlopeTicks: String(settings.mclTrendMinTrendSlopeTicks),
+      mclTrendMaxHoldBars: String(settings.mclTrendMaxHoldBars),
       maxInitialRiskTicks: String(settings.maxInitialRiskTicks),
+      managedStopBreakevenTriggerR: String(settings.managedStopBreakevenTriggerR),
+      managedStopTrailTriggerR: String(settings.managedStopTrailTriggerR),
+      managedStopTrailDistanceR: String(settings.managedStopTrailDistanceR),
+      managedStopMinTrailTicks: String(settings.managedStopMinTrailTicks),
+      enableManagedGivebackExit: String(settings.enableManagedGivebackExit),
+      managedGivebackTriggerR: String(settings.managedGivebackTriggerR),
+      managedGivebackR: String(settings.managedGivebackR),
+      managedGivebackMinBars: String(settings.managedGivebackMinBars),
     });
 
     try {
@@ -374,7 +572,7 @@ export default function FuturesStrategy() {
               <input
                 type="number"
                 min="0"
-                max={key === "keltnerScalp" || key === "keltnerReversion" || key === "microScalp" ? "20" : "5"}
+                max={moduleMaxTrades(key)}
                 value={settings[key]?.maxTradesPerDay ?? 1}
                 onChange={(event) => updateModule(key, "maxTradesPerDay", event.target.value)}
                 className="form-control app-input"
@@ -430,7 +628,89 @@ export default function FuturesStrategy() {
           <NumberField label="Keltner Band Width" field="keltnerMinBandWidthTicks" settings={settings} updateField={updateField} />
           <NumberField label="Keltner Max Hold" field="keltnerMaxHoldBars" settings={settings} updateField={updateField} />
           <NumberField label="Keltner Bucket Minutes" field="keltnerBucketMinutes" settings={settings} updateField={updateField} />
+          <ToggleField label="MCL EIA Longs" field="allowMclEiaLongs" settings={settings} updateField={updateField} />
+          <ToggleField label="MCL EIA Shorts" field="allowMclEiaShorts" settings={settings} updateField={updateField} />
+          <NumberField label="MCL EIA Range Start" field="mclEiaRangeStartMinute" settings={settings} updateField={updateField} />
+          <NumberField label="MCL EIA Range End" field="mclEiaRangeEndMinute" settings={settings} updateField={updateField} />
+          <NumberField label="MCL EIA Start" field="mclEiaStartMinute" settings={settings} updateField={updateField} />
+          <NumberField label="MCL EIA End" field="mclEiaEndMinute" settings={settings} updateField={updateField} />
+          <NumberField label="MCL EIA Buffer" field="mclEiaBreakoutBufferTicks" settings={settings} updateField={updateField} step="0.25" />
+          <NumberField label="MCL EIA Stop Ticks" field="mclEiaStopTicks" settings={settings} updateField={updateField} step="0.25" />
+          <NumberField label="MCL EIA Reward/Risk" field="mclEiaRewardRisk" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="MCL EIA Volume" field="mclEiaMinVolumeRatio" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="MCL EIA Body %" field="mclEiaMinBodyPct" settings={settings} updateField={updateField} />
+          <NumberField label="MCL EIA Max Hold" field="mclEiaMaxHoldBars" settings={settings} updateField={updateField} />
+          <ToggleField label="MCL Crude Open Longs" field="allowMclCrudeOpenLongs" settings={settings} updateField={updateField} />
+          <ToggleField label="MCL Crude Open Shorts" field="allowMclCrudeOpenShorts" settings={settings} updateField={updateField} />
+          <NumberField label="MCL Open Range Start" field="mclCrudeOpenRangeStartMinute" settings={settings} updateField={updateField} />
+          <NumberField label="MCL Open Range End" field="mclCrudeOpenRangeEndMinute" settings={settings} updateField={updateField} />
+          <NumberField label="MCL Open Start" field="mclCrudeOpenStartMinute" settings={settings} updateField={updateField} />
+          <NumberField label="MCL Open End" field="mclCrudeOpenEndMinute" settings={settings} updateField={updateField} />
+          <NumberField label="MCL Open Buffer" field="mclCrudeOpenBreakoutBufferTicks" settings={settings} updateField={updateField} step="0.25" />
+          <NumberField label="MCL Open Stop Ticks" field="mclCrudeOpenStopTicks" settings={settings} updateField={updateField} step="0.25" />
+          <NumberField label="MCL Open Reward/Risk" field="mclCrudeOpenRewardRisk" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="MCL Open Volume" field="mclCrudeOpenMinVolumeRatio" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="MCL Open Body %" field="mclCrudeOpenMinBodyPct" settings={settings} updateField={updateField} />
+          <NumberField label="MCL Open Max Hold" field="mclCrudeOpenMaxHoldBars" settings={settings} updateField={updateField} />
+          <ToggleField label="MYM Index Longs" field="allowMymIndexConfirmationLongs" settings={settings} updateField={updateField} />
+          <ToggleField label="MYM Index Shorts" field="allowMymIndexConfirmationShorts" settings={settings} updateField={updateField} />
+          <NumberField label="MYM Index Start" field="mymIndexConfirmationStartMinute" settings={settings} updateField={updateField} />
+          <NumberField label="MYM Index End" field="mymIndexConfirmationEndMinute" settings={settings} updateField={updateField} />
+          <NumberField label="MYM Index Bucket" field="mymIndexConfirmationBucketMinutes" settings={settings} updateField={updateField} />
+          <NumberField label="MYM Index Lookback" field="mymIndexConfirmationLookbackBars" settings={settings} updateField={updateField} />
+          <NumberField label="MYM Index Max Risk" field="mymIndexConfirmationMaxRiskTicks" settings={settings} updateField={updateField} />
+          <NumberField label="MYM Index Reward/Risk" field="mymIndexConfirmationRewardRisk" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="MYM Index Volume" field="mymIndexConfirmationMinVolumeRatio" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="MYM Index Body %" field="mymIndexConfirmationMinBodyPct" settings={settings} updateField={updateField} />
+          <NumberField label="MYM Index Slope" field="mymIndexConfirmationMinTrendSlopeTicks" settings={settings} updateField={updateField} step="0.25" />
+          <NumberField label="MYM Index Max Hold" field="mymIndexConfirmationMaxHoldBars" settings={settings} updateField={updateField} />
+          <ToggleField label="MYM ORB2 Longs" field="allowMymOrbRetestLongs" settings={settings} updateField={updateField} />
+          <ToggleField label="MYM ORB2 Shorts" field="allowMymOrbRetestShorts" settings={settings} updateField={updateField} />
+          <NumberField label="MYM ORB2 Start" field="mymOrbRetestStartMinute" settings={settings} updateField={updateField} />
+          <NumberField label="MYM ORB2 End" field="mymOrbRetestEndMinute" settings={settings} updateField={updateField} />
+          <NumberField label="MYM ORB2 Buffer" field="mymOrbRetestBreakoutBufferTicks" settings={settings} updateField={updateField} step="0.25" />
+          <NumberField label="MYM ORB2 Retest" field="mymOrbRetestRetestTicks" settings={settings} updateField={updateField} step="0.25" />
+          <NumberField label="MYM ORB2 Max Risk" field="mymOrbRetestMaxRiskTicks" settings={settings} updateField={updateField} />
+          <NumberField label="MYM ORB2 Reward/Risk" field="mymOrbRetestRewardRisk" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="MYM ORB2 Volume" field="mymOrbRetestMinVolumeRatio" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="MYM ORB2 Body %" field="mymOrbRetestMinBodyPct" settings={settings} updateField={updateField} />
+          <NumberField label="MYM ORB2 Max Hold" field="mymOrbRetestMaxHoldBars" settings={settings} updateField={updateField} />
+          <ToggleField label="MYM Breadth Fade Longs" field="allowMymBreadthLongs" settings={settings} updateField={updateField} />
+          <ToggleField label="MYM Breadth Fade Shorts" field="allowMymBreadthShorts" settings={settings} updateField={updateField} />
+          <NumberField label="MYM Breadth Start" field="mymBreadthStartMinute" settings={settings} updateField={updateField} />
+          <NumberField label="MYM Breadth End" field="mymBreadthEndMinute" settings={settings} updateField={updateField} />
+          <NumberField label="MYM Breadth Bucket" field="mymBreadthBucketMinutes" settings={settings} updateField={updateField} />
+          <NumberField label="MYM Breadth Lookback" field="mymBreadthLookbackBars" settings={settings} updateField={updateField} />
+          <NumberField label="MYM Breadth Align Count" field="mymBreadthMinAlignedMarkets" settings={settings} updateField={updateField} />
+          <NumberField label="MYM Breadth Max Risk" field="mymBreadthMaxRiskTicks" settings={settings} updateField={updateField} />
+          <NumberField label="MYM Breadth Reward/Risk" field="mymBreadthRewardRisk" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="MYM Breadth Volume" field="mymBreadthMinVolumeRatio" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="MYM Breadth Body %" field="mymBreadthMinBodyPct" settings={settings} updateField={updateField} />
+          <NumberField label="MYM Breadth Slope" field="mymBreadthMinTrendSlopeTicks" settings={settings} updateField={updateField} step="0.25" />
+          <NumberField label="MYM Breadth Max Hold" field="mymBreadthMaxHoldBars" settings={settings} updateField={updateField} />
+          <ToggleField label="MCL Trend Fade Longs" field="allowMclTrendLongs" settings={settings} updateField={updateField} />
+          <ToggleField label="MCL Trend Fade Shorts" field="allowMclTrendShorts" settings={settings} updateField={updateField} />
+          <NumberField label="MCL Trend Start" field="mclTrendStartMinute" settings={settings} updateField={updateField} />
+          <NumberField label="MCL Trend End" field="mclTrendEndMinute" settings={settings} updateField={updateField} />
+          <NumberField label="MCL Trend Bucket" field="mclTrendBucketMinutes" settings={settings} updateField={updateField} />
+          <NumberField label="MCL Trend Lookback" field="mclTrendLookbackBars" settings={settings} updateField={updateField} />
+          <NumberField label="MCL Trend Buffer" field="mclTrendBreakoutBufferTicks" settings={settings} updateField={updateField} step="0.25" />
+          <NumberField label="MCL Trend Open Move" field="mclTrendMinOpenMoveTicks" settings={settings} updateField={updateField} />
+          <NumberField label="MCL Trend Max Risk" field="mclTrendMaxRiskTicks" settings={settings} updateField={updateField} />
+          <NumberField label="MCL Trend Reward/Risk" field="mclTrendRewardRisk" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="MCL Trend Volume" field="mclTrendMinVolumeRatio" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="MCL Trend Body %" field="mclTrendMinBodyPct" settings={settings} updateField={updateField} />
+          <NumberField label="MCL Trend Slope" field="mclTrendMinTrendSlopeTicks" settings={settings} updateField={updateField} step="0.25" />
+          <NumberField label="MCL Trend Max Hold" field="mclTrendMaxHoldBars" settings={settings} updateField={updateField} />
           <NumberField label="Max Initial Risk Ticks" field="maxInitialRiskTicks" settings={settings} updateField={updateField} />
+          <NumberField label="Managed Breakeven R" field="managedStopBreakevenTriggerR" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="Managed Trail R" field="managedStopTrailTriggerR" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="Managed Trail Distance R" field="managedStopTrailDistanceR" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="Managed Min Trail Ticks" field="managedStopMinTrailTicks" settings={settings} updateField={updateField} />
+          <ToggleField label="Managed Giveback Exit" field="enableManagedGivebackExit" settings={settings} updateField={updateField} />
+          <NumberField label="Giveback Trigger R" field="managedGivebackTriggerR" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="Giveback Distance R" field="managedGivebackR" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="Giveback Min Bars" field="managedGivebackMinBars" settings={settings} updateField={updateField} />
         </fieldset>
       </details>
     </div>
@@ -453,7 +733,18 @@ function normalizeSettings(data) {
     keltnerScalp: { ...DEFAULT_SETTINGS.keltnerScalp, ...(data?.keltnerScalp || {}) },
     keltnerReversion: { ...DEFAULT_SETTINGS.keltnerReversion, ...(data?.keltnerReversion || {}) },
     microScalp: { ...DEFAULT_SETTINGS.microScalp, ...(data?.microScalp || {}) },
+    mclEiaContinuation: { ...DEFAULT_SETTINGS.mclEiaContinuation, ...(data?.mclEiaContinuation || {}) },
+    mclCrudeSessionOpen: { ...DEFAULT_SETTINGS.mclCrudeSessionOpen, ...(data?.mclCrudeSessionOpen || {}) },
+    mymIndexConfirmation: { ...DEFAULT_SETTINGS.mymIndexConfirmation, ...(data?.mymIndexConfirmation || {}) },
+    mymOrbRetest: { ...DEFAULT_SETTINGS.mymOrbRetest, ...(data?.mymOrbRetest || {}) },
+    mymBreadthConfirmation: { ...DEFAULT_SETTINGS.mymBreadthConfirmation, ...(data?.mymBreadthConfirmation || {}) },
+    mclTrendContinuation: { ...DEFAULT_SETTINGS.mclTrendContinuation, ...(data?.mclTrendContinuation || {}) },
   };
+}
+
+function moduleMaxTrades(key) {
+  if (CUSTOM_MODULE_CAPS[key]) return String(CUSTOM_MODULE_CAPS[key]);
+  return HIGH_CAP_MODULES.has(key) ? "20" : "5";
 }
 
 function Readout({ label, value }) {

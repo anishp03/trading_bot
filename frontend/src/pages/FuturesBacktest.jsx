@@ -3,9 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { API_BASE_URL, apiFetch } from "../utils/api.js";
 
 const TOPSTEP_RESEARCH_PROFILE = "TOPSTEP_150K_RESEARCH";
-const MAIN_PORTFOLIO_SYMBOLS = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K"];
-const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MGC"]);
-const DEFAULT_STRATEGY_PRESET = "80kprofit";
+const MAIN_PORTFOLIO_SYMBOLS = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K", "MYM", "MCL"];
+const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MYM", "MGC", "MCL"]);
+const DEFAULT_STRATEGY_PRESET = "94k";
 const RISK_PROFILE_FALLBACKS = [
   {
     code: "CUSTOM",

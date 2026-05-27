@@ -4,7 +4,7 @@ import { useOutletContext } from "react-router-dom";
 import { apiFetch, isApiNetworkError } from "../utils/api.js";
 import { EASTERN_TIME_LABEL, formatEstTime } from "../utils/time.js";
 
-const DEFAULT_SYMBOLS = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K"];
+const DEFAULT_SYMBOLS = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K", "MYM", "MCL"];
 const TIMEFRAME_OPTIONS = [
   { value: "1m", label: "1m" },
   { value: "5m", label: "5m" },
@@ -20,10 +20,12 @@ const BROKER_SOURCE_TOPSTEPX = "TOPSTEPX";
 const LIVE_TRADE_CACHE_VERSION = 1;
 const LIVE_TRADE_CACHE_MAX_ROWS = 10000;
 const LIVE_HISTORY_REQUEST_LIMIT = 10000;
+const NEAR_MISS_VISIBLE_LIMIT = 18;
+const NEAR_MISS_REVEAL_MS = 260;
 const DEFAULT_PROFILE = "TOPSTEP_150K_RESEARCH";
 const DEFAULT_ACCOUNT_PROFILE = "TOPSTEP_150K_PRACTICE";
-const DEFAULT_STRATEGY_PRESET = "80kprofit";
-const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MGC"]);
+const DEFAULT_STRATEGY_PRESET = "94k";
+const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MGC", "MYM", "MCL"]);
 const LIVE_ACCOUNT_PROFILE_CODES = new Set(["TOPSTEP_150K_PRACTICE", "TOPSTEP_50K_COMBINE"]);
 const PROFILE_ACCOUNTS = {
   TOPSTEP_150K_RESEARCH: { label: "150K Research", accountId: "22539378" },
@@ -1215,20 +1217,101 @@ export default function FuturesLive() {
 }
 
 function FuturesNearMissPanel({ rows, active }) {
-  const visibleRows = Array.isArray(rows) ? rows.slice(0, 18) : [];
+  const incomingRows = useMemo(() => Array.isArray(rows) ? rows.slice(0, NEAR_MISS_VISIBLE_LIMIT) : [], [rows]);
+  const [feed, setFeed] = useState({ displayedRows: [], pendingRows: [] });
+  const revealTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (!active || incomingRows.length === 0) {
+      if (revealTimerRef.current) {
+        window.clearTimeout(revealTimerRef.current);
+        revealTimerRef.current = null;
+      }
+      setFeed({ displayedRows: [], pendingRows: [] });
+      return;
+    }
+
+    setFeed((current) => {
+      const incomingByKey = new Map(incomingRows.map((row) => [nearMissRowKey(row), row]));
+      const displayedRows = mergeNearMissRows(current.displayedRows, incomingByKey);
+      const pendingRows = mergeNearMissRows(current.pendingRows, incomingByKey);
+      const knownKeys = new Set([...displayedRows, ...pendingRows].map(nearMissRowKey));
+      const additions = incomingRows.filter((row) => !knownKeys.has(nearMissRowKey(row)));
+      const nextPendingRows = additions.length ? sortNearMissDisplayRows([...pendingRows, ...additions]) : pendingRows;
+
+      if (
+        additions.length === 0
+        && displayedRows === current.displayedRows
+        && nextPendingRows === current.pendingRows
+      ) {
+        return current;
+      }
+
+      return {
+        displayedRows,
+        pendingRows: nextPendingRows,
+      };
+    });
+  }, [active, incomingRows]);
+
+  useEffect(() => {
+    if (revealTimerRef.current) {
+      window.clearTimeout(revealTimerRef.current);
+      revealTimerRef.current = null;
+    }
+    if (!active || feed.pendingRows.length === 0) return;
+
+    const delay = feed.displayedRows.length === 0 ? 0 : NEAR_MISS_REVEAL_MS;
+    revealTimerRef.current = window.setTimeout(() => {
+      setFeed((current) => {
+        if (current.pendingRows.length === 0) return current;
+        const nextTime = String(current.pendingRows[0]?.time || "");
+        const nextBatch = [];
+        const remainingPending = [];
+        current.pendingRows.forEach((row) => {
+          if (String(row?.time || "") === nextTime) {
+            nextBatch.push(row);
+          } else {
+            remainingPending.push(row);
+          }
+        });
+
+        const displayedKeys = new Set(current.displayedRows.map(nearMissRowKey));
+        const freshBatch = nextBatch.filter((row) => !displayedKeys.has(nearMissRowKey(row)));
+        const displayedRows = sortNearMissDisplayRows([...freshBatch, ...current.displayedRows]).slice(0, NEAR_MISS_VISIBLE_LIMIT);
+        const visibleKeys = new Set(displayedRows.map(nearMissRowKey));
+        return {
+          displayedRows,
+          pendingRows: remainingPending.filter((row) => !visibleKeys.has(nearMissRowKey(row))),
+        };
+      });
+    }, delay);
+
+    return () => {
+      if (revealTimerRef.current) {
+        window.clearTimeout(revealTimerRef.current);
+        revealTimerRef.current = null;
+      }
+    };
+  }, [active, feed.displayedRows.length, feed.pendingRows]);
+
+  const visibleRows = feed.displayedRows.length
+    ? feed.displayedRows
+    : (active && incomingRows.length ? firstNearMissTimeBatch(incomingRows) : []);
   return (
     <section className="app-panel futures-near-miss-panel">
       <div className="futures-near-miss-header">
         <div>
           <div className="fw-bold app-kicker">Strategy Near Misses</div>
         </div>
-        <span className="app-badge app-neutral-badge">{visibleRows.length} rows</span>
+        <span className="app-badge app-neutral-badge">{visibleRows.length} / {NEAR_MISS_VISIBLE_LIMIT} rows</span>
       </div>
       {visibleRows.length ? (
         <div className="futures-near-miss-grid">
           {visibleRows.map((row, index) => (
-            <article className={row.enabled ? "futures-near-miss-card" : "futures-near-miss-card disabled"} key={`${row.symbol}-${row.strategyCode}-${row.time}-${index}`}>
+            <article className={row.enabled ? "futures-near-miss-card" : "futures-near-miss-card disabled"} key={nearMissRowKey(row)}>
               <div className="futures-near-miss-topline">
+                <span className="futures-near-miss-rank">{index + 1}</span>
                 <strong>{row.symbol}</strong>
                 <span>{row.strategyCode}</span>
                 <time>{formatEstTime(row.time)}</time>
@@ -1251,6 +1334,46 @@ function FuturesNearMissPanel({ rows, active }) {
       )}
     </section>
   );
+}
+
+function nearMissRowKey(row) {
+  return [
+    String(row?.symbol || "").toUpperCase(),
+    String(row?.strategyCode || ""),
+    String(row?.time || ""),
+    String(row?.reason || ""),
+  ].join("|");
+}
+
+function firstNearMissTimeBatch(rows) {
+  const ordered = sortNearMissDisplayRows(rows);
+  const firstTime = String(ordered[0]?.time || "");
+  return ordered.filter((row) => String(row?.time || "") === firstTime).slice(0, NEAR_MISS_VISIBLE_LIMIT);
+}
+
+function mergeNearMissRows(rows, incomingByKey) {
+  const source = Array.isArray(rows) ? rows : [];
+  let changed = false;
+  const merged = source.map((row) => {
+    const updated = incomingByKey.get(nearMissRowKey(row));
+    if (!updated || updated === row) return row;
+    changed = true;
+    return updated;
+  });
+  return changed ? merged : source;
+}
+
+function sortNearMissDisplayRows(rows) {
+  return [...(Array.isArray(rows) ? rows : [])].sort((first, second) => {
+    const timeCompare = String(second?.time || "").localeCompare(String(first?.time || ""));
+    if (timeCompare !== 0) return timeCompare;
+    if (Boolean(first?.enabled) !== Boolean(second?.enabled)) return first?.enabled ? -1 : 1;
+    const gateCompare = Number(second?.passedGates || 0) - Number(first?.passedGates || 0);
+    if (gateCompare !== 0) return gateCompare;
+    const symbolCompare = String(first?.symbol || "").localeCompare(String(second?.symbol || ""));
+    if (symbolCompare !== 0) return symbolCompare;
+    return String(first?.strategyCode || "").localeCompare(String(second?.strategyCode || ""));
+  });
 }
 
 function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
@@ -1692,7 +1815,7 @@ function eventTitle(entry) {
 }
 
 function eventSubtext(entry) {
-  return cleanLogText(entry?.subtext || entry?.detail || "");
+  return compactTradeEventSubtext(entry) || cleanLogText(entry?.subtext || entry?.detail || "");
 }
 
 function eventContextText(entry) {
@@ -1702,6 +1825,24 @@ function eventContextText(entry) {
 
 function eventToneClass(entry) {
   return cleanLogText(entry?.tone || "info").toLowerCase();
+}
+
+function compactTradeEventSubtext(entry) {
+  const code = eventLogCode(entry);
+  const reason = normalizeTradeReasonPayload(entry?.details?.tradeReason);
+  if (code === "ORDER_SUBMITTED") {
+    const strategy = compactEntryStrategyText(reason.entry, entry);
+    const risk = compactEntryRiskText(reason.entry, entry);
+    return [strategy, risk].filter(Boolean).join(" ");
+  }
+  if (code === "POSITION_EXITED") {
+    const exit = normalizeReasonSection(reason.exit);
+    const dtm = compactDtmText(exit);
+    const final = compactFinalExitText(exit, entry, { includePnl: true });
+    const review = compactReviewText(exit);
+    return [dtm ? `DTM: ${dtm}` : "", final, review ? `Review: ${review}` : ""].filter(Boolean).join(" ");
+  }
+  return "";
 }
 
 function eventDetailEntries(entry) {
@@ -3801,13 +3942,13 @@ function buildEntryReason({
   const direction = String(side || "").toUpperCase() === "SHORT" ? "short" : "long";
   const thesis = strategyEntryThesis(code, direction);
   const pricePlan = [
-    Number(entryPrice || 0) > 0 ? `entry ${formatPrice(entryPrice)}` : "",
-    Number(stopPrice || 0) > 0 ? `stop ${formatPrice(stopPrice)}` : "",
-    Number(targetPrice || 0) > 0 ? `target ${formatPrice(targetPrice)}` : "",
-  ].filter(Boolean).join(", ");
+    Number(entryPrice || 0) > 0 ? `Entry: ${formatPrice(entryPrice)}` : "",
+    Number(stopPrice || 0) > 0 ? `Stop: ${formatPrice(stopPrice)}` : "",
+    Number(targetPrice || 0) > 0 ? `Target: ${formatPrice(targetPrice)}` : "",
+  ].filter(Boolean).join("; ");
   const sizeText = Number(contracts || 0) > 0 ? `${contracts} contract${Number(contracts) === 1 ? "" : "s"}` : "live size";
-  const timeText = signalTime ? ` Signal: ${formatEstTime(signalTime)}.` : "";
-  return `${readableName}: ${direction} signal passed ${thesis} for ${sizeText}.${pricePlan ? ` Plan: ${pricePlan}.` : ""}${timeText}`;
+  const timeText = signalTime ? `; Signal: ${formatEstTime(signalTime)}` : "";
+  return `${readableName} wanted a ${direction} because ${thesis}. Size: ${sizeText}${pricePlan ? `; ${pricePlan}` : ""}${timeText}.`;
 }
 
 function strategyEntryThesis(strategyCode, direction) {
@@ -3851,9 +3992,9 @@ function buildExitReason({ strategyCode, strategyName, exitReason, fillPrice, fa
   }
   const readableName = strategyName && strategyName !== code ? `${code} (${strategyName})` : code;
   if (cleanedExit) {
-    return `${readableName}: ${compactExitReason(cleanedExit)}${priceText}.`;
+    return `Exit: ${readableName}; Reason: ${compactExitReason(cleanedExit)}${priceText}.`;
   }
-  return `${readableName}: closed by broker fill${priceText}; close reason pending local strategy sync.`;
+  return `Exit: ${readableName}; Reason: broker fill${priceText}; Sync: pending local strategy reason.`;
 }
 
 function compactExitReason(reason) {
@@ -4742,8 +4883,10 @@ function TradeReasonStack({ trade, kind, emptyText = "not available" }) {
 
 function entryReasonSectionsForTrade(trade) {
   const entry = normalizeReasonSection(trade?.entryReasoning || trade?.tradeReason?.entry);
-  const strategyText = cleanDisplayText(entry.strategyText || entry.strategyReason || entry.strategyThesis);
-  const riskText = cleanDisplayText(entry.riskSizingExplanation || entry.riskText);
+  const strategyText = compactEntryStrategyText(entry, trade)
+    || cleanDisplayText(entry.strategyText || entry.strategyReason || entry.strategyThesis);
+  const riskText = compactEntryRiskText(entry, trade)
+    || cleanDisplayText(entry.riskSizingExplanation || entry.riskText);
   if (strategyText || riskText) {
     return [
       strategyText ? { label: "Strategy", text: stripReasonPrefix(strategyText, "Strategy") } : null,
@@ -4756,9 +4899,10 @@ function entryReasonSectionsForTrade(trade) {
 
 function exitReasonSectionsForTrade(trade) {
   const exit = normalizeReasonSection(trade?.exitReasoning || trade?.tradeReason?.exit);
-  const dtmText = cleanDisplayText(exit.dtmSummary);
-  const finalTrigger = cleanDisplayText(exit.finalExitTrigger || exit.exitText || trade?.exitReason || trade?.structuredExitReason);
-  const review = cleanDisplayText(exit.exitReview);
+  const dtmText = compactDtmText(exit) || cleanDisplayText(exit.dtmSummary);
+  const finalTrigger = compactFinalExitText(exit, trade)
+    || cleanDisplayText(exit.finalExitTrigger || exit.exitText || trade?.exitReason || trade?.structuredExitReason);
+  const review = compactReviewText(exit) || cleanDisplayText(exit.exitReview);
   if (dtmText || finalTrigger || review) {
     return [
       dtmText ? { label: "DTM", text: stripReasonPrefix(dtmText, "DTM") } : null,
@@ -4827,7 +4971,7 @@ function mergeTradeReasonPayloads(first, second) {
 
 function tradeReasonEntryText(reason) {
   const payload = normalizeTradeReasonPayload(reason);
-  return cleanDisplayText(payload.entryReasonText || payload.entry?.entryText || [
+  return compactEntryReasonText(payload.entry, payload) || cleanDisplayText(payload.entryReasonText || payload.entry?.entryText || [
     payload.entry?.strategyText,
     payload.entry?.riskSizingExplanation,
   ].filter(Boolean).join(" "));
@@ -4835,11 +4979,203 @@ function tradeReasonEntryText(reason) {
 
 function tradeReasonExitText(reason) {
   const payload = normalizeTradeReasonPayload(reason);
-  return cleanDisplayText(payload.exitReasonText || payload.exit?.exitText || [
+  return compactExitReasonText(payload.exit, payload) || cleanDisplayText(payload.exitReasonText || payload.exit?.exitText || [
     payload.exit?.dtmSummary ? `DTM: ${payload.exit.dtmSummary}` : "",
     payload.exit?.finalExitTrigger ? `Final exit: ${payload.exit.finalExitTrigger}` : "",
     payload.exit?.exitReview ? `Review: ${payload.exit.exitReview}` : "",
   ].filter(Boolean).join(" "));
+}
+
+function compactEntryReasonText(entry, source) {
+  const strategy = compactEntryStrategyText(entry, source);
+  const risk = compactEntryRiskText(entry, source);
+  return [strategy ? `Strategy: ${strategy}` : "", risk ? `Risk: ${risk}` : ""].filter(Boolean).join(" ");
+}
+
+function compactExitReasonText(exit, source) {
+  const dtm = compactDtmText(exit);
+  const final = compactFinalExitText(exit, source);
+  const review = compactReviewText(exit);
+  return [dtm ? `DTM: ${dtm}` : "", final, review ? `Review: ${review}` : ""].filter(Boolean).join(" ");
+}
+
+function compactEntryStrategyText(entry, source) {
+  const section = normalizeReasonSection(entry);
+  const details = normalizeReasonSection(source?.details);
+  const strategy = cleanDisplayText(section.strategyCode || source?.strategyCode || details.strategy || details.strategyCode);
+  const side = cleanDisplayText(source?.side || details.side).toUpperCase();
+  const pattern = compactReasonClause(section.strategyThesis || section.strategyText || section.strategyPattern || section.strategyReason);
+  const confirmation = compactConfirmationText(section.strategyConfirmations || section.orderFlowAction || "");
+  const invalidation = compactReasonClause(section.strategyInvalidation || "");
+  if (!strategy && !pattern && !confirmation && !invalidation) return "";
+  const intro = strategy
+    ? `${strategy} wanted ${side ? `a ${side.toLowerCase()}` : "this trade"}`
+    : "The strategy wanted this trade";
+  const sentences = [
+    pattern ? `${intro} because ${pattern}.` : `${intro}.`,
+    confirmation ? `Confirmations: ${confirmation}.` : "",
+    invalidation && invalidation.toLowerCase() !== "not available" ? `Invalidation: ${invalidation}.` : "",
+  ];
+  return sentences.filter(Boolean).join(" ");
+}
+
+function compactEntryRiskText(entry, source) {
+  const section = normalizeReasonSection(entry);
+  const details = normalizeReasonSection(source?.details);
+  const contracts = firstFiniteNumber(section.contracts, source?.contracts, details.contracts);
+  const entryPrice = firstFiniteNumber(section.entryPrice, source?.entryPrice, details.entry);
+  const stopPrice = firstFiniteNumber(section.initialStop, source?.stopPrice, details.stop);
+  const targetPrice = firstFiniteNumber(section.initialTarget, source?.targetPrice, details.target);
+  const riskTicks = firstFiniteNumber(section.riskTicks);
+  const maxLoss = firstFiniteNumber(section.estimatedMaxLoss);
+  const guardText = compactGuardText(section.portfolioGuardsPassed);
+  const pieces = [
+    contracts > 0 ? `Size: ${formatContractsText(contracts)}` : "",
+    entryPrice > 0 ? `Entry: ${formatPrice(entryPrice)}` : "",
+    stopPrice > 0 ? `Stop: ${formatPrice(stopPrice)}` : "",
+    targetPrice > 0 ? `Target: ${formatPrice(targetPrice)}` : "",
+    riskTicks > 0 || maxLoss > 0 ? `Risk: ${[
+      riskTicks > 0 ? `${formatNumber(riskTicks, 1)}t` : "",
+      maxLoss > 0 ? formatAbsoluteCurrency(maxLoss) : "",
+    ].filter(Boolean).join(" / ")}` : "",
+    guardText ? `Guards: ${guardText}` : "",
+    section.compressedRiskPlan ? "Adjust: stop compressed before sizing" : "",
+  ];
+  return pieces.filter(Boolean).join("; ");
+}
+
+function compactDtmText(exit) {
+  const section = normalizeReasonSection(exit);
+  const action = cleanDisplayText(section.dtmFinalAction);
+  const actionText = humanizeReasonCode(action);
+  const summary = compactReasonClause(section.dtmSummary || "");
+  const normalized = `${action} ${summary}`.toLowerCase();
+  if (!summary && !action) return "";
+  if (normalized.includes("dtm_no_override") || normalized.includes("no dtm") || normalized.includes("original bracket") || summary.startsWith("none;")) {
+    return "No DTM decisions.";
+  }
+  return [
+    actionText ? `Action: ${actionText}` : "",
+    summary ? summary : "",
+  ].filter(Boolean).join("; ");
+}
+
+function compactFinalExitText(exit, source, options = {}) {
+  const section = normalizeReasonSection(exit);
+  const details = normalizeReasonSection(source?.details);
+  const trigger = compactExitTriggerText(section.finalExitTrigger || section.exitText || source?.exitReason || source?.structuredExitReason || details.exitReason || "", section, source);
+  const exitPrice = firstFiniteNumber(section.exitPrice, source?.exitPrice, details.exitPrice);
+  const contracts = firstFiniteNumber(section.exitContracts, source?.contracts, details.contracts);
+  const pnl = firstFiniteNumber(source?.pnl, details.pnl);
+  const pieces = [
+    trigger ? `Result: ${trigger}` : "",
+    exitPrice > 0 ? `Price: ${formatPrice(exitPrice)}` : "",
+    contracts > 0 ? `Contracts: ${formatContractsText(contracts)}` : "",
+    options.includePnl && Number.isFinite(pnl) && pnl !== 0 ? `PnL: ${formatCurrency(pnl)}` : "",
+  ];
+  return pieces.filter(Boolean).join("; ");
+}
+
+function compactReviewText(exit) {
+  const section = normalizeReasonSection(exit);
+  const review = compactReasonClause(section.exitReview || "");
+  if (review) return compactMfeMaeText(review);
+  const mfe = firstFiniteNumber(section.mfe);
+  const mae = firstFiniteNumber(section.mae);
+  if (mfe !== 0 || mae !== 0) {
+    return `MFE: ${formatCurrency(mfe)}; MAE: ${formatCurrency(mae)}`;
+  }
+  return "";
+}
+
+function compactConfirmationText(value) {
+  return compactReasonClause(value)
+    .replace(/^configured\s+\S+\s+filters passed and the next-bar live signal fired;?\s*/i, "filters passed; next-bar signal fired; ")
+    .replace(/^configured\s+\S+\s+filters passed;\s*/i, "filters passed; ")
+    .replace(/\bentry optimizer recorded\s+/i, "")
+    .replace(/\s*;\s*$/g, "");
+}
+
+function compactExitTriggerText(value, exit = {}, source = {}) {
+  const section = normalizeReasonSection(exit);
+  const text = compactReasonClause(value)
+    .replace(/^Final exit:\s*/i, "")
+    .replace(/^Exit:\s*/i, "");
+  const prefix = exitHitPrefix(section, source, text);
+  const oldBroker = text.match(/^Broker TP\/SL fill reconciled from TopstepX Trade\/search order\s+(.+)$/i);
+  if (oldBroker) return `${prefix}broker TP/SL fill; order ${compactReasonClause(oldBroker[1])}`;
+  const newBroker = text.match(/^Broker TP\/SL fill;\s*Topstep order\s+(.+)$/i);
+  if (newBroker) return `${prefix}broker TP/SL fill; order ${compactReasonClause(newBroker[1])}`;
+  if (/^Broker flat sync from TopstepX Position\/searchOpen$/i.test(text)) return `${prefix}broker flat sync; no open Topstep position`;
+  if (/^Broker flat sync; no open Topstep position$/i.test(text)) return `${prefix}broker flat sync; no open Topstep position`;
+  return `${prefix}${text}`;
+}
+
+function exitHitPrefix(exit, source, trigger) {
+  const section = normalizeReasonSection(exit);
+  const code = cleanDisplayText(section.finalExitReasonCode).toUpperCase();
+  const text = cleanDisplayText(trigger).toUpperCase();
+  if (code.includes("TARGET") || text.includes("TARGET")) return "target hit; ";
+  if (code.includes("STOP") || text.includes("STOP")) return "stop hit; ";
+  const exitPrice = firstFiniteNumber(section.exitPrice, source?.exitPrice, source?.details?.exitPrice);
+  const targetPrice = firstFiniteNumber(source?.targetPrice, source?.details?.target, source?.target);
+  const stopPrice = firstFiniteNumber(source?.stopPrice, source?.details?.stop, source?.stop);
+  if (exitPrice > 0 && targetPrice > 0 && Math.abs(exitPrice - targetPrice) <= 0.25) return "target hit; ";
+  if (exitPrice > 0 && stopPrice > 0 && Math.abs(exitPrice - stopPrice) <= 0.25) return "stop hit; ";
+  if (text.includes("TP/SL FILL") || text.includes("BRACKET")) {
+    const pnl = firstFiniteNumber(source?.pnl, source?.details?.pnl);
+    if (pnl > 0) return "take-profit fill; ";
+    if (pnl < 0) return "stop-loss fill; ";
+  }
+  return "";
+}
+
+function compactMfeMaeText(value) {
+  const match = cleanDisplayText(value).match(/^captured live MFE\s+([^ ]+)\s+and MAE\s+([^ ]+)\s+for later DTM comparison\.?$/i);
+  if (!match) return value;
+  return `MFE: ${match[1]}; MAE: ${match[2]}; saved for DTM review`;
+}
+
+function compactGuardText(value) {
+  const text = compactReasonClause(value)
+    .replace(/\bdaily loss room\b/gi, "daily loss")
+    .replace(/\btrailing drawdown safety\b/gi, "trailing drawdown");
+  if (!text || text.toLowerCase() === "not available") return "";
+  return text.includes("passed") ? text : `${text} passed`;
+}
+
+function compactReasonClause(value) {
+  let text = cleanDisplayText(value)
+    .replace(/^Strategy:\s*/i, "")
+    .replace(/^Risk:\s*/i, "")
+    .replace(/^DTM:\s*/i, "")
+    .replace(/^Review:\s*/i, "")
+    .replace(/\b([A-Z0-9]+(?:_[A-Z0-9]+)+)\b/g, (match) => humanizeReasonCode(match));
+  while (text.endsWith(".")) text = text.slice(0, -1).trim();
+  return text;
+}
+
+function humanizeReasonCode(value) {
+  return cleanDisplayText(value).replaceAll("_", " ").toLowerCase();
+}
+
+function firstFiniteNumber(...values) {
+  for (const value of values) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return 0;
+}
+
+function formatContractsText(value) {
+  const numeric = Math.max(0, Math.round(Number(value || 0)));
+  return `${numeric} contract${numeric === 1 ? "" : "s"}`;
+}
+
+function formatAbsoluteCurrency(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "--";
+  return `$${Math.abs(numeric).toFixed(2)}`;
 }
 
 function cleanDisplayText(value) {
