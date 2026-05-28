@@ -4,14 +4,13 @@ import { apiFetch } from "../utils/api.js";
 import { formatEstTime } from "../utils/time.js";
 
 const PAGE_SIZE = 8;
-const TRADE_PREVIEW_LIMIT = 750;
+const TRADE_PAGE_SIZE = 500;
 const EMPTY_SEGMENTS = { daily: [], weekly: [], monthly: [], summary: null };
 
 export default function FuturesBacktestHistory() {
   const [runs, setRuns] = useState([]);
   const [page, setPage] = useState(1);
   const [selectedRunId, setSelectedRunId] = useState(null);
-  const [selectedTrades, setSelectedTrades] = useState([]);
   const [selectedSegments, setSelectedSegments] = useState(EMPTY_SEGMENTS);
   const [selectedSymbols, setSelectedSymbols] = useState([]);
   const [isClearing, setIsClearing] = useState(false);
@@ -32,7 +31,6 @@ export default function FuturesBacktestHistory() {
           return nextRuns[0]?.id ?? null;
         });
         if (nextRuns.length === 0) {
-          setSelectedTrades([]);
           setSelectedSegments(EMPTY_SEGMENTS);
           setSelectedSymbols([]);
         }
@@ -42,7 +40,6 @@ export default function FuturesBacktestHistory() {
         setRuns([]);
         setPage(1);
         setSelectedRunId(null);
-        setSelectedTrades([]);
         setSelectedSegments(EMPTY_SEGMENTS);
         setSelectedSymbols([]);
       });
@@ -56,17 +53,6 @@ export default function FuturesBacktestHistory() {
     if (!selectedRunId) {
       return;
     }
-
-    apiFetch(`/api/futures/portfolio-backtests/${selectedRunId}/trades?limit=${TRADE_PREVIEW_LIMIT}&sort=material`)
-      .then((response) => {
-        if (!response.ok) throw new Error("Failed to load futures trades.");
-        return response.json();
-      })
-      .then((data) => setSelectedTrades(Array.isArray(data) ? data : []))
-      .catch((error) => {
-        console.error("Error loading futures trades:", error);
-        setSelectedTrades([]);
-      });
 
     apiFetch(`/api/futures/portfolio-backtests/${selectedRunId}/segments`)
       .then((response) => {
@@ -106,7 +92,6 @@ export default function FuturesBacktestHistory() {
       setRuns([]);
       setPage(1);
       setSelectedRunId(null);
-      setSelectedTrades([]);
       setSelectedSegments(EMPTY_SEGMENTS);
       setSelectedSymbols([]);
       loadRuns();
@@ -122,7 +107,42 @@ export default function FuturesBacktestHistory() {
   const pageRuns = runs.slice((boundedPage - 1) * PAGE_SIZE, boundedPage * PAGE_SIZE);
   const selectedRun = runs.find((run) => run.id === selectedRunId) || null;
   const previewRun = useMemo(() => toPreviewRun(selectedRun, selectedSegments.summary), [selectedRun, selectedSegments.summary]);
-  const previewTrades = useMemo(() => selectedTrades.map(toPreviewTrade), [selectedTrades]);
+  const loadSelectedTradesPage = useCallback(async ({
+    page: tradePage = 1,
+    limit = TRADE_PAGE_SIZE,
+    outcome = "all",
+    symbol = "all",
+    side = "all",
+    strategy = "all",
+    sort = "largestWin",
+    startDate = "",
+    endDate = "",
+  } = {}) => {
+    if (!selectedRunId) {
+      return { trades: [], total: 0, filteredTotal: 0, filteredPnl: 0, filteredWinRate: 0, limit, offset: 0, symbols: [], strategies: [] };
+    }
+    const params = new URLSearchParams({
+      paged: "true",
+      limit: String(limit),
+      offset: String(Math.max(0, tradePage - 1) * limit),
+      outcome,
+      symbol,
+      side,
+      strategy,
+      sort,
+      startDate,
+      endDate,
+    });
+    const response = await apiFetch(`/api/futures/portfolio-backtests/${selectedRunId}/trades?${params.toString()}`);
+    if (!response.ok) throw new Error("Failed to load futures trades.");
+    const data = await response.json();
+    return {
+      ...data,
+      trades: Array.isArray(data.trades) ? data.trades.map(toPreviewTrade) : [],
+      symbols: Array.isArray(data.symbols) ? data.symbols : [],
+      strategies: Array.isArray(data.strategies) ? data.strategies : [],
+    };
+  }, [selectedRunId]);
 
   return (
     <div className="app-page futures-history-page">
@@ -267,9 +287,10 @@ export default function FuturesBacktestHistory() {
 
           <RunPreview
             run={previewRun}
-            trades={previewTrades}
+            trades={[]}
             totalTradeCount={selectedRun.trades}
-            tradePreviewLimit={TRADE_PREVIEW_LIMIT}
+            tradePreviewLimit={TRADE_PAGE_SIZE}
+            loadTradesPage={loadSelectedTradesPage}
             showCapitalCards={true}
             showTradeLogs={true}
           />

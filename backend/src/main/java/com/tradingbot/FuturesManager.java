@@ -4420,6 +4420,230 @@ public class FuturesManager {
 		return json.toString();
 	}
 
+	public static String getPortfolioBacktestTradesPageJson(
+		int backtestId,
+		int limit,
+		int offset,
+		String sort,
+		String outcome,
+		String symbol,
+		String side,
+		String strategy,
+		String startDate,
+		String endDate
+	) {
+		initializeStore();
+		int boundedLimit = Math.max(1, Math.min(limit <= 0 ? 250 : limit, 500));
+		int boundedOffset = Math.max(0, offset);
+		List<Object> params = new ArrayList<Object>();
+		String where = portfolioTradeWhereSql(backtestId, outcome, symbol, side, strategy, startDate, endDate, params);
+		int filteredTotal = portfolioTradeCount(where, params);
+		int total = portfolioTradeCount("portfolioBacktestID = ?", Collections.<Object>singletonList(Integer.valueOf(backtestId)));
+		double filteredPnl = portfolioTradePnl(where, params);
+		int filteredWins = portfolioTradeWins(where, params);
+		double filteredWinRate = filteredTotal == 0 ? 0.0 : (filteredWins * 100.0) / filteredTotal;
+		String sql = "SELECT * FROM FuturesPortfolioTrades WHERE " + where
+			+ " ORDER BY " + portfolioTradeOrderBy(sort)
+			+ " LIMIT ? OFFSET ?";
+		StringBuilder trades = new StringBuilder("[");
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
+			bindParams(pstmt, params);
+			pstmt.setInt(params.size() + 1, boundedLimit);
+			pstmt.setInt(params.size() + 2, boundedOffset);
+			try (ResultSet rs = pstmt.executeQuery()) {
+				while (rs.next()) {
+					if (trades.length() > 1) {
+						trades.append(",");
+					}
+					appendPortfolioTradeJson(trades, rs);
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		trades.append("]");
+		return "{"
+			+ "\"trades\":" + trades + ","
+			+ "\"total\":" + total + ","
+			+ "\"filteredTotal\":" + filteredTotal + ","
+			+ "\"filteredPnl\":" + round(filteredPnl) + ","
+			+ "\"filteredWins\":" + filteredWins + ","
+			+ "\"filteredWinRate\":" + round(filteredWinRate) + ","
+			+ "\"limit\":" + boundedLimit + ","
+			+ "\"offset\":" + boundedOffset + ","
+			+ "\"symbols\":" + portfolioTradeDistinctValuesJson(backtestId, "symbol") + ","
+			+ "\"strategies\":" + portfolioTradeDistinctValuesJson(backtestId, "strategyName")
+			+ "}";
+	}
+
+	private static String portfolioTradeWhereSql(
+		int backtestId,
+		String outcome,
+		String symbol,
+		String side,
+		String strategy,
+		String startDate,
+		String endDate,
+		List<Object> params
+	) {
+		StringBuilder where = new StringBuilder("portfolioBacktestID = ?");
+		params.add(Integer.valueOf(backtestId));
+		String cleanOutcome = cleanOrDefault(outcome, "").toLowerCase(Locale.US);
+		if ("profits".equals(cleanOutcome)) {
+			where.append(" AND pnl > 0");
+		} else if ("losses".equals(cleanOutcome)) {
+			where.append(" AND pnl < 0");
+		} else if ("flat".equals(cleanOutcome)) {
+			where.append(" AND pnl = 0");
+		}
+		String rawSymbol = cleanOrDefault(symbol, "");
+		if (rawSymbol.length() > 0 && !"all".equalsIgnoreCase(rawSymbol)) {
+			String cleanSymbol = normalizeSymbol(rawSymbol);
+			where.append(" AND symbol = ?");
+			params.add(cleanSymbol);
+		}
+		String cleanSide = cleanOrDefault(side, "").toUpperCase(Locale.US);
+		if ("LONG".equals(cleanSide) || "SHORT".equals(cleanSide)) {
+			where.append(" AND UPPER(side) = ?");
+			params.add(cleanSide);
+		}
+		String cleanStrategy = cleanOrDefault(strategy, "");
+		if (cleanStrategy.length() > 0 && !"all".equalsIgnoreCase(cleanStrategy)) {
+			where.append(" AND (strategyName = ? OR strategyCode = ?)");
+			params.add(cleanStrategy);
+			params.add(cleanStrategy);
+		}
+		String cleanStartDate = cleanOrDefault(startDate, "");
+		if (cleanStartDate.matches("\\d{4}-\\d{2}-\\d{2}")) {
+			where.append(" AND substr(openedAt, 1, 10) >= ?");
+			params.add(cleanStartDate);
+		}
+		String cleanEndDate = cleanOrDefault(endDate, "");
+		if (cleanEndDate.matches("\\d{4}-\\d{2}-\\d{2}")) {
+			where.append(" AND substr(openedAt, 1, 10) <= ?");
+			params.add(cleanEndDate);
+		}
+		return where.toString();
+	}
+
+	private static String portfolioTradeOrderBy(String sort) {
+		String cleanSort = cleanOrDefault(sort, "").toLowerCase(Locale.US);
+		if ("largestloss".equals(cleanSort)) {
+			return "pnl ASC, portfolioTradeID ASC";
+		}
+		if ("largestwin".equals(cleanSort)) {
+			return "pnl DESC, portfolioTradeID ASC";
+		}
+		if ("material".equals(cleanSort)) {
+			return "ABS(pnl) DESC, portfolioTradeID ASC";
+		}
+		if ("newest".equals(cleanSort)) {
+			return "openedAt DESC, portfolioTradeID DESC";
+		}
+		return "portfolioTradeID ASC";
+	}
+
+	private static int portfolioTradeCount(String where, List<Object> params) {
+		String sql = "SELECT COUNT(*) FROM FuturesPortfolioTrades WHERE " + where;
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
+			bindParams(pstmt, params);
+			try (ResultSet rs = pstmt.executeQuery()) {
+				if (rs.next()) {
+					return rs.getInt(1);
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return 0;
+	}
+
+	private static double portfolioTradePnl(String where, List<Object> params) {
+		String sql = "SELECT COALESCE(SUM(pnl), 0) FROM FuturesPortfolioTrades WHERE " + where;
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
+			bindParams(pstmt, params);
+			try (ResultSet rs = pstmt.executeQuery()) {
+				if (rs.next()) {
+					return rs.getDouble(1);
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return 0.0;
+	}
+
+	private static int portfolioTradeWins(String where, List<Object> params) {
+		String sql = "SELECT COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0) FROM FuturesPortfolioTrades WHERE " + where;
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
+			bindParams(pstmt, params);
+			try (ResultSet rs = pstmt.executeQuery()) {
+				if (rs.next()) {
+					return rs.getInt(1);
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return 0;
+	}
+
+	private static void bindParams(PreparedStatement pstmt, List<Object> params) throws SQLException {
+		for (int index = 0; index < params.size(); index++) {
+			Object value = params.get(index);
+			if (value instanceof Integer) {
+				pstmt.setInt(index + 1, ((Integer) value).intValue());
+			} else {
+				pstmt.setString(index + 1, String.valueOf(value));
+			}
+		}
+	}
+
+	private static String portfolioTradeDistinctValuesJson(int backtestId, String column) {
+		String safeColumn = "strategyName".equals(column) ? "strategyName" : "symbol";
+		List<String> values = new ArrayList<String>();
+		String sql = "SELECT DISTINCT " + safeColumn + " AS value FROM FuturesPortfolioTrades WHERE portfolioBacktestID = ? AND " + safeColumn + " IS NOT NULL AND TRIM(" + safeColumn + ") != '' ORDER BY value";
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
+			pstmt.setInt(1, backtestId);
+			try (ResultSet rs = pstmt.executeQuery()) {
+				while (rs.next()) {
+					values.add(rs.getString("value"));
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return jsonStringArray(values);
+	}
+
+	private static void appendPortfolioTradeJson(StringBuilder json, ResultSet rs) throws SQLException {
+		json.append("{")
+			.append("\"id\":").append(rs.getInt("portfolioTradeID")).append(",")
+			.append("\"symbol\":").append(jsonString(rs.getString("symbol"))).append(",")
+			.append("\"contractName\":").append(jsonString(contractNameForSymbol(rs.getString("symbol")))).append(",")
+			.append("\"strategyCode\":").append(jsonString(rs.getString("strategyCode"))).append(",")
+			.append("\"strategyName\":").append(jsonString(rs.getString("strategyName"))).append(",")
+			.append("\"side\":").append(jsonString(rs.getString("side"))).append(",")
+			.append("\"contracts\":").append(rs.getInt("contracts")).append(",")
+			.append("\"entry\":").append(rs.getDouble("entryPrice")).append(",")
+			.append("\"exit\":").append(rs.getDouble("exitPrice")).append(",")
+			.append("\"stop\":").append(rs.getDouble("stopPrice")).append(",")
+			.append("\"target\":").append(rs.getDouble("targetPrice")).append(",")
+			.append("\"openedAt\":").append(jsonString(rs.getString("openedAt"))).append(",")
+			.append("\"closedAt\":").append(jsonString(rs.getString("closedAt"))).append(",")
+			.append("\"pnl\":").append(rs.getDouble("pnl")).append(",")
+			.append("\"mfe\":").append(rs.getDouble("mfe")).append(",")
+			.append("\"mae\":").append(rs.getDouble("mae")).append(",")
+			.append("\"exitReason\":").append(jsonString(rs.getString("exitReason"))).append(",")
+			.append("\"tradeNotes\":").append(jsonString(rs.getString("tradeNotes")))
+			.append("}");
+	}
+
 	public static String getBacktestSegmentsJson(int backtestId) {
 		initializeStore();
 		return "{"

@@ -6,10 +6,12 @@ export default function RunPreview({
   trades = null,
   totalTradeCount = null,
   tradePreviewLimit = null,
+  loadTradesPage = null,
   showTradeLogs = true,
   showCapitalCards = true,
   onOpenTrade = null,
 }) {
+  const serverTradeMode = typeof loadTradesPage === "function";
   const [outcomeFilter, setOutcomeFilter] = useState("all");
   const [symbolFilter, setSymbolFilter] = useState("all");
   const [sideFilter, setSideFilter] = useState("all");
@@ -17,6 +19,17 @@ export default function RunPreview({
   const [tradeSort, setTradeSort] = useState("largestWin");
   const [startDateFilter, setStartDateFilter] = useState("");
   const [endDateFilter, setEndDateFilter] = useState("");
+  const [tradePage, setTradePage] = useState(1);
+  const [serverTrades, setServerTrades] = useState({
+    trades: [],
+    total: 0,
+    filteredTotal: 0,
+    filteredPnl: 0,
+    filteredWinRate: 0,
+    symbols: [],
+    strategies: [],
+  });
+  const [isLoadingTrades, setIsLoadingTrades] = useState(false);
   const activeFilterCount = [
     outcomeFilter !== "all",
     symbolFilter !== "all",
@@ -34,15 +47,81 @@ export default function RunPreview({
     setTradeSort("largestWin");
     setStartDateFilter("");
     setEndDateFilter("");
+    setTradePage(1);
+    setServerTrades({
+      trades: [],
+      total: 0,
+      filteredTotal: 0,
+      filteredPnl: 0,
+      filteredWinRate: 0,
+      symbols: [],
+      strategies: [],
+    });
   }, [run?.id]);
 
-  const symbols = useMemo(() => uniqueTradeValues(trades, "symbol"), [trades]);
-  const strategies = useMemo(() => uniqueTradeValues(trades, "strategyName"), [trades]);
+  useEffect(() => {
+    setTradePage(1);
+  }, [endDateFilter, outcomeFilter, sideFilter, startDateFilter, strategyFilter, symbolFilter, tradeSort]);
+
+  useEffect(() => {
+    if (!serverTradeMode || !run?.id) {
+      return;
+    }
+    let cancelled = false;
+    setIsLoadingTrades(true);
+    loadTradesPage({
+      page: tradePage,
+      limit: tradePreviewLimit || 500,
+      outcome: outcomeFilter,
+      symbol: symbolFilter,
+      side: sideFilter,
+      strategy: strategyFilter,
+      sort: tradeSort,
+      startDate: startDateFilter,
+      endDate: endDateFilter,
+    })
+      .then((data) => {
+        if (cancelled) return;
+        setServerTrades({
+          trades: Array.isArray(data?.trades) ? data.trades : [],
+          total: Number(data?.total || 0),
+          filteredTotal: Number(data?.filteredTotal || 0),
+          filteredPnl: Number(data?.filteredPnl || 0),
+          filteredWinRate: Number(data?.filteredWinRate || 0),
+          symbols: Array.isArray(data?.symbols) ? data.symbols : [],
+          strategies: Array.isArray(data?.strategies) ? data.strategies : [],
+        });
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error("Error loading paged trades:", error);
+        setServerTrades({
+          trades: [],
+          total: 0,
+          filteredTotal: 0,
+          filteredPnl: 0,
+          filteredWinRate: 0,
+          symbols: [],
+          strategies: [],
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingTrades(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [endDateFilter, loadTradesPage, outcomeFilter, run?.id, serverTradeMode, sideFilter, startDateFilter, strategyFilter, symbolFilter, tradePage, tradePreviewLimit, tradeSort]);
+
+  const visibleTrades = serverTradeMode ? serverTrades.trades : trades;
+  const symbols = useMemo(() => serverTradeMode ? serverTrades.symbols : uniqueTradeValues(trades, "symbol"), [serverTradeMode, serverTrades.symbols, trades]);
+  const strategies = useMemo(() => serverTradeMode ? serverTrades.strategies : uniqueTradeValues(trades, "strategyName"), [serverTradeMode, serverTrades.strategies, trades]);
 
   const filteredTrades = useMemo(() => {
-    if (!Array.isArray(trades)) return [];
+    if (!Array.isArray(visibleTrades)) return [];
+    if (serverTradeMode) return visibleTrades;
 
-    let nextTrades = trades.filter((trade) => {
+    let nextTrades = visibleTrades.filter((trade) => {
       const pnl = Number(trade?.pnl ?? 0);
       if (outcomeFilter === "profits" && pnl <= 0) return false;
       if (outcomeFilter === "losses" && pnl >= 0) return false;
@@ -64,17 +143,21 @@ export default function RunPreview({
     });
 
     return nextTrades;
-  }, [endDateFilter, outcomeFilter, sideFilter, startDateFilter, strategyFilter, symbolFilter, tradeSort, trades]);
+  }, [endDateFilter, outcomeFilter, serverTradeMode, sideFilter, startDateFilter, strategyFilter, symbolFilter, tradeSort, visibleTrades]);
 
-  const filteredPnl = filteredTrades.reduce((total, trade) => total + Number(trade?.pnl ?? 0), 0);
+  const filteredPnl = serverTradeMode ? serverTrades.filteredPnl : filteredTrades.reduce((total, trade) => total + Number(trade?.pnl ?? 0), 0);
   const filteredWins = filteredTrades.filter((trade) => Number(trade?.pnl ?? 0) > 0).length;
-  const filteredWinRate = filteredTrades.length > 0 ? (filteredWins / filteredTrades.length) * 100 : 0;
+  const filteredCount = serverTradeMode ? serverTrades.filteredTotal : filteredTrades.length;
+  const filteredWinRate = serverTradeMode ? serverTrades.filteredWinRate : (filteredTrades.length > 0 ? (filteredWins / filteredTrades.length) * 100 : 0);
   const filteredTotalReturn = calculateFilteredTotalReturn(run, filteredTrades, filteredPnl);
-  const renderedTrades = filteredTrades.slice(0, 250);
-  const totalTrades = Number(totalTradeCount ?? run?.trades ?? trades?.length ?? 0);
-  const loadedTrades = Array.isArray(trades) ? trades.length : 0;
-  const isTradePreviewLimited = Array.isArray(trades) && totalTrades > loadedTrades;
-  const isRenderLimited = filteredTrades.length > renderedTrades.length;
+  const renderedTrades = serverTradeMode ? filteredTrades : filteredTrades.slice(0, 250);
+  const totalTrades = serverTradeMode ? serverTrades.total : Number(totalTradeCount ?? run?.trades ?? trades?.length ?? 0);
+  const loadedTrades = Array.isArray(visibleTrades) ? visibleTrades.length : 0;
+  const isTradePreviewLimited = !serverTradeMode && Array.isArray(visibleTrades) && totalTrades > loadedTrades;
+  const isRenderLimited = !serverTradeMode && filteredTrades.length > renderedTrades.length;
+  const pageSize = tradePreviewLimit || 500;
+  const totalTradePages = Math.max(1, Math.ceil(filteredCount / pageSize));
+  const boundedTradePage = Math.min(tradePage, totalTradePages);
 
   return (
     <div className="app-panel">
@@ -122,7 +205,14 @@ export default function RunPreview({
               <div className="fw-bold app-kicker">Trades / Logs</div>
               <div className="app-muted app-kicker">
                 {Array.isArray(trades)
-                  ? tradeLogSummary({
+                  ? serverTradeMode ? pagedTradeLogSummary({
+                    page: boundedTradePage,
+                    totalPages: totalTradePages,
+                    pageCount: renderedTrades.length,
+                    filteredCount,
+                    totalCount: totalTrades,
+                    loading: isLoadingTrades,
+                  }) : tradeLogSummary({
                     filteredCount: filteredTrades.length,
                     renderedCount: renderedTrades.length,
                     loadedCount: loadedTrades,
@@ -219,10 +309,23 @@ export default function RunPreview({
 
               <div className="row g-2 mt-1">
                 <MetricCard title="Filtered P/L" value={formatSignedMoney(filteredPnl)} accent={filteredPnl} />
-                <MetricCard title="Filtered Trades" value={filteredTrades.length} />
+                <MetricCard title="Filtered Trades" value={filteredCount} />
                 <MetricCard title="Filtered Win Rate" value={`${formatNumber(filteredWinRate)}%`} />
                 <MetricCard title="Filtered Total Return" value={`${formatNumber(filteredTotalReturn)}%`} accent={filteredTotalReturn} />
               </div>
+              {serverTradeMode && (
+                <div className="d-flex align-items-center justify-content-between gap-2 mt-3 flex-wrap">
+                  <button type="button" className="app-btn px-3" disabled={boundedTradePage <= 1 || isLoadingTrades} onClick={() => setTradePage((current) => Math.max(1, current - 1))}>
+                    Prev Trades
+                  </button>
+                  <div className="app-muted app-kicker">
+                    Trade Page <b>{boundedTradePage}</b> of <b>{totalTradePages}</b> · {formatNumber(pageSize, 0)} rows/page
+                  </div>
+                  <button type="button" className="app-btn px-3" disabled={boundedTradePage >= totalTradePages || isLoadingTrades} onClick={() => setTradePage((current) => Math.min(totalTradePages, current + 1))}>
+                    Next Trades
+                  </button>
+                </div>
+              )}
             </>
           )}
 
@@ -285,7 +388,8 @@ export default function RunPreview({
                   </article>
                 ))}
 
-                {filteredTrades.length === 0 && <div className="app-empty">No trades match this filter.</div>}
+                {isLoadingTrades && <div className="app-empty">Loading trades...</div>}
+                {!isLoadingTrades && filteredTrades.length === 0 && <div className="app-empty">No trades match this filter.</div>}
                 {isRenderLimited && <div className="app-empty">Narrow the filters to inspect more matching trades.</div>}
               </>
             )}
@@ -345,7 +449,8 @@ export default function RunPreview({
                   </div>
                 ))}
 
-                {filteredTrades.length === 0 && <div className="app-empty">No trades match this filter.</div>}
+                {isLoadingTrades && <div className="app-empty">Loading trades...</div>}
+                {!isLoadingTrades && filteredTrades.length === 0 && <div className="app-empty">No trades match this filter.</div>}
                 {isRenderLimited && <div className="app-empty">Narrow the filters to inspect more matching trades.</div>}
               </>
             )}
@@ -374,6 +479,20 @@ function tradeLogSummary({
     return `Showing ${formatNumber(renderedCount, 0)} of ${formatNumber(filteredCount, 0)} matching trades. Narrow the filters to inspect more.`;
   }
   return `Showing ${formatNumber(filteredCount, 0)} of ${formatNumber(loadedCount, 0)} trades.`;
+}
+
+function pagedTradeLogSummary({
+  page,
+  totalPages,
+  pageCount,
+  filteredCount,
+  totalCount,
+  loading,
+}) {
+  if (loading) {
+    return `Loading page ${formatNumber(page, 0)} of ${formatNumber(totalPages, 0)}.`;
+  }
+  return `Showing ${formatNumber(pageCount, 0)} trades on page ${formatNumber(page, 0)} of ${formatNumber(totalPages, 0)}. Filtered ${formatNumber(filteredCount, 0)} of ${formatNumber(totalCount, 0)} total trades.`;
 }
 
 function MetricCard({ title, value, accent = 0 }) {

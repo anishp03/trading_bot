@@ -1104,7 +1104,23 @@ public class MainServer {
                 return;
             }
             int limit = parseIntOrDefault(ctx.queryParam("limit"), 0);
+            int offset = parseIntOrDefault(ctx.queryParam("offset"), 0);
             String sort = valueOrDefault(ctx.queryParam("sort"), "");
+            if (parseBooleanOrDefault(ctx.queryParam("paged"), false)) {
+                ctx.contentType("application/json").result(FuturesManager.getPortfolioBacktestTradesPageJson(
+                    backtestId,
+                    limit,
+                    offset,
+                    sort,
+                    valueOrDefault(ctx.queryParam("outcome"), ""),
+                    valueOrDefault(ctx.queryParam("symbol"), ""),
+                    valueOrDefault(ctx.queryParam("side"), ""),
+                    valueOrDefault(ctx.queryParam("strategy"), ""),
+                    valueOrDefault(ctx.queryParam("startDate"), ""),
+                    valueOrDefault(ctx.queryParam("endDate"), "")
+                ));
+                return;
+            }
             ctx.contentType("application/json").result(FuturesManager.getPortfolioBacktestTradesJson(backtestId, limit, sort));
         });
 
