@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../utils/api.js";
 
 const DEFAULT_SETTINGS = {
-  orb: { enabled: true, maxTradesPerDay: 1 },
+  orb: { enabled: true, maxTradesPerDay: 2 },
   openingMomentum: { enabled: false, maxTradesPerDay: 2 },
   sweep: { enabled: true, maxTradesPerDay: 3 },
   vwapPullback: { enabled: false, maxTradesPerDay: 1 },
@@ -145,13 +145,13 @@ const DEFAULT_SETTINGS = {
   managedGivebackMinBars: 3,
 };
 
-const DEFAULT_STRATEGY_PRESET = "backtestwindows94k";
-const BIAS_FREE_STRATEGY_PRESET = "biasfree94k";
+const DEFAULT_STRATEGY_PRESET = "backtestbias92k";
+const BIAS_FREE_STRATEGY_PRESET = "biasfree92k";
 const ALL_ENABLED_STRATEGY_PRESET = "allenabledbiasfree";
 const READ_ONLY_STRATEGY_PRESETS = new Set([DEFAULT_STRATEGY_PRESET]);
 const CANONICAL_STRATEGY_PRESETS = [
-  { name: DEFAULT_STRATEGY_PRESET, label: "Backtest Windows 94k" },
-  { name: BIAS_FREE_STRATEGY_PRESET, label: "Bias-Free 94k" },
+  { name: DEFAULT_STRATEGY_PRESET, label: "Backtest Bias 92k" },
+  { name: BIAS_FREE_STRATEGY_PRESET, label: "Bias-Free 92k" },
   { name: ALL_ENABLED_STRATEGY_PRESET, label: "All Enabled Bias-Free" },
 ];
 const INSTRUMENT_FALLBACKS = [
@@ -287,7 +287,7 @@ export default function FuturesStrategy() {
 
   async function saveSettings() {
     if (READ_ONLY_STRATEGY_PRESETS.has(selectedPreset)) {
-      setSaveStatus("backtestwindows94k is read-only. Switch to biasfree94k or allenabledbiasfree to save edits.");
+      setSaveStatus("backtestbias92k is read-only. Switch to biasfree92k or allenabledbiasfree to save edits.");
       return;
     }
     setIsSaving(true);

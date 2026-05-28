@@ -5,10 +5,10 @@ This GitHub package is the cloud-facing frontend for the futures trading bot. Th
 ## Current Strategy Workflow
 
 - Internal preserved source: `94k`
-- Windowed control preset: `backtestwindows94k`
-- Bias-free same-enabled-map preset: `biasfree94k`
+- Windowed control preset: `backtestbias92k`
+- Bias-free same-enabled-map preset: `biasfree92k`
 - Broad research preset: `allenabledbiasfree`
-- The app exposes the three named Strategy Config presets above. `backtestwindows94k` is read-only in the Strategy page; dev edits belong in `biasfree94k` or `allenabledbiasfree`.
+- The app exposes the three named Strategy Config presets above. `backtestbias92k` is read-only in the Strategy page; dev edits belong in `biasfree92k` or `allenabledbiasfree`.
 - Live/backend promotion is manual. Do not push the dev frontend, backend, database, broker credentials, or Topstep/ProjectX credentials to GitHub.
 
 ## Local Frontend

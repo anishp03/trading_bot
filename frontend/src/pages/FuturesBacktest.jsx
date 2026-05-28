@@ -5,12 +5,12 @@ import { API_BASE_URL, apiFetch } from "../utils/api.js";
 const TOPSTEP_RESEARCH_PROFILE = "TOPSTEP_150K_RESEARCH";
 const MAIN_PORTFOLIO_SYMBOLS = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K", "MYM", "MCL"];
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MYM", "MGC", "MCL"]);
-const DEFAULT_STRATEGY_PRESET = "backtestwindows94k";
-const BIAS_FREE_STRATEGY_PRESET = "biasfree94k";
+const DEFAULT_STRATEGY_PRESET = "backtestbias92k";
+const BIAS_FREE_STRATEGY_PRESET = "biasfree92k";
 const ALL_ENABLED_STRATEGY_PRESET = "allenabledbiasfree";
 const CANONICAL_STRATEGY_PRESETS = [
-  { name: DEFAULT_STRATEGY_PRESET, label: "Backtest Windows 94k" },
-  { name: BIAS_FREE_STRATEGY_PRESET, label: "Bias-Free 94k" },
+  { name: DEFAULT_STRATEGY_PRESET, label: "Backtest Bias 92k" },
+  { name: BIAS_FREE_STRATEGY_PRESET, label: "Bias-Free 92k" },
   { name: ALL_ENABLED_STRATEGY_PRESET, label: "All Enabled Bias-Free" },
 ];
 const INSTRUMENT_FALLBACKS = [
@@ -149,6 +149,9 @@ export default function FuturesBacktest() {
   const presetOptions = mergeStrategyPresets(strategyPresets);
   const selectedPresetLabel = presetOptions.find((preset) => preset.name === config.strategyPreset)?.label || config.strategyPreset || DEFAULT_STRATEGY_PRESET;
   const riskProfileOptions = useMemo(() => buildRiskProfileOptions(fundedProfiles), [fundedProfiles]);
+  const savedRiskSizingEnabled = config.fundedProfile !== "CUSTOM";
+  const sizingSourceLabel = savedRiskSizingEnabled ? "Saved per-contract risk" : "Manual risk fields";
+  const ruleModeLabel = config.continueAfterRuleViolation === "true" ? "Full trail" : "Stop on breach";
 
   function loadInstruments() {
     apiFetch("/api/futures/instruments")
@@ -362,7 +365,7 @@ export default function FuturesBacktest() {
       maxOpenPositions: config.maxOpenPositions,
       maxAggregateContracts: config.maxAggregateContracts,
       maxAggregateMiniUnits: config.maxAggregateMiniUnits,
-      useSavedRisk: config.fundedProfile === "CUSTOM" ? "false" : "true",
+      useSavedRisk: savedRiskSizingEnabled ? "true" : "false",
       continueAfterRuleViolation: config.continueAfterRuleViolation === "true" ? "true" : "false",
     });
 
@@ -559,6 +562,10 @@ export default function FuturesBacktest() {
             <input type="number" min="0" step="0.1" value={config.maxAggregateMiniUnits} onChange={(event) => updateConfig("maxAggregateMiniUnits", event.target.value)} className="form-control app-input" />
           </Field>
 
+          <Field label="Risk Sizing" className="col-12 col-md-4 col-xl-3">
+            <input type="text" value={sizingSourceLabel} className="form-control app-input" readOnly />
+          </Field>
+
           <div className="col-12 col-md-4 col-xl-3">
             <label className="app-toggle-row h-100">
               <input
@@ -566,7 +573,7 @@ export default function FuturesBacktest() {
                 checked={config.continueAfterRuleViolation === "true"}
                 onChange={(event) => updateConfig("continueAfterRuleViolation", event.target.checked ? "true" : "false")}
               />
-              Full Trade Trail
+              {ruleModeLabel}
             </label>
           </div>
 
