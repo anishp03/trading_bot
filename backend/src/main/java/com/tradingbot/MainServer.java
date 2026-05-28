@@ -1103,7 +1103,9 @@ public class MainServer {
                 ctx.status(400).result("Invalid futures portfolio backtest ID.");
                 return;
             }
-            ctx.contentType("application/json").result(FuturesManager.getPortfolioBacktestTradesJson(backtestId));
+            int limit = parseIntOrDefault(ctx.queryParam("limit"), 0);
+            String sort = valueOrDefault(ctx.queryParam("sort"), "");
+            ctx.contentType("application/json").result(FuturesManager.getPortfolioBacktestTradesJson(backtestId, limit, sort));
         });
 
         app.get("/api/futures/backtests/{id}/segments", ctx -> {

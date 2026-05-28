@@ -147,12 +147,12 @@ const DEFAULT_SETTINGS = {
 
 const DEFAULT_STRATEGY_PRESET = "backtestwindows94k";
 const BIAS_FREE_STRATEGY_PRESET = "biasfree94k";
-const ALL_ENABLED_STRATEGY_PRESET = "allenabled";
+const ALL_ENABLED_STRATEGY_PRESET = "allenabledbiasfree";
 const READ_ONLY_STRATEGY_PRESETS = new Set([DEFAULT_STRATEGY_PRESET]);
 const CANONICAL_STRATEGY_PRESETS = [
   { name: DEFAULT_STRATEGY_PRESET, label: "Backtest Windows 94k" },
   { name: BIAS_FREE_STRATEGY_PRESET, label: "Bias-Free 94k" },
-  { name: ALL_ENABLED_STRATEGY_PRESET, label: "All Enabled" },
+  { name: ALL_ENABLED_STRATEGY_PRESET, label: "All Enabled Bias-Free" },
 ];
 const INSTRUMENT_FALLBACKS = [
   { symbol: "MES", name: "Micro E-mini S&P 500", exchange: "CME", tickSize: 0.25, tickValue: 1.25 },
@@ -287,7 +287,7 @@ export default function FuturesStrategy() {
 
   async function saveSettings() {
     if (READ_ONLY_STRATEGY_PRESETS.has(selectedPreset)) {
-      setSaveStatus("backtestwindows94k is read-only. Switch to biasfree94k or allenabled to save edits.");
+      setSaveStatus("backtestwindows94k is read-only. Switch to biasfree94k or allenabledbiasfree to save edits.");
       return;
     }
     setIsSaving(true);

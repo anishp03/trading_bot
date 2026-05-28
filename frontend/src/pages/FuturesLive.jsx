@@ -26,11 +26,11 @@ const DEFAULT_PROFILE = "TOPSTEP_150K_RESEARCH";
 const DEFAULT_ACCOUNT_PROFILE = "TOPSTEP_150K_PRACTICE";
 const DEFAULT_STRATEGY_PRESET = "backtestwindows94k";
 const BIAS_FREE_STRATEGY_PRESET = "biasfree94k";
-const ALL_ENABLED_STRATEGY_PRESET = "allenabled";
+const ALL_ENABLED_STRATEGY_PRESET = "allenabledbiasfree";
 const CANONICAL_STRATEGY_PRESETS = [
   { name: DEFAULT_STRATEGY_PRESET, label: "Backtest Windows 94k" },
   { name: BIAS_FREE_STRATEGY_PRESET, label: "Bias-Free 94k" },
-  { name: ALL_ENABLED_STRATEGY_PRESET, label: "All Enabled" },
+  { name: ALL_ENABLED_STRATEGY_PRESET, label: "All Enabled Bias-Free" },
 ];
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MGC", "MYM", "MCL"]);
 const LIVE_ACCOUNT_PROFILE_CODES = new Set(["TOPSTEP_150K_PRACTICE", "TOPSTEP_50K_COMBINE"]);

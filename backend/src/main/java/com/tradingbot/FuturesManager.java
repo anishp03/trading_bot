@@ -99,9 +99,9 @@ public class FuturesManager {
 	private static final String WIP_STRATEGY_PRESET = "wip";
 	private static final String WINDOWED_94K_STRATEGY_PRESET = "backtestwindows94k";
 	private static final String BIAS_FREE_94K_STRATEGY_PRESET = "biasfree94k";
-	private static final String ALL_ENABLED_STRATEGY_PRESET = "allenabled";
-	private static final String[] VISIBLE_STRATEGY_PRESETS = new String[] { WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, ALL_ENABLED_STRATEGY_PRESET };
-	private static final String[] SEEDED_STRATEGY_PRESETS = new String[] { DEFAULT_STRATEGY_PRESET, WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, ALL_ENABLED_STRATEGY_PRESET, WIP_STRATEGY_PRESET };
+	private static final String ALL_ENABLED_BIAS_FREE_STRATEGY_PRESET = "allenabledbiasfree";
+	private static final String[] VISIBLE_STRATEGY_PRESETS = new String[] { WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, ALL_ENABLED_BIAS_FREE_STRATEGY_PRESET };
+	private static final String[] SEEDED_STRATEGY_PRESETS = new String[] { DEFAULT_STRATEGY_PRESET, WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, ALL_ENABLED_BIAS_FREE_STRATEGY_PRESET, WIP_STRATEGY_PRESET };
 	private static final String RESEARCH_RELAXED_WINDOWS_PROPERTY = "tradingbot.research.relaxedWindows";
 	private static final String[] TIME_NATIVE_STRATEGY_CODES = new String[] { "ORB", "ORB2", "LORB", "OMOM", "CMOM", "AFT", "MIM", "IPB" };
 	private static final String[] PATTERN_LEVEL_STRATEGY_CODES = new String[] { "FVG", "VWAP", "VRCL", "KREV", "PDB", "VPB", "SWEEP", "MSCALP", "SHDW", "ECHO", "WFT", "MRVWAP", "KELT", "TLAD", "RCB" };
@@ -2769,13 +2769,13 @@ public class FuturesManager {
 			+ "\"controlPreset\":" + jsonString(DEFAULT_STRATEGY_PRESET) + ","
 			+ "\"windowedPreset\":" + jsonString(WINDOWED_94K_STRATEGY_PRESET) + ","
 			+ "\"biasFreePreset\":" + jsonString(BIAS_FREE_94K_STRATEGY_PRESET) + ","
-			+ "\"allEnabledPreset\":" + jsonString(ALL_ENABLED_STRATEGY_PRESET) + ","
+			+ "\"allEnabledPreset\":" + jsonString(ALL_ENABLED_BIAS_FREE_STRATEGY_PRESET) + ","
 			+ "\"editablePreset\":" + jsonString(BIAS_FREE_94K_STRATEGY_PRESET) + ","
 			+ "\"visiblePresets\":" + jsonStringArray(Arrays.asList(VISIBLE_STRATEGY_PRESETS)) + ","
 			+ "\"timeNativeStrategies\":" + jsonStringArray(Arrays.asList(TIME_NATIVE_STRATEGY_CODES)) + ","
 			+ "\"patternLevelStrategies\":" + jsonStringArray(Arrays.asList(PATTERN_LEVEL_STRATEGY_CODES)) + ","
 			+ "\"disabledResearchStrategies\":" + jsonStringArray(Arrays.asList(DISABLED_RESEARCH_STRATEGY_CODES)) + ","
-				+ "\"rule\":" + jsonString("backtestwindows94k is the frozen 94k windowed control. biasfree94k keeps the same 94k enabled strategy map while removing arbitrary pattern/dependent strategy windows and day masks. allenabled enables every strategy toggle for broad research.")
+				+ "\"rule\":" + jsonString("backtestwindows94k is the frozen 94k windowed control. biasfree94k keeps the same 94k enabled strategy map while removing arbitrary pattern/dependent strategy windows and day masks. allenabledbiasfree enables every strategy toggle on the same bias-free window policy for broad research.")
 				+ "}";
 	}
 
@@ -2797,7 +2797,7 @@ public class FuturesManager {
 			return "{\"success\":false,\"message\":\"Preset name is required.\"}";
 		}
 		if (!isSeededStrategyPresetName(targetName)) {
-			return "{\"success\":false,\"message\":\"Strategy Configs are locked to the approved dev presets: backtestwindows94k, biasfree94k, and allenabled.\"}";
+			return "{\"success\":false,\"message\":\"Strategy Configs are locked to the approved dev presets: backtestwindows94k, biasfree94k, and allenabledbiasfree.\"}";
 		}
 		if (WIP_STRATEGY_PRESET.equals(sourceName)) {
 			sourceName = DEFAULT_STRATEGY_PRESET;
@@ -4368,12 +4368,24 @@ public class FuturesManager {
 	}
 
 	public static String getPortfolioBacktestTradesJson(int backtestId) {
+		return getPortfolioBacktestTradesJson(backtestId, 0, "");
+	}
+
+	public static String getPortfolioBacktestTradesJson(int backtestId, int limit, String sort) {
 		initializeStore();
 		StringBuilder json = new StringBuilder("[");
-		String sql = "SELECT * FROM FuturesPortfolioTrades WHERE portfolioBacktestID = ? ORDER BY portfolioTradeID ASC";
+		int boundedLimit = Math.max(0, Math.min(limit, 5000));
+		String orderBy = "material".equalsIgnoreCase(cleanOrDefault(sort, ""))
+			? "ABS(pnl) DESC, portfolioTradeID ASC"
+			: "portfolioTradeID ASC";
+		String sql = "SELECT * FROM FuturesPortfolioTrades WHERE portfolioBacktestID = ? ORDER BY " + orderBy
+			+ (boundedLimit > 0 ? " LIMIT ?" : "");
 		try (Connection conn = DatabaseManager.getConnection();
 			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
 			pstmt.setInt(1, backtestId);
+			if (boundedLimit > 0) {
+				pstmt.setInt(2, boundedLimit);
+			}
 			try (ResultSet rs = pstmt.executeQuery()) {
 				while (rs.next()) {
 					if (json.length() > 1) {

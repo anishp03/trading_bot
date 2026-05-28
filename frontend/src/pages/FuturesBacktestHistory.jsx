@@ -4,6 +4,7 @@ import { apiFetch } from "../utils/api.js";
 import { formatEstTime } from "../utils/time.js";
 
 const PAGE_SIZE = 8;
+const TRADE_PREVIEW_LIMIT = 750;
 const EMPTY_SEGMENTS = { daily: [], weekly: [], monthly: [], summary: null };
 
 export default function FuturesBacktestHistory() {
@@ -56,7 +57,7 @@ export default function FuturesBacktestHistory() {
       return;
     }
 
-    apiFetch(`/api/futures/portfolio-backtests/${selectedRunId}/trades`)
+    apiFetch(`/api/futures/portfolio-backtests/${selectedRunId}/trades?limit=${TRADE_PREVIEW_LIMIT}&sort=material`)
       .then((response) => {
         if (!response.ok) throw new Error("Failed to load futures trades.");
         return response.json();
@@ -267,6 +268,8 @@ export default function FuturesBacktestHistory() {
           <RunPreview
             run={previewRun}
             trades={previewTrades}
+            totalTradeCount={selectedRun.trades}
+            tradePreviewLimit={TRADE_PREVIEW_LIMIT}
             showCapitalCards={true}
             showTradeLogs={true}
           />

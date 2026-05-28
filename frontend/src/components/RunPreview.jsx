@@ -4,6 +4,8 @@ import { formatEstTime } from "../utils/time.js";
 export default function RunPreview({
   run,
   trades = null,
+  totalTradeCount = null,
+  tradePreviewLimit = null,
   showTradeLogs = true,
   showCapitalCards = true,
   onOpenTrade = null,
@@ -68,6 +70,11 @@ export default function RunPreview({
   const filteredWins = filteredTrades.filter((trade) => Number(trade?.pnl ?? 0) > 0).length;
   const filteredWinRate = filteredTrades.length > 0 ? (filteredWins / filteredTrades.length) * 100 : 0;
   const filteredTotalReturn = calculateFilteredTotalReturn(run, filteredTrades, filteredPnl);
+  const renderedTrades = filteredTrades.slice(0, 250);
+  const totalTrades = Number(totalTradeCount ?? run?.trades ?? trades?.length ?? 0);
+  const loadedTrades = Array.isArray(trades) ? trades.length : 0;
+  const isTradePreviewLimited = Array.isArray(trades) && totalTrades > loadedTrades;
+  const isRenderLimited = filteredTrades.length > renderedTrades.length;
 
   return (
     <div className="app-panel">
@@ -115,7 +122,15 @@ export default function RunPreview({
               <div className="fw-bold app-kicker">Trades / Logs</div>
               <div className="app-muted app-kicker">
                 {Array.isArray(trades)
-                  ? `Showing ${filteredTrades.length} of ${trades.length} trades.`
+                  ? tradeLogSummary({
+                    filteredCount: filteredTrades.length,
+                    renderedCount: renderedTrades.length,
+                    loadedCount: loadedTrades,
+                    totalCount: totalTrades,
+                    previewLimit: tradePreviewLimit,
+                    previewLimited: isTradePreviewLimited,
+                    renderLimited: isRenderLimited,
+                  })
                 : "No per-trade data attached to this run yet."}
               </div>
             </div>
@@ -216,7 +231,7 @@ export default function RunPreview({
               <div className="app-empty">No trades to display for this run.</div>
             ) : (
               <>
-                {filteredTrades.map((trade, index) => (
+                {renderedTrades.map((trade, index) => (
                   <article className="mobile-trade-card" key={`preview-${trade.id ?? trade.time ?? "t"}-${index}`}>
                     <div className="mobile-trade-card-head">
                       <div>
@@ -271,6 +286,7 @@ export default function RunPreview({
                 ))}
 
                 {filteredTrades.length === 0 && <div className="app-empty">No trades match this filter.</div>}
+                {isRenderLimited && <div className="app-empty">Narrow the filters to inspect more matching trades.</div>}
               </>
             )}
           </div>
@@ -293,7 +309,7 @@ export default function RunPreview({
               <div className="app-empty">No trades to display for this run.</div>
             ) : (
               <>
-                {filteredTrades.map((trade, index) => (
+                {renderedTrades.map((trade, index) => (
                   <div
                     key={`${trade.id ?? trade.time ?? "t"}-${index}`}
                     className={onOpenTrade ? "app-grid-row trades-grid has-action" : "app-grid-row trades-grid"}
@@ -330,6 +346,7 @@ export default function RunPreview({
                 ))}
 
                 {filteredTrades.length === 0 && <div className="app-empty">No trades match this filter.</div>}
+                {isRenderLimited && <div className="app-empty">Narrow the filters to inspect more matching trades.</div>}
               </>
             )}
           </div>
@@ -337,6 +354,26 @@ export default function RunPreview({
       )}
     </div>
   );
+}
+
+function tradeLogSummary({
+  filteredCount,
+  renderedCount,
+  loadedCount,
+  totalCount,
+  previewLimit,
+  previewLimited,
+  renderLimited,
+}) {
+  if (previewLimited) {
+    const limitText = previewLimit ? `top ${formatNumber(previewLimit, 0)}` : formatNumber(loadedCount, 0);
+    const renderedText = renderLimited ? ` Rendering ${formatNumber(renderedCount, 0)} rows to keep the page responsive.` : "";
+    return `Loaded ${limitText} material trades from ${formatNumber(totalCount, 0)} total. Filtered ${formatNumber(filteredCount, 0)} loaded trades.${renderedText}`;
+  }
+  if (renderLimited) {
+    return `Showing ${formatNumber(renderedCount, 0)} of ${formatNumber(filteredCount, 0)} matching trades. Narrow the filters to inspect more.`;
+  }
+  return `Showing ${formatNumber(filteredCount, 0)} of ${formatNumber(loadedCount, 0)} trades.`;
 }
 
 function MetricCard({ title, value, accent = 0 }) {
