@@ -46,7 +46,6 @@ public class MainServer {
         ProjectXRealtimeManager.initializeStore();
         
         AccountManager accountManager = new AccountManager();
-        LiveBotManager liveBotManager = new LiveBotManager(accountManager);
         
         String bindHost = configuredBindHost();
         int port = parseIntOrDefault(System.getProperty("tradingbot.port", System.getenv("TRADINGBOT_PORT")), 7070);
@@ -154,88 +153,23 @@ public class MainServer {
         });
         
         app.get("/api/balance", ctx -> {
-            String email = resolveAccountEmail(ctx, ctx.queryParam("email"));
-            String apiKey = accountManager.getBrokerApiKey(email);
-            String secretKey = accountManager.getBrokerSecretKey(email);
-
-            if (isBlank(apiKey) || isBlank(secretKey)) {
-                ctx.status(400).contentType("application/json").result("{\"error\":\"Broker keys not configured.\"}");
-                return;
-            }
-
-            ctx.result(new AlpacaManager(apiKey, secretKey).getAccountInfo());
+            legacyEquityWorkflowRemoved(ctx);
         });
         
         app.post("/api/trade", ctx -> {
-            String email = resolveAccountEmail(ctx, ctx.queryParam("email"));
-            String symbol = ctx.queryParam("symbol");
-            String apiKey = accountManager.getBrokerApiKey(email);
-            String secretKey = accountManager.getBrokerSecretKey(email);
-
-            if (isBlank(apiKey) || isBlank(secretKey)) {
-                ctx.status(400).result("Broker keys not configured.");
-                return;
-            }
-
-            String result = new AlpacaManager(apiKey, secretKey).submitOrder(AlpacaManager.normalizeSymbol(symbol), 1, "buy");
-            System.out.println("TRADE EXECUTED: " + result); 
-            ctx.result(result);
+            legacyEquityWorkflowRemoved(ctx);
         });
 
         app.get("/api/live-bot/status", ctx -> {
-            String email = resolveAccountEmail(ctx, ctx.queryParam("email"));
-
-            ctx.contentType("application/json").result(liveBotManager.statusToJson(liveBotManager.getStatus(email)));
+            legacyEquityWorkflowRemoved(ctx);
         });
 
         app.post("/api/live-bot/start", ctx -> {
-            String email = resolveAccountEmail(ctx, ctx.queryParam("email"));
-            String symbol = ctx.queryParam("symbol");
-            double perTradeBuyingPower = parseDoubleOrDefault(ctx.queryParam("perTradeBuyingPower"), 0.0);
-            double takeProfit = parseDoubleOrDefault(ctx.queryParam("takeProfit"), 0.0);
-            double lossLimit = parseDoubleOrDefault(ctx.queryParam("lossLimit"), 0.0);
-
-            String apiKey = accountManager.getBrokerApiKey(email);
-            String secretKey = accountManager.getBrokerSecretKey(email);
-            if (isBlank(apiKey) || isBlank(secretKey)) {
-                ctx.status(400).result("Broker keys not configured.");
-                return;
-            }
-
-            if (!StrategyManager.loadStrategySettings().hasEnabledStrategies()) {
-                ctx.status(400)
-                    .contentType("application/json")
-                    .result("{\"message\":\"Enable at least one strategy before starting the live bot.\"}");
-                return;
-            }
-
-            LiveBotManager.LiveBotStatus status = liveBotManager.startBot(
-                email,
-                symbol,
-                perTradeBuyingPower,
-                takeProfit,
-                lossLimit
-            );
-
-            if (!status.success) {
-                ctx.status(500);
-            }
-
-            ctx.contentType("application/json").result(liveBotManager.statusToJson(status));
+            legacyEquityWorkflowRemoved(ctx);
         });
 
         app.post("/api/live-bot/stop", ctx -> {
-            String email = resolveAccountEmail(ctx, ctx.queryParam("email"));
-            boolean force = parseBooleanOrDefault(ctx.queryParam("force"), false);
-
-            LiveBotManager.LiveBotStatus status = liveBotManager.stopBot(email, force);
-            if (status.requiresConfirmation) {
-                ctx.status(409);
-            } else if (!status.success) {
-                ctx.status(500);
-            }
-
-            ctx.contentType("application/json").result(liveBotManager.statusToJson(status));
+            legacyEquityWorkflowRemoved(ctx);
         });
 
         app.post("/api/account/change-password", ctx -> {
@@ -300,306 +234,47 @@ public class MainServer {
         });
 
         app.get("/api/settings/broker", ctx -> {
-            String email = resolveAccountEmail(ctx, ctx.queryParam("email"));
-
-            String apiKey = accountManager.getBrokerApiKey(email);
-            String secretKey = accountManager.getBrokerSecretKey(email);
-            String connectedAccountName = "Not connected";
-
-            if (!isBlank(apiKey) && !isBlank(secretKey)) {
-                connectedAccountName = new AlpacaManager(apiKey, secretKey).getConnectedAccountName();
-            }
-
-            ctx.contentType("application/json").result("{"
-                + "\"broker\":" + jsonString(AlpacaManager.getBrokerName()) + ","
-                + "\"baseUrl\":" + jsonString(AlpacaManager.getBaseUrl()) + ","
-                + "\"connectedAccountName\":" + jsonString(connectedAccountName) + ","
-                + "\"hasApiKey\":" + !isBlank(apiKey) + ","
-                + "\"apiKeyPreview\":" + jsonString(maskSecret(apiKey)) + ","
-                + "\"hasSecretKey\":" + !isBlank(secretKey) + ","
-                + "\"secretKeyPreview\":" + jsonString(maskSecret(secretKey))
-                + "}");
+            legacyEquityWorkflowRemoved(ctx);
         });
 
         app.post("/api/settings/broker", ctx -> {
-            String email = resolveAccountEmail(ctx, requestParam(ctx, "email"));
-            String apiKey = requestParam(ctx, "apiKey");
-            String secretKey = requestParam(ctx, "secretKey");
-
-            String finalApiKey = isBlank(apiKey) ? accountManager.getBrokerApiKey(email) : apiKey.trim();
-            String finalSecretKey = isBlank(secretKey) ? accountManager.getBrokerSecretKey(email) : secretKey.trim();
-
-            if (isBlank(finalApiKey) || isBlank(finalSecretKey)) {
-                ctx.status(400).result("Missing broker settings.");
-                return;
-            }
-
-            boolean updated = accountManager.updateBrokerKeys(email, finalApiKey, finalSecretKey);
-
-            if (updated) {
-                ctx.status(204);
-            } else {
-                ctx.status(500).result("Failed to update broker settings.");
-            }
+            legacyEquityWorkflowRemoved(ctx);
         });
 
         app.get("/api/backtests/market-data", ctx -> {
-            ctx.contentType("application/json").result(AlpacaManager.getMarketDataStatusJson());
+            legacyEquityWorkflowRemoved(ctx);
         });
 
         app.get("/api/strategy", ctx -> {
-            ctx.contentType("application/json").result(StrategyManager.getStrategySettingsJson());
+            legacyEquityWorkflowRemoved(ctx);
         });
 
         app.post("/api/strategy", ctx -> {
-            StrategyManager.StrategySettings settings = StrategyManager.loadStrategySettings();
-
-            settings.orb.isEnabled = parseBooleanOrDefault(ctx.queryParam("orbEnabled"), settings.orb.isEnabled);
-            settings.orb.trendTimeframe = valueOrDefault(ctx.queryParam("orbTrendTimeframe"), settings.orb.trendTimeframe);
-            settings.orb.orbWindowMinutes = parseIntOrDefault(ctx.queryParam("orbWindowMinutes"), settings.orb.orbWindowMinutes);
-            settings.orb.maxTradesPerDay = parseIntOrDefault(ctx.queryParam("orbMaxTradesPerDay"), settings.orb.maxTradesPerDay);
-            settings.orb.breakoutBufferPct = parseDoubleOrDefault(ctx.queryParam("orbBreakoutBufferPct"), settings.orb.breakoutBufferPct);
-            settings.orb.reclaimWindowBars = parseIntOrDefault(ctx.queryParam("orbReclaimWindowBars"), settings.orb.reclaimWindowBars);
-            settings.orb.entryBufferPct = parseDoubleOrDefault(ctx.queryParam("orbEntryBufferPct"), settings.orb.entryBufferPct);
-            settings.orb.riskPerTradePct = parseDoubleOrDefault(ctx.queryParam("orbRiskPerTradePct"), settings.orb.riskPerTradePct);
-            settings.orb.rewardToRiskRatio = parseDoubleOrDefault(ctx.queryParam("orbRewardToRiskRatio"), settings.orb.rewardToRiskRatio);
-            settings.orb.stopBufferPct = parseDoubleOrDefault(ctx.queryParam("orbStopBufferPct"), settings.orb.stopBufferPct);
-            settings.orb.requireTrendAlignment = parseBooleanOrDefault(
-                ctx.queryParam("orbRequireTrendAlignment"),
-                settings.orb.requireTrendAlignment
-            );
-
-            settings.ifvg.isEnabled = parseBooleanOrDefault(ctx.queryParam("ifvgEnabled"), settings.ifvg.isEnabled);
-            settings.ifvg.trendTimeframe = valueOrDefault(ctx.queryParam("ifvgTrendTimeframe"), settings.ifvg.trendTimeframe);
-            settings.ifvg.signalTimeframe = valueOrDefault(ctx.queryParam("ifvgSignalTimeframe"), settings.ifvg.signalTimeframe);
-            settings.ifvg.maxTradesPerDay = parseIntOrDefault(ctx.queryParam("ifvgMaxTradesPerDay"), settings.ifvg.maxTradesPerDay);
-            settings.ifvg.minimumGapPct = parseDoubleOrDefault(ctx.queryParam("ifvgMinimumGapPct"), settings.ifvg.minimumGapPct);
-            settings.ifvg.reclaimWindowBars = parseIntOrDefault(ctx.queryParam("ifvgReclaimWindowBars"), settings.ifvg.reclaimWindowBars);
-            settings.ifvg.riskPerTradePct = parseDoubleOrDefault(ctx.queryParam("ifvgRiskPerTradePct"), settings.ifvg.riskPerTradePct);
-            settings.ifvg.rewardToRiskRatio = parseDoubleOrDefault(ctx.queryParam("ifvgRewardToRiskRatio"), settings.ifvg.rewardToRiskRatio);
-            settings.ifvg.entryBufferPct = parseDoubleOrDefault(ctx.queryParam("ifvgEntryBufferPct"), settings.ifvg.entryBufferPct);
-            settings.ifvg.stopBufferPct = parseDoubleOrDefault(ctx.queryParam("ifvgStopBufferPct"), settings.ifvg.stopBufferPct);
-            settings.ifvg.requireTrendAlignment = parseBooleanOrDefault(
-                ctx.queryParam("ifvgRequireTrendAlignment"),
-                settings.ifvg.requireTrendAlignment
-            );
-
-            settings.vwapPullback.isEnabled = parseBooleanOrDefault(ctx.queryParam("vwapEnabled"), settings.vwapPullback.isEnabled);
-            settings.vwapPullback.trendTimeframe = valueOrDefault(ctx.queryParam("vwapTrendTimeframe"), settings.vwapPullback.trendTimeframe);
-            settings.vwapPullback.maxTradesPerDay = parseIntOrDefault(ctx.queryParam("vwapMaxTradesPerDay"), settings.vwapPullback.maxTradesPerDay);
-            settings.vwapPullback.minimumGapPct = parseDoubleOrDefault(ctx.queryParam("vwapMinimumGapPct"), settings.vwapPullback.minimumGapPct);
-            settings.vwapPullback.reclaimWindowBars = parseIntOrDefault(ctx.queryParam("vwapReclaimWindowBars"), settings.vwapPullback.reclaimWindowBars);
-            settings.vwapPullback.riskPerTradePct = parseDoubleOrDefault(ctx.queryParam("vwapRiskPerTradePct"), settings.vwapPullback.riskPerTradePct);
-            settings.vwapPullback.rewardToRiskRatio = parseDoubleOrDefault(ctx.queryParam("vwapRewardToRiskRatio"), settings.vwapPullback.rewardToRiskRatio);
-            settings.vwapPullback.entryBufferPct = parseDoubleOrDefault(ctx.queryParam("vwapEntryBufferPct"), settings.vwapPullback.entryBufferPct);
-            settings.vwapPullback.stopBufferPct = parseDoubleOrDefault(ctx.queryParam("vwapStopBufferPct"), settings.vwapPullback.stopBufferPct);
-            settings.vwapPullback.requireTrendAlignment = parseBooleanOrDefault(
-                ctx.queryParam("vwapRequireTrendAlignment"),
-                settings.vwapPullback.requireTrendAlignment
-            );
-
-            settings.vwapMeanReversion.isEnabled = parseBooleanOrDefault(ctx.queryParam("vwapMeanReversionEnabled"), settings.vwapMeanReversion.isEnabled);
-            settings.vwapMeanReversion.trendTimeframe = valueOrDefault(ctx.queryParam("vwapMeanReversionTrendTimeframe"), settings.vwapMeanReversion.trendTimeframe);
-            settings.vwapMeanReversion.maxTradesPerDay = parseIntOrDefault(ctx.queryParam("vwapMeanReversionMaxTradesPerDay"), settings.vwapMeanReversion.maxTradesPerDay);
-            settings.vwapMeanReversion.minimumGapPct = parseDoubleOrDefault(ctx.queryParam("vwapMeanReversionMinimumGapPct"), settings.vwapMeanReversion.minimumGapPct);
-            settings.vwapMeanReversion.reclaimWindowBars = parseIntOrDefault(ctx.queryParam("vwapMeanReversionReclaimWindowBars"), settings.vwapMeanReversion.reclaimWindowBars);
-            settings.vwapMeanReversion.riskPerTradePct = parseDoubleOrDefault(ctx.queryParam("vwapMeanReversionRiskPerTradePct"), settings.vwapMeanReversion.riskPerTradePct);
-            settings.vwapMeanReversion.rewardToRiskRatio = parseDoubleOrDefault(ctx.queryParam("vwapMeanReversionRewardToRiskRatio"), settings.vwapMeanReversion.rewardToRiskRatio);
-            settings.vwapMeanReversion.entryBufferPct = parseDoubleOrDefault(ctx.queryParam("vwapMeanReversionEntryBufferPct"), settings.vwapMeanReversion.entryBufferPct);
-            settings.vwapMeanReversion.stopBufferPct = parseDoubleOrDefault(ctx.queryParam("vwapMeanReversionStopBufferPct"), settings.vwapMeanReversion.stopBufferPct);
-            settings.vwapMeanReversion.requireTrendAlignment = parseBooleanOrDefault(
-                ctx.queryParam("vwapMeanReversionRequireTrendAlignment"),
-                settings.vwapMeanReversion.requireTrendAlignment
-            );
-
-            settings.gapGo.isEnabled = parseBooleanOrDefault(ctx.queryParam("gapGoEnabled"), settings.gapGo.isEnabled);
-            settings.gapGo.trendTimeframe = valueOrDefault(ctx.queryParam("gapGoTrendTimeframe"), settings.gapGo.trendTimeframe);
-            settings.gapGo.orbWindowMinutes = parseIntOrDefault(ctx.queryParam("gapGoOrbWindowMinutes"), settings.gapGo.orbWindowMinutes);
-            settings.gapGo.maxTradesPerDay = parseIntOrDefault(ctx.queryParam("gapGoMaxTradesPerDay"), settings.gapGo.maxTradesPerDay);
-            settings.gapGo.breakoutBufferPct = parseDoubleOrDefault(ctx.queryParam("gapGoBreakoutBufferPct"), settings.gapGo.breakoutBufferPct);
-            settings.gapGo.minimumGapPct = parseDoubleOrDefault(ctx.queryParam("gapGoMinimumGapPct"), settings.gapGo.minimumGapPct);
-            settings.gapGo.riskPerTradePct = parseDoubleOrDefault(ctx.queryParam("gapGoRiskPerTradePct"), settings.gapGo.riskPerTradePct);
-            settings.gapGo.rewardToRiskRatio = parseDoubleOrDefault(ctx.queryParam("gapGoRewardToRiskRatio"), settings.gapGo.rewardToRiskRatio);
-            settings.gapGo.stopBufferPct = parseDoubleOrDefault(ctx.queryParam("gapGoStopBufferPct"), settings.gapGo.stopBufferPct);
-            settings.gapGo.requireTrendAlignment = parseBooleanOrDefault(
-                ctx.queryParam("gapGoRequireTrendAlignment"),
-                settings.gapGo.requireTrendAlignment
-            );
-
-            boolean saved = StrategyManager.saveStrategySettings(settings);
-
-            if (saved) {
-                ctx.contentType("application/json").result(StrategyManager.getStrategySettingsJson());
-            } else {
-                ctx.status(500).result("Failed to save strategy settings.");
-            }
+            legacyEquityWorkflowRemoved(ctx);
         });
 
         app.post("/api/backtests/market-data/refresh", ctx -> {
-            String email = resolveAccountEmail(ctx, ctx.queryParam("email"));
-
-            String apiKey = accountManager.getBrokerApiKey(email);
-            String secretKey = accountManager.getBrokerSecretKey(email);
-
-            if (isBlank(apiKey) || isBlank(secretKey)) {
-                ctx.status(400).result("Broker keys not configured.");
-                return;
-            }
-
-            boolean refreshed = new AlpacaManager(apiKey, secretKey).refreshHistoricalDataCache();
-
-            if (refreshed) {
-                ctx.contentType("application/json").result(AlpacaManager.getMarketDataStatusJson());
-            } else {
-                ctx.status(500).result("Failed to refresh market data.");
-            }
+            legacyEquityWorkflowRemoved(ctx);
         });
 
         app.post("/api/backtests/generate", ctx -> {
-            String equity = ctx.queryParam("equity");
-            String startDate = ctx.queryParam("startDate");
-            String endDate = ctx.queryParam("endDate");
-            double totalBuyingPower = parseDoubleOrDefault(ctx.queryParam("totalBuyingPower"), 25000.0);
-            double perTradeBuyingPower = parseDoubleOrDefault(ctx.queryParam("perTradeBuyingPower"), totalBuyingPower);
-            double takeProfit = parseDoubleOrDefault(ctx.queryParam("takeProfit"), 1000.0);
-            double lossLimit = parseDoubleOrDefault(ctx.queryParam("lossLimit"), 500.0);
-
-            if (!StrategyManager.loadStrategySettings().hasEnabledStrategies()) {
-                ctx.status(400)
-                    .contentType("application/json")
-                    .result("{\"message\":\"Enable at least one strategy before running a backtest.\"}");
-                return;
-            }
-
-            int backtestId = DatabaseManager.generateStrategyBacktest(
-                equity,
-                startDate,
-                endDate,
-                totalBuyingPower,
-                perTradeBuyingPower,
-                takeProfit,
-                lossLimit
-            );
-
-            if (backtestId > 0) {
-                ctx.status(201)
-                    .contentType("application/json")
-                    .result("{\"backtestId\":" + backtestId + "}");
-            } else {
-                ctx.status(500)
-                    .contentType("application/json")
-                    .result("{\"message\":\"Failed to generate backtest from market data.\"}");
-            }
+            legacyEquityWorkflowRemoved(ctx);
         });
 
         app.post("/api/backtests/clear", ctx -> {
-            boolean cleared = DatabaseManager.clearBacktests();
-
-            if (cleared) {
-                ctx.status(204);
-            } else {
-                ctx.status(500).result("Failed to clear backtest history.");
-            }
+            legacyEquityWorkflowRemoved(ctx);
         });
 
         app.get("/api/backtests", ctx -> {
-            StringBuilder json = new StringBuilder("[");
-            try (Connection conn = DatabaseManager.getConnection();
-                 Statement stmt = conn.createStatement();
-                 ResultSet rs = stmt.executeQuery("SELECT * FROM Backtests ORDER BY backtestID DESC")) {
-                while (rs.next()) {
-                    if (json.length() > 1) json.append(",");
-                    json.append("{")
-                        .append("\"recordId\":").append(rs.getInt("backtestID")).append(",")
-                        .append("\"name\":\"").append(rs.getString("backtestName")).append("\",")
-                        .append("\"equity\":\"").append(rs.getString("symbols")).append("\",")
-                        .append("\"start\":\"").append(rs.getString("startDate")).append("\",")
-                        .append("\"end\":\"").append(rs.getString("endDate")).append("\",")
-                        .append("\"startingCapital\":").append(rs.getDouble("startingCapital")).append(",")
-                        .append("\"endingCapital\":").append(rs.getDouble("endingCapital")).append(",")
-                        .append("\"totalProfit\":").append(rs.getDouble("totalProfit")).append(",")
-                        .append("\"totalReturn\":").append(rs.getDouble("returnPct")).append(",")
-                        .append("\"winRate\":").append(rs.getDouble("winRate")).append(",")
-                        .append("\"trades\":").append(rs.getInt("numTrades")).append(",")
-                        .append("\"profitFactor\":").append(rs.getDouble("profitFactor")).append(",")
-                        .append("\"drawdown\":").append(rs.getDouble("maxDrawdownPct"))
-                        .append("}");
-                }
-            }
-            json.append("]");
-            ctx.contentType("application/json").result(json.toString());
+            legacyEquityWorkflowRemoved(ctx);
         });
 
         app.get("/api/backtests/{id}/trades", ctx -> {
-            int backtestId;
-
-            try {
-                backtestId = Integer.parseInt(ctx.pathParam("id"));
-            } catch (NumberFormatException e) {
-                ctx.status(400).result("Invalid backtest ID.");
-                return;
-            }
-
-            StringBuilder json = new StringBuilder("[");
-            String sql = "SELECT * FROM Trades WHERE backtestID = ? ORDER BY tradeID ASC";
-
-            try (Connection conn = DatabaseManager.getConnection();
-                 PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                pstmt.setInt(1, backtestId);
-
-                try (ResultSet rs = pstmt.executeQuery()) {
-                while (rs.next()) {
-                    if (json.length() > 1) json.append(",");
-                    json.append("{")
-                        .append("\"id\":").append(rs.getInt("tradeID")).append(",")
-                        .append("\"symbol\":").append(jsonString(rs.getString("symbol"))).append(",")
-                        .append("\"strategyCode\":").append(jsonString(rs.getString("strategyCode"))).append(",")
-                        .append("\"strategyName\":").append(jsonString(rs.getString("strategyName"))).append(",")
-                        .append("\"time\":").append(jsonString(rs.getString("openedAt"))).append(",")
-                        .append("\"closedAt\":").append(jsonString(rs.getString("closedAt"))).append(",")
-                        .append("\"side\":").append(jsonString(rs.getString("side"))).append(",")
-                        .append("\"qty\":").append(rs.getDouble("qty")).append(",")
-                        .append("\"entry\":").append(rs.getDouble("entryPrice")).append(",")
-                        .append("\"exit\":").append(rs.getDouble("exitPrice")).append(",")
-                        .append("\"pnl\":").append(rs.getDouble("pnl")).append(",")
-                        .append("\"tradeNotes\":").append(jsonString(rs.getString("tradeNotes")))
-                        .append("}");
-                }
-                }
-            }
-            json.append("]");
-            ctx.contentType("application/json").result(json.toString());
+            legacyEquityWorkflowRemoved(ctx);
         });
 
         app.get("/api/backtests/{id}/trades/{tradeId}/chart", ctx -> {
-            int backtestId;
-            int tradeId;
-
-            try {
-                backtestId = Integer.parseInt(ctx.pathParam("id"));
-                tradeId = Integer.parseInt(ctx.pathParam("tradeId"));
-            } catch (NumberFormatException e) {
-                ctx.status(400).result("Invalid backtest trade request.");
-                return;
-            }
-
-            String timeframe = normalizeTradeChartTimeframe(ctx.queryParam("timeframe"));
-            String sql = "SELECT * FROM Trades WHERE backtestID = ? AND tradeID = ? LIMIT 1";
-
-            try (Connection conn = DatabaseManager.getConnection();
-                 PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                pstmt.setInt(1, backtestId);
-                pstmt.setInt(2, tradeId);
-
-                try (ResultSet rs = pstmt.executeQuery()) {
-                    if (!rs.next()) {
-                        ctx.status(404).result("Trade not found.");
-                        return;
-                    }
-
-                    ctx.contentType("application/json").result(buildTradeChartJson(rs, timeframe));
-                }
-            }
+            legacyEquityWorkflowRemoved(ctx);
         });
 
         app.get("/api/futures/instruments", ctx -> {
@@ -660,6 +335,8 @@ public class MainServer {
             settings.vwapMeanReversion.maxTradesPerDay = parseIntOrDefault(ctx.queryParam("vwapMeanReversionMaxTradesPerDay"), settings.vwapMeanReversion.maxTradesPerDay);
             settings.fvg.enabled = parseBooleanOrDefault(ctx.queryParam("fvgEnabled"), settings.fvg.enabled);
             settings.fvg.maxTradesPerDay = parseIntOrDefault(ctx.queryParam("fvgMaxTradesPerDay"), settings.fvg.maxTradesPerDay);
+            settings.ifvg.enabled = parseBooleanOrDefault(ctx.queryParam("ifvgEnabled"), settings.ifvg.enabled);
+            settings.ifvg.maxTradesPerDay = parseIntOrDefault(ctx.queryParam("ifvgMaxTradesPerDay"), settings.ifvg.maxTradesPerDay);
             settings.closeMomentum.enabled = parseBooleanOrDefault(ctx.queryParam("closeMomentumEnabled"), settings.closeMomentum.enabled);
             settings.closeMomentum.maxTradesPerDay = parseIntOrDefault(ctx.queryParam("closeMomentumMaxTradesPerDay"), settings.closeMomentum.maxTradesPerDay);
             settings.afternoonContinuation.enabled = parseBooleanOrDefault(ctx.queryParam("afternoonContinuationEnabled"), settings.afternoonContinuation.enabled);
@@ -712,10 +389,21 @@ public class MainServer {
             settings.fvgRequireCoreQuality = parseBooleanOrDefault(ctx.queryParam("fvgRequireCoreQuality"), settings.fvgRequireCoreQuality);
             settings.fvgRequireEmaStack = parseBooleanOrDefault(ctx.queryParam("fvgRequireEmaStack"), settings.fvgRequireEmaStack);
             settings.fvgRequireHigherTimeframeGuard = parseBooleanOrDefault(ctx.queryParam("fvgRequireHigherTimeframeGuard"), settings.fvgRequireHigherTimeframeGuard);
+            settings.fvgTradeInversions = parseBooleanOrDefault(ctx.queryParam("fvgTradeInversions"), settings.fvgTradeInversions);
+            settings.fvgRequireInversionStructureBreak = parseBooleanOrDefault(ctx.queryParam("fvgRequireInversionStructureBreak"), settings.fvgRequireInversionStructureBreak);
+            settings.fvgInversionBreakBars = parseIntOrDefault(ctx.queryParam("fvgInversionBreakBars"), settings.fvgInversionBreakBars);
+            settings.fvgInversionStructureBars = parseIntOrDefault(ctx.queryParam("fvgInversionStructureBars"), settings.fvgInversionStructureBars);
+            settings.fvgMinInversionBodyPct = parseDoubleOrDefault(ctx.queryParam("fvgMinInversionBodyPct"), settings.fvgMinInversionBodyPct);
             settings.fvgMinImpulseBodyPct = parseDoubleOrDefault(ctx.queryParam("fvgMinImpulseBodyPct"), settings.fvgMinImpulseBodyPct);
             settings.fvgMinTrendSlopeTicks = parseDoubleOrDefault(ctx.queryParam("fvgMinTrendSlopeTicks"), settings.fvgMinTrendSlopeTicks);
             settings.fvgMaxVwapDistanceTicks = parseDoubleOrDefault(ctx.queryParam("fvgMaxVwapDistanceTicks"), settings.fvgMaxVwapDistanceTicks);
             settings.fvgMaxEntryExtensionTicks = parseDoubleOrDefault(ctx.queryParam("fvgMaxEntryExtensionTicks"), settings.fvgMaxEntryExtensionTicks);
+            String fvgSourceMode = ctx.queryParam("fvgSourceMode");
+            if (fvgSourceMode != null && fvgSourceMode.trim().length() > 0) {
+                settings.fvgSourceMode = fvgSourceMode;
+            }
+            settings.fvgSourceRangeBars = parseIntOrDefault(ctx.queryParam("fvgSourceRangeBars"), settings.fvgSourceRangeBars);
+            settings.fvgMinSourceBreakTicks = parseDoubleOrDefault(ctx.queryParam("fvgMinSourceBreakTicks"), settings.fvgMinSourceBreakTicks);
             settings.meanReversionMinDistanceTicks = parseDoubleOrDefault(ctx.queryParam("meanReversionMinDistanceTicks"), settings.meanReversionMinDistanceTicks);
             settings.meanReversionOversoldRsi = parseDoubleOrDefault(ctx.queryParam("meanReversionOversoldRsi"), settings.meanReversionOversoldRsi);
             settings.meanReversionOverboughtRsi = parseDoubleOrDefault(ctx.queryParam("meanReversionOverboughtRsi"), settings.meanReversionOverboughtRsi);
@@ -1271,8 +959,8 @@ public class MainServer {
             String source = valueOrDefault(ctx.queryParam("source"), "live");
             String startDate = valueOrDefault(ctx.queryParam("startDate"), "");
             String endDate = valueOrDefault(ctx.queryParam("endDate"), "");
-            int startMinute = parseIntOrDefault(ctx.queryParam("startMinute"), 660);
-            int endMinute = parseIntOrDefault(ctx.queryParam("endMinute"), 870);
+            int startMinute = parseIntOrDefault(ctx.queryParam("startMinute"), 575);
+            int endMinute = parseIntOrDefault(ctx.queryParam("endMinute"), 945);
             ctx.contentType("application/json").result(FuturesManager.getLiveStrategyFilterDiagnosticsJson(
                 symbols,
                 strategyPreset,
@@ -1783,6 +1471,14 @@ public class MainServer {
     private static String safeMessage(String message, String fallback) {
         String safe = valueOrDefault(message, fallback);
         return safe.length() > 500 ? safe.substring(0, 500) + "..." : safe;
+    }
+
+    private static void legacyEquityWorkflowRemoved(Context ctx) {
+        ctx.status(410).contentType("application/json").result("{"
+            + "\"success\":false,"
+            + "\"errorCode\":\"LEGACY_EQUITY_WORKFLOW_REMOVED\","
+            + "\"message\":\"Legacy Alpaca/equity workflow has been removed. Use the futures endpoints under /api/futures.\""
+            + "}");
     }
 
     static String normalizeTradeChartTimeframe(String timeframe) {

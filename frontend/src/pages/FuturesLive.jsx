@@ -1360,11 +1360,17 @@ function firstNearMissTimeBatch(rows) {
 function mergeNearMissRows(rows, incomingByKey) {
   const source = Array.isArray(rows) ? rows : [];
   let changed = false;
-  const merged = source.map((row) => {
+  const merged = [];
+  source.forEach((row) => {
     const updated = incomingByKey.get(nearMissRowKey(row));
-    if (!updated || updated === row) return row;
-    changed = true;
-    return updated;
+    if (!updated) {
+      changed = true;
+      return;
+    }
+    if (updated !== row) {
+      changed = true;
+    }
+    merged.push(updated);
   });
   return changed ? merged : source;
 }

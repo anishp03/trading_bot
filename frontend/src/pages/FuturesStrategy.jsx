@@ -8,6 +8,7 @@ const DEFAULT_SETTINGS = {
   vwapPullback: { enabled: false, maxTradesPerDay: 1 },
   vwapMeanReversion: { enabled: false, maxTradesPerDay: 1 },
   fvg: { enabled: false, maxTradesPerDay: 1 },
+  ifvg: { enabled: false, maxTradesPerDay: 1 },
   closeMomentum: { enabled: false, maxTradesPerDay: 1 },
   afternoonContinuation: { enabled: false, maxTradesPerDay: 2 },
   marketIntradayMomentum: { enabled: false, maxTradesPerDay: 1 },
@@ -40,6 +41,14 @@ const DEFAULT_SETTINGS = {
   vwapMinVolumeRatio: 1.05,
   vwapMinTrendSlopeTicks: 3,
   vwapMaxDistanceTicks: 36,
+  fvgTradeInversions: false,
+  fvgRequireInversionStructureBreak: false,
+  fvgInversionBreakBars: 10,
+  fvgInversionStructureBars: 20,
+  fvgMinInversionBodyPct: 0,
+  fvgSourceMode: "NONE",
+  fvgSourceRangeBars: 0,
+  fvgMinSourceBreakTicks: 0,
   meanReversionMinDistanceTicks: 36,
   meanReversionOversoldRsi: 30,
   meanReversionOverboughtRsi: 70,
@@ -173,6 +182,7 @@ const MODULES = [
   ["vwapPullback", "VWAP Pullback"],
   ["vwapMeanReversion", "VWAP Mean Reversion"],
   ["fvg", "Fair Value Gap"],
+  ["ifvg", "Inversion Fair Value Gap"],
   ["closeMomentum", "Close Momentum"],
   ["afternoonContinuation", "Afternoon Continuation"],
   ["marketIntradayMomentum", "Market Intraday Momentum"],
@@ -308,6 +318,8 @@ export default function FuturesStrategy() {
       vwapMeanReversionMaxTradesPerDay: String(settings.vwapMeanReversion.maxTradesPerDay),
       fvgEnabled: String(settings.fvg.enabled),
       fvgMaxTradesPerDay: String(settings.fvg.maxTradesPerDay),
+      ifvgEnabled: String(settings.ifvg.enabled),
+      ifvgMaxTradesPerDay: String(settings.ifvg.maxTradesPerDay),
       closeMomentumEnabled: String(settings.closeMomentum.enabled),
       closeMomentumMaxTradesPerDay: String(settings.closeMomentum.maxTradesPerDay),
       afternoonContinuationEnabled: String(settings.afternoonContinuation.enabled),
@@ -359,10 +371,18 @@ export default function FuturesStrategy() {
       fvgRequireCoreQuality: String(settings.fvgRequireCoreQuality),
       fvgRequireEmaStack: String(settings.fvgRequireEmaStack),
       fvgRequireHigherTimeframeGuard: String(settings.fvgRequireHigherTimeframeGuard),
+      fvgTradeInversions: String(settings.fvgTradeInversions),
+      fvgRequireInversionStructureBreak: String(settings.fvgRequireInversionStructureBreak),
+      fvgInversionBreakBars: String(settings.fvgInversionBreakBars),
+      fvgInversionStructureBars: String(settings.fvgInversionStructureBars),
+      fvgMinInversionBodyPct: String(settings.fvgMinInversionBodyPct),
       fvgMinImpulseBodyPct: String(settings.fvgMinImpulseBodyPct),
       fvgMinTrendSlopeTicks: String(settings.fvgMinTrendSlopeTicks),
       fvgMaxVwapDistanceTicks: String(settings.fvgMaxVwapDistanceTicks),
       fvgMaxEntryExtensionTicks: String(settings.fvgMaxEntryExtensionTicks),
+      fvgSourceMode: String(settings.fvgSourceMode || "NONE"),
+      fvgSourceRangeBars: String(settings.fvgSourceRangeBars),
+      fvgMinSourceBreakTicks: String(settings.fvgMinSourceBreakTicks),
       meanReversionMinDistanceTicks: String(settings.meanReversionMinDistanceTicks),
       meanReversionOversoldRsi: String(settings.meanReversionOversoldRsi),
       meanReversionOverboughtRsi: String(settings.meanReversionOverboughtRsi),
@@ -595,6 +615,7 @@ export default function FuturesStrategy() {
           <ToggleField label="FVG Quality Gate" field="fvgRequireCoreQuality" settings={settings} updateField={updateField} />
           <ToggleField label="FVG EMA Stack" field="fvgRequireEmaStack" settings={settings} updateField={updateField} />
           <ToggleField label="FVG HTF Guard" field="fvgRequireHigherTimeframeGuard" settings={settings} updateField={updateField} />
+          <ToggleField label="IFVG Structure Break" field="fvgRequireInversionStructureBreak" settings={settings} updateField={updateField} />
 
           <NumberField label="ORB End Minute" field="orbBreakoutEndMinute" settings={settings} updateField={updateField} />
           <NumberField label="ORB Short Confirm" field="orbShortConfirmationMinute" settings={settings} updateField={updateField} />
@@ -610,10 +631,30 @@ export default function FuturesStrategy() {
           <NumberField label="VWAP Volume Ratio" field="vwapMinVolumeRatio" settings={settings} updateField={updateField} step="0.05" />
           <NumberField label="VWAP Slope Ticks" field="vwapMinTrendSlopeTicks" settings={settings} updateField={updateField} />
           <NumberField label="VWAP Max Distance" field="vwapMaxDistanceTicks" settings={settings} updateField={updateField} />
+          <NumberField label="IFVG Break Bars" field="fvgInversionBreakBars" settings={settings} updateField={updateField} />
+          <NumberField label="IFVG Structure Bars" field="fvgInversionStructureBars" settings={settings} updateField={updateField} />
+          <NumberField label="IFVG Break Body %" field="fvgMinInversionBodyPct" settings={settings} updateField={updateField} />
           <NumberField label="FVG Impulse Body %" field="fvgMinImpulseBodyPct" settings={settings} updateField={updateField} />
           <NumberField label="FVG Slope Ticks" field="fvgMinTrendSlopeTicks" settings={settings} updateField={updateField} />
           <NumberField label="FVG VWAP Distance" field="fvgMaxVwapDistanceTicks" settings={settings} updateField={updateField} />
           <NumberField label="FVG Entry Extension" field="fvgMaxEntryExtensionTicks" settings={settings} updateField={updateField} />
+          <SelectField
+            label="FVG Source Mode"
+            field="fvgSourceMode"
+            settings={settings}
+            updateField={updateField}
+            options={[
+              ["NONE", "None"],
+              ["PRIOR_LEVEL_BREAK", "Prior Level Break"],
+              ["ORB_BREAK", "ORB Break"],
+              ["SWEEP_DISPLACEMENT", "Sweep Displacement"],
+              ["VWAP_TREND_RECLAIM", "VWAP Trend Reclaim"],
+              ["HTF_BREAKOUT", "HTF Breakout"],
+              ["ANY_CONTEXT", "Any Context"]
+            ]}
+          />
+          <NumberField label="FVG Source Bars" field="fvgSourceRangeBars" settings={settings} updateField={updateField} />
+          <NumberField label="FVG Source Break" field="fvgMinSourceBreakTicks" settings={settings} updateField={updateField} />
           <NumberField label="MRVWAP Min Distance" field="meanReversionMinDistanceTicks" settings={settings} updateField={updateField} />
           <NumberField label="Oversold RSI" field="meanReversionOversoldRsi" settings={settings} updateField={updateField} />
           <NumberField label="Overbought RSI" field="meanReversionOverboughtRsi" settings={settings} updateField={updateField} />
@@ -733,6 +774,7 @@ function normalizeSettings(data) {
     vwapPullback: { ...DEFAULT_SETTINGS.vwapPullback, ...(data?.vwapPullback || {}) },
     vwapMeanReversion: { ...DEFAULT_SETTINGS.vwapMeanReversion, ...(data?.vwapMeanReversion || {}) },
     fvg: { ...DEFAULT_SETTINGS.fvg, ...(data?.fvg || {}) },
+    ifvg: { ...DEFAULT_SETTINGS.ifvg, ...(data?.ifvg || {}) },
     closeMomentum: { ...DEFAULT_SETTINGS.closeMomentum, ...(data?.closeMomentum || {}) },
     afternoonContinuation: { ...DEFAULT_SETTINGS.afternoonContinuation, ...(data?.afternoonContinuation || {}) },
     marketIntradayMomentum: { ...DEFAULT_SETTINGS.marketIntradayMomentum, ...(data?.marketIntradayMomentum || {}) },
@@ -831,6 +873,25 @@ function NumberField({ label, field, settings, updateField, step = "1", disabled
         className="form-control app-input"
         disabled={disabled}
       />
+    </Field>
+  );
+}
+
+function SelectField({ label, field, settings, updateField, options, disabled = false }) {
+  return (
+    <Field label={label} className="col-12 col-sm-6 col-xl-3">
+      <select
+        value={settings[field] ?? ""}
+        onChange={(event) => updateField(field, event.target.value)}
+        className="form-select app-input"
+        disabled={disabled}
+      >
+        {options.map(([value, optionLabel]) => (
+          <option key={value} value={value}>
+            {optionLabel}
+          </option>
+        ))}
+      </select>
     </Field>
   );
 }

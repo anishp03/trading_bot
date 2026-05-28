@@ -88,6 +88,13 @@ public class FuturesManager {
 	private static final int RSI_PERIOD = 14;
 	private static final String TOPSTEPX_PRACTICE_ACCOUNT_ID = "22539378";
 	private static final String TOPSTEPX_50K_COMBINE_ACCOUNT_ID = "22529998";
+	private static final String FVG_SOURCE_NONE = "NONE";
+	private static final String FVG_SOURCE_PRIOR_LEVEL_BREAK = "PRIOR_LEVEL_BREAK";
+	private static final String FVG_SOURCE_ORB_BREAK = "ORB_BREAK";
+	private static final String FVG_SOURCE_SWEEP_DISPLACEMENT = "SWEEP_DISPLACEMENT";
+	private static final String FVG_SOURCE_VWAP_TREND_RECLAIM = "VWAP_TREND_RECLAIM";
+	private static final String FVG_SOURCE_HTF_BREAKOUT = "HTF_BREAKOUT";
+	private static final String FVG_SOURCE_ANY_CONTEXT = "ANY_CONTEXT";
 	private static final String TOPSTEPX_100K_COMBINE_ACCOUNT_ID = "";
 	private static final String TOPSTEPX_PRACTICE_ACCOUNT_MODE = "PRACTICE_COMBINE";
 	private static final String TOPSTEPX_DEFAULT_LIVE_PROFILE = "TOPSTEP_150K_PRACTICE";
@@ -101,12 +108,12 @@ public class FuturesManager {
 	private static final String BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
 	private static final String DEFAULT_STRATEGY_PRESET = WINDOWED_94K_STRATEGY_PRESET;
 	private static final String WIP_STRATEGY_PRESET = "wip";
-	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-05-28-bestbiasfree-v11-reverted-orb-79k";
+	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-05-28-bestbiasfree-v13-fvg-reclaim-quality";
 	private static final String[] VISIBLE_STRATEGY_PRESETS = new String[] { WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET };
 	private static final String[] SEEDED_STRATEGY_PRESETS = new String[] { LEGACY_94K_STRATEGY_PRESET, WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET, WIP_STRATEGY_PRESET };
 	private static final String RESEARCH_RELAXED_WINDOWS_PROPERTY = "tradingbot.research.relaxedWindows";
 	private static final String[] TIME_NATIVE_STRATEGY_CODES = new String[] { "ORB", "ORB2", "LORB", "OMOM", "CMOM", "AFT", "MIM", "IPB" };
-	private static final String[] PATTERN_LEVEL_STRATEGY_CODES = new String[] { "FVG", "VWAP", "VRCL", "KREV", "PDB", "VPB", "SWEEP", "MSCALP", "SHDW", "ECHO", "WFT", "MRVWAP", "KELT", "TLAD", "RCB" };
+	private static final String[] PATTERN_LEVEL_STRATEGY_CODES = new String[] { "FVG", "IFVG", "VWAP", "VRCL", "KREV", "PDB", "VPB", "SWEEP", "MSCALP", "SHDW", "ECHO", "WFT", "MRVWAP", "KELT", "TLAD", "RCB" };
 	private static final String[] DISABLED_RESEARCH_STRATEGY_CODES = new String[] { "MSCALP", "VPB", "SHDW", "ECHO", "WFT", "MRVWAP", "KELT", "TLAD", "RCB", "EIA", "COPEN", "IDXCONF", "MYMORB2", "MYMBR", "MCLTC" };
 	private static final double PORTFOLIO_BACKTEST_MAE_RULE_BUFFER = 100.0;
 	private static final String DEFAULT_LIVE_SYMBOLS = "MES,MNQ,NQ,MGC,ES,M2K,MYM,MCL";
@@ -142,8 +149,9 @@ public class FuturesManager {
 	private static final int LIVE_REALTIME_EVENT_SAMPLE_CAP = 180000;
 	private static final int LIVE_REALTIME_EVENTS_PER_MINUTE_ESTIMATE = 240;
 	private static final int LIVE_STRATEGY_ONE_MINUTE_BAR_LIMIT = 520;
-	private static final int LIVE_MIDDAY_DIAGNOSTIC_START_MINUTE = 11 * 60;
-	private static final int LIVE_MIDDAY_DIAGNOSTIC_END_MINUTE = (14 * 60) + 30;
+	private static final int LIVE_ENTRY_DIAGNOSTIC_START_MINUTE = (9 * 60) + 35;
+	private static final int LIVE_ENTRY_DIAGNOSTIC_END_MINUTE = (15 * 60) + 45;
+	private static final int LIVE_STALE_SIGNAL_AUDIT_LOOKBACK_BARS = 5;
 	private static final long LIVE_REALTIME_FRESH_SECONDS = 30L;
 	private static final long LIVE_POTENTIAL_SIGNAL_SCAN_INTERVAL_MS = TimeUnit.SECONDS.toMillis(10L);
 	private static final double ENTRY_OPTIMIZER_MAX_SPREAD_TICKS = 6.0;
@@ -606,6 +614,7 @@ public class FuturesManager {
 		public StrategyToggle vwapReclaim = new StrategyToggle(false, 2);
 		public StrategyToggle vwapMeanReversion = new StrategyToggle(false, 1);
 		public StrategyToggle fvg = new StrategyToggle(false, 1);
+		public StrategyToggle ifvg = new StrategyToggle(false, 1);
 		public StrategyToggle closeMomentum = new StrategyToggle(false, 1);
 		public StrategyToggle afternoonContinuation = new StrategyToggle(false, 2);
 		public StrategyToggle marketIntradayMomentum = new StrategyToggle(false, 1);
@@ -762,7 +771,23 @@ public class FuturesManager {
 		public boolean fvgRequireCoreQuality = false;
 		public boolean fvgRequireEmaStack = false;
 		public boolean fvgRequireHigherTimeframeGuard = false;
+		public boolean fvgTradeInversions = false;
+		public boolean fvgRequireInversionStructureBreak = false;
+		public int fvgInversionBreakBars = 10;
+		public int fvgInversionStructureBars = 20;
+		public double fvgMinInversionBodyPct = 0.0;
 		public double fvgMinImpulseBodyPct = 0.0;
+		public double fvgMinReclaimBodyPct = 0.0;
+		public double fvgMinReclaimTicks = 0.0;
+		public double fvgMaxRetestDepthPct = 0.0;
+		public double fvgMinReclaimCloseLocation = 0.0;
+		public double fvgMaxPriorMoveTicks = 0.0;
+		public String fvgSourceMode = FVG_SOURCE_NONE;
+		public int fvgSourceRangeBars = 0;
+		public double fvgMinSourceBreakTicks = 0.0;
+		public int fvgAcceptanceBars = 0;
+		public double fvgAcceptanceMinCloseLocation = 0.0;
+		public boolean fvgAcceptanceRequireReclaimExtremeBreak = false;
 		public double fvgMinTrendSlopeTicks = 0.0;
 		public double fvgMaxVwapDistanceTicks = 0.0;
 		public double fvgMaxEntryExtensionTicks = 0.0;
@@ -1507,7 +1532,7 @@ public class FuturesManager {
 		applyBiasFreeWindowPolicy(conn, slot);
 		String[] modules = new String[] {
 			"orb", "lateOrbContinuation", "openingMomentum", "sweep", "priorDayBreakout",
-			"vwapPullback", "vwapReclaim", "vwapMeanReversion", "fvg", "closeMomentum",
+			"vwapPullback", "vwapReclaim", "vwapMeanReversion", "fvg", "ifvg", "closeMomentum",
 			"afternoonContinuation", "marketIntradayMomentum", "keltnerScalp", "keltnerReversion",
 			"microScalp", "microShadow", "microEcho", "winnerFollowThrough", "trendLadder",
 			"rangeCompressionBreakout", "valueAreaReclaim", "mclEiaContinuation",
@@ -1523,12 +1548,12 @@ public class FuturesManager {
 
 		enableBestBiasFreeModules(conn, slot, "MES", new String[] { "openingMomentum", "afternoonContinuation", "closeMomentum" });
 		enableBestBiasFreeModules(conn, slot, "MNQ", new String[] { "orb", "openingMomentum", "sweep", "priorDayBreakout", "vwapPullback", "afternoonContinuation" });
-		enableBestBiasFreeModules(conn, slot, "NQ", new String[] { "orb", "lateOrbContinuation", "openingMomentum", "sweep", "priorDayBreakout", "vwapPullback", "vwapReclaim", "marketIntradayMomentum", "keltnerReversion" });
+		enableBestBiasFreeModules(conn, slot, "NQ", new String[] { "orb", "lateOrbContinuation", "openingMomentum", "sweep", "priorDayBreakout", "vwapPullback", "vwapReclaim", "fvg", "marketIntradayMomentum", "keltnerReversion" });
 		enableBestBiasFreeModules(conn, slot, "MGC", new String[] { "orb", "openingMomentum", "sweep", "priorDayBreakout", "vwapPullback", "closeMomentum" });
 		enableBestBiasFreeModules(conn, slot, "ES", new String[] { "orb" });
 		enableBestBiasFreeModules(conn, slot, "M2K", new String[] { "orb", "openingMomentum", "closeMomentum" });
 		enableBestBiasFreeModules(conn, slot, "MYM", new String[] { "orb", "openingMomentum", "closeMomentum" });
-		enableBestBiasFreeModules(conn, slot, "MCL", new String[] { "orb", "afternoonContinuation", "marketIntradayMomentum", "closeMomentum" });
+		enableBestBiasFreeModules(conn, slot, "MCL", new String[] { "orb", "ifvg", "afternoonContinuation", "marketIntradayMomentum", "closeMomentum" });
 
 		applyBestBiasFreeSidePolicy(conn, slot);
 	}
@@ -1556,6 +1581,41 @@ public class FuturesManager {
 		setSlotSymbolSetting(conn, slot, "MCL", "enableOrbRetest", "false");
 		setSlotSymbolSetting(conn, slot, "MCL", "allowOrbRetestLongs", "false");
 		setSlotSymbolSetting(conn, slot, "MCL", "allowOrbRetestShorts", "true");
+		setSlotSymbolSetting(conn, slot, "MCL", "ifvg.maxTradesPerDay", "3");
+		setSlotSymbolSetting(conn, slot, "MCL", "allowFvgLongs", "true");
+		setSlotSymbolSetting(conn, slot, "MCL", "allowFvgShorts", "false");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgTradeInversions", "false");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgRequireInversionStructureBreak", "true");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgInversionBreakBars", "60");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgInversionStructureBars", "40");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgMinInversionBodyPct", "55.0");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgStartMinute", "600");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgEndMinute", "900");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgRetestBars", "10");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgMinWidthTicks", "4.0");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgMinVolumeRatio", "0.75");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgMinRiskTicks", "16.0");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgMaxRiskTicks", "48.0");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgRewardRisk", "1.2");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgMaxHoldBars", "18");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgRequireCoreQuality", "true");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgRequireEmaStack", "true");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgRequireHigherTimeframeGuard", "false");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgMinImpulseBodyPct", "45.0");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgMinReclaimBodyPct", "0.0");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgMinReclaimTicks", "0.0");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgMaxRetestDepthPct", "0.85");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgMinReclaimCloseLocation", "0.78");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgMaxPriorMoveTicks", "0.0");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgSourceMode", FVG_SOURCE_NONE);
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgSourceRangeBars", "0");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgMinSourceBreakTicks", "0.0");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgAcceptanceBars", "0");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgAcceptanceMinCloseLocation", "0.0");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgAcceptanceRequireReclaimExtremeBreak", "false");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgMinTrendSlopeTicks", "1.0");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgMaxVwapDistanceTicks", "96.0");
+		setSlotSymbolSetting(conn, slot, "MCL", "fvgMaxEntryExtensionTicks", "28.0");
 
 		setSlotSymbolSetting(conn, slot, "MNQ", "allowOrbLongs", "true");
 		setSlotSymbolSetting(conn, slot, "MNQ", "allowOrbShorts", "true");
@@ -1568,6 +1628,34 @@ public class FuturesManager {
 		setSlotSymbolSetting(conn, slot, "NQ", "enableOrbRetest", "true");
 		setSlotSymbolSetting(conn, slot, "NQ", "allowOrbRetestLongs", "true");
 		setSlotSymbolSetting(conn, slot, "NQ", "allowOrbRetestShorts", "true");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvg.maxTradesPerDay", "3");
+		setSlotSymbolSetting(conn, slot, "NQ", "allowFvgLongs", "true");
+		setSlotSymbolSetting(conn, slot, "NQ", "allowFvgShorts", "true");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgMinVolumeRatio", "0.75");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgRetestBars", "10");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgRequireCoreQuality", "true");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgRequireEmaStack", "true");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgRequireHigherTimeframeGuard", "false");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgTradeInversions", "false");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgRequireInversionStructureBreak", "false");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgInversionBreakBars", "10");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgInversionStructureBars", "20");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgMinInversionBodyPct", "0.0");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgMinImpulseBodyPct", "45.0");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgMinReclaimBodyPct", "0.0");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgMinReclaimTicks", "0.0");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgMaxRetestDepthPct", "0.85");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgMinReclaimCloseLocation", "0.78");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgMaxPriorMoveTicks", "0.0");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgSourceMode", FVG_SOURCE_NONE);
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgSourceRangeBars", "0");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgMinSourceBreakTicks", "0.0");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgAcceptanceBars", "0");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgAcceptanceMinCloseLocation", "0.0");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgAcceptanceRequireReclaimExtremeBreak", "false");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgMinTrendSlopeTicks", "1.0");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgMaxVwapDistanceTicks", "96.0");
+		setSlotSymbolSetting(conn, slot, "NQ", "fvgMaxEntryExtensionTicks", "28.0");
 
 		setSlotSymbolSetting(conn, slot, "MGC", "allowOrbLongs", "true");
 		setSlotSymbolSetting(conn, slot, "MGC", "allowOrbShorts", "true");
@@ -2127,6 +2215,8 @@ public class FuturesManager {
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "vwapMeanReversion.maxTradesPerDay"), safeSettings.vwapMeanReversion.maxTradesPerDay);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvg.enabled"), safeSettings.fvg.enabled);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvg.maxTradesPerDay"), safeSettings.fvg.maxTradesPerDay);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "ifvg.enabled"), safeSettings.ifvg.enabled);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "ifvg.maxTradesPerDay"), safeSettings.ifvg.maxTradesPerDay);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "closeMomentum.enabled"), safeSettings.closeMomentum.enabled);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "closeMomentum.maxTradesPerDay"), safeSettings.closeMomentum.maxTradesPerDay);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "afternoonContinuation.enabled"), safeSettings.afternoonContinuation.enabled);
@@ -2303,7 +2393,23 @@ public class FuturesManager {
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgRequireCoreQuality"), safeSettings.fvgRequireCoreQuality);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgRequireEmaStack"), safeSettings.fvgRequireEmaStack);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgRequireHigherTimeframeGuard"), safeSettings.fvgRequireHigherTimeframeGuard);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgTradeInversions"), safeSettings.fvgTradeInversions);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgRequireInversionStructureBreak"), safeSettings.fvgRequireInversionStructureBreak);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgInversionBreakBars"), safeSettings.fvgInversionBreakBars);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgInversionStructureBars"), safeSettings.fvgInversionStructureBars);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgMinInversionBodyPct"), safeSettings.fvgMinInversionBodyPct);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgMinImpulseBodyPct"), safeSettings.fvgMinImpulseBodyPct);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgMinReclaimBodyPct"), safeSettings.fvgMinReclaimBodyPct);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgMinReclaimTicks"), safeSettings.fvgMinReclaimTicks);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgMaxRetestDepthPct"), safeSettings.fvgMaxRetestDepthPct);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgMinReclaimCloseLocation"), safeSettings.fvgMinReclaimCloseLocation);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgMaxPriorMoveTicks"), safeSettings.fvgMaxPriorMoveTicks);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgSourceMode"), safeSettings.fvgSourceMode);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgSourceRangeBars"), safeSettings.fvgSourceRangeBars);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgMinSourceBreakTicks"), safeSettings.fvgMinSourceBreakTicks);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgAcceptanceBars"), safeSettings.fvgAcceptanceBars);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgAcceptanceMinCloseLocation"), safeSettings.fvgAcceptanceMinCloseLocation);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgAcceptanceRequireReclaimExtremeBreak"), safeSettings.fvgAcceptanceRequireReclaimExtremeBreak);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgMinTrendSlopeTicks"), safeSettings.fvgMinTrendSlopeTicks);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgMaxVwapDistanceTicks"), safeSettings.fvgMaxVwapDistanceTicks);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "fvgMaxEntryExtensionTicks"), safeSettings.fvgMaxEntryExtensionTicks);
@@ -2624,6 +2730,7 @@ public class FuturesManager {
 			+ "\"vwapReclaim\":" + toggleJson(settings.vwapReclaim) + ","
 			+ "\"vwapMeanReversion\":" + toggleJson(settings.vwapMeanReversion) + ","
 			+ "\"fvg\":" + toggleJson(settings.fvg) + ","
+			+ "\"ifvg\":" + toggleJson(settings.ifvg) + ","
 			+ "\"closeMomentum\":" + toggleJson(settings.closeMomentum) + ","
 			+ "\"afternoonContinuation\":" + toggleJson(settings.afternoonContinuation) + ","
 			+ "\"marketIntradayMomentum\":" + toggleJson(settings.marketIntradayMomentum) + ","
@@ -2759,7 +2866,23 @@ public class FuturesManager {
 			+ "\"fvgRequireCoreQuality\":" + settings.fvgRequireCoreQuality + ","
 			+ "\"fvgRequireEmaStack\":" + settings.fvgRequireEmaStack + ","
 			+ "\"fvgRequireHigherTimeframeGuard\":" + settings.fvgRequireHigherTimeframeGuard + ","
+			+ "\"fvgTradeInversions\":" + settings.fvgTradeInversions + ","
+			+ "\"fvgRequireInversionStructureBreak\":" + settings.fvgRequireInversionStructureBreak + ","
+			+ "\"fvgInversionBreakBars\":" + settings.fvgInversionBreakBars + ","
+			+ "\"fvgInversionStructureBars\":" + settings.fvgInversionStructureBars + ","
+			+ "\"fvgMinInversionBodyPct\":" + settings.fvgMinInversionBodyPct + ","
 			+ "\"fvgMinImpulseBodyPct\":" + settings.fvgMinImpulseBodyPct + ","
+			+ "\"fvgMinReclaimBodyPct\":" + settings.fvgMinReclaimBodyPct + ","
+			+ "\"fvgMinReclaimTicks\":" + settings.fvgMinReclaimTicks + ","
+			+ "\"fvgMaxRetestDepthPct\":" + settings.fvgMaxRetestDepthPct + ","
+			+ "\"fvgMinReclaimCloseLocation\":" + settings.fvgMinReclaimCloseLocation + ","
+			+ "\"fvgMaxPriorMoveTicks\":" + settings.fvgMaxPriorMoveTicks + ","
+			+ "\"fvgSourceMode\":" + jsonString(settings.fvgSourceMode) + ","
+			+ "\"fvgSourceRangeBars\":" + settings.fvgSourceRangeBars + ","
+			+ "\"fvgMinSourceBreakTicks\":" + settings.fvgMinSourceBreakTicks + ","
+			+ "\"fvgAcceptanceBars\":" + settings.fvgAcceptanceBars + ","
+			+ "\"fvgAcceptanceMinCloseLocation\":" + settings.fvgAcceptanceMinCloseLocation + ","
+			+ "\"fvgAcceptanceRequireReclaimExtremeBreak\":" + settings.fvgAcceptanceRequireReclaimExtremeBreak + ","
 			+ "\"fvgMinTrendSlopeTicks\":" + settings.fvgMinTrendSlopeTicks + ","
 			+ "\"fvgMaxVwapDistanceTicks\":" + settings.fvgMaxVwapDistanceTicks + ","
 			+ "\"fvgMaxEntryExtensionTicks\":" + settings.fvgMaxEntryExtensionTicks + ","
@@ -3460,6 +3583,8 @@ public class FuturesManager {
 		else if ("vwapMeanReversion.maxTradesPerDay".equals(key)) settings.vwapMeanReversion.maxTradesPerDay = parseInt(value, settings.vwapMeanReversion.maxTradesPerDay);
 		else if ("fvg.enabled".equals(key)) settings.fvg.enabled = parseBoolean(value, settings.fvg.enabled);
 		else if ("fvg.maxTradesPerDay".equals(key)) settings.fvg.maxTradesPerDay = parseInt(value, settings.fvg.maxTradesPerDay);
+		else if ("ifvg.enabled".equals(key)) settings.ifvg.enabled = parseBoolean(value, settings.ifvg.enabled);
+		else if ("ifvg.maxTradesPerDay".equals(key)) settings.ifvg.maxTradesPerDay = parseInt(value, settings.ifvg.maxTradesPerDay);
 		else if ("closeMomentum.enabled".equals(key)) settings.closeMomentum.enabled = parseBoolean(value, settings.closeMomentum.enabled);
 		else if ("closeMomentum.maxTradesPerDay".equals(key)) settings.closeMomentum.maxTradesPerDay = parseInt(value, settings.closeMomentum.maxTradesPerDay);
 		else if ("afternoonContinuation.enabled".equals(key)) settings.afternoonContinuation.enabled = parseBoolean(value, settings.afternoonContinuation.enabled);
@@ -3634,7 +3759,23 @@ public class FuturesManager {
 		else if ("fvgRequireCoreQuality".equals(key)) settings.fvgRequireCoreQuality = parseBoolean(value, settings.fvgRequireCoreQuality);
 		else if ("fvgRequireEmaStack".equals(key)) settings.fvgRequireEmaStack = parseBoolean(value, settings.fvgRequireEmaStack);
 		else if ("fvgRequireHigherTimeframeGuard".equals(key)) settings.fvgRequireHigherTimeframeGuard = parseBoolean(value, settings.fvgRequireHigherTimeframeGuard);
+		else if ("fvgTradeInversions".equals(key)) settings.fvgTradeInversions = parseBoolean(value, settings.fvgTradeInversions);
+		else if ("fvgRequireInversionStructureBreak".equals(key)) settings.fvgRequireInversionStructureBreak = parseBoolean(value, settings.fvgRequireInversionStructureBreak);
+		else if ("fvgInversionBreakBars".equals(key)) settings.fvgInversionBreakBars = parseInt(value, settings.fvgInversionBreakBars);
+		else if ("fvgInversionStructureBars".equals(key)) settings.fvgInversionStructureBars = parseInt(value, settings.fvgInversionStructureBars);
+		else if ("fvgMinInversionBodyPct".equals(key)) settings.fvgMinInversionBodyPct = parseDouble(value, settings.fvgMinInversionBodyPct);
 		else if ("fvgMinImpulseBodyPct".equals(key)) settings.fvgMinImpulseBodyPct = parseDouble(value, settings.fvgMinImpulseBodyPct);
+		else if ("fvgMinReclaimBodyPct".equals(key)) settings.fvgMinReclaimBodyPct = parseDouble(value, settings.fvgMinReclaimBodyPct);
+		else if ("fvgMinReclaimTicks".equals(key)) settings.fvgMinReclaimTicks = parseDouble(value, settings.fvgMinReclaimTicks);
+		else if ("fvgMaxRetestDepthPct".equals(key)) settings.fvgMaxRetestDepthPct = parseDouble(value, settings.fvgMaxRetestDepthPct);
+		else if ("fvgMinReclaimCloseLocation".equals(key)) settings.fvgMinReclaimCloseLocation = parseDouble(value, settings.fvgMinReclaimCloseLocation);
+		else if ("fvgMaxPriorMoveTicks".equals(key)) settings.fvgMaxPriorMoveTicks = parseDouble(value, settings.fvgMaxPriorMoveTicks);
+		else if ("fvgSourceMode".equals(key)) settings.fvgSourceMode = cleanOrDefault(value, settings.fvgSourceMode);
+		else if ("fvgSourceRangeBars".equals(key)) settings.fvgSourceRangeBars = parseInt(value, settings.fvgSourceRangeBars);
+		else if ("fvgMinSourceBreakTicks".equals(key)) settings.fvgMinSourceBreakTicks = parseDouble(value, settings.fvgMinSourceBreakTicks);
+		else if ("fvgAcceptanceBars".equals(key)) settings.fvgAcceptanceBars = parseInt(value, settings.fvgAcceptanceBars);
+		else if ("fvgAcceptanceMinCloseLocation".equals(key)) settings.fvgAcceptanceMinCloseLocation = parseDouble(value, settings.fvgAcceptanceMinCloseLocation);
+		else if ("fvgAcceptanceRequireReclaimExtremeBreak".equals(key)) settings.fvgAcceptanceRequireReclaimExtremeBreak = parseBoolean(value, settings.fvgAcceptanceRequireReclaimExtremeBreak);
 		else if ("fvgMinTrendSlopeTicks".equals(key)) settings.fvgMinTrendSlopeTicks = parseDouble(value, settings.fvgMinTrendSlopeTicks);
 		else if ("fvgMaxVwapDistanceTicks".equals(key)) settings.fvgMaxVwapDistanceTicks = parseDouble(value, settings.fvgMaxVwapDistanceTicks);
 		else if ("fvgMaxEntryExtensionTicks".equals(key)) settings.fvgMaxEntryExtensionTicks = parseDouble(value, settings.fvgMaxEntryExtensionTicks);
@@ -3935,6 +4076,7 @@ public class FuturesManager {
 		settings.vwapReclaim.maxTradesPerDay = boundedInt(settings.vwapReclaim.maxTradesPerDay, 2, 0, 8);
 		settings.vwapMeanReversion.maxTradesPerDay = boundedInt(settings.vwapMeanReversion.maxTradesPerDay, 2, 0, 5);
 		settings.fvg.maxTradesPerDay = boundedInt(settings.fvg.maxTradesPerDay, 1, 0, 5);
+		settings.ifvg.maxTradesPerDay = boundedInt(settings.ifvg.maxTradesPerDay, 1, 0, 5);
 		settings.closeMomentum.maxTradesPerDay = boundedInt(settings.closeMomentum.maxTradesPerDay, 1, 0, 3);
 		settings.afternoonContinuation.maxTradesPerDay = boundedInt(settings.afternoonContinuation.maxTradesPerDay, 2, 0, 5);
 		settings.marketIntradayMomentum.maxTradesPerDay = boundedInt(settings.marketIntradayMomentum.maxTradesPerDay, 1, 0, 2);
@@ -4091,7 +4233,20 @@ public class FuturesManager {
 		settings.fvgShortDowWindowSkipStartMinute = boundedInt(settings.fvgShortDowWindowSkipStartMinute, 0, 0, 930);
 		settings.fvgShortDowWindowSkipEndMinute = boundedInt(settings.fvgShortDowWindowSkipEndMinute, 0, 0, 930);
 		settings.fvgRetestBars = boundedInt(settings.fvgRetestBars, 8, 2, 30);
+		settings.fvgInversionBreakBars = boundedInt(settings.fvgInversionBreakBars, 10, 2, 80);
+		settings.fvgInversionStructureBars = boundedInt(settings.fvgInversionStructureBars, 20, 5, 80);
+		settings.fvgMinInversionBodyPct = clamp(settings.fvgMinInversionBodyPct, 0.0, 95.0);
 		settings.fvgMinImpulseBodyPct = clamp(settings.fvgMinImpulseBodyPct, 0.0, 95.0);
+		settings.fvgMinReclaimBodyPct = clamp(settings.fvgMinReclaimBodyPct, 0.0, 95.0);
+		settings.fvgMinReclaimTicks = clamp(settings.fvgMinReclaimTicks, 0.0, 80.0);
+		settings.fvgMaxRetestDepthPct = clamp(settings.fvgMaxRetestDepthPct, 0.0, 3.0);
+		settings.fvgMinReclaimCloseLocation = clamp(settings.fvgMinReclaimCloseLocation, 0.0, 1.0);
+		settings.fvgMaxPriorMoveTicks = clamp(settings.fvgMaxPriorMoveTicks, 0.0, 1000.0);
+		settings.fvgSourceMode = normalizedFvgSourceMode(settings.fvgSourceMode);
+		settings.fvgSourceRangeBars = boundedInt(settings.fvgSourceRangeBars, 0, 0, 80);
+		settings.fvgMinSourceBreakTicks = clamp(settings.fvgMinSourceBreakTicks, 0.0, 80.0);
+		settings.fvgAcceptanceBars = boundedInt(settings.fvgAcceptanceBars, 0, 0, 5);
+		settings.fvgAcceptanceMinCloseLocation = clamp(settings.fvgAcceptanceMinCloseLocation, 0.0, 1.0);
 		settings.fvgMinTrendSlopeTicks = clamp(settings.fvgMinTrendSlopeTicks, 0.0, 80.0);
 		settings.fvgMaxVwapDistanceTicks = clamp(settings.fvgMaxVwapDistanceTicks, 0.0, 240.0);
 		settings.fvgMaxEntryExtensionTicks = clamp(settings.fvgMaxEntryExtensionTicks, 0.0, 240.0);
@@ -5562,6 +5717,7 @@ public class FuturesManager {
 			|| safe.vwapReclaim.enabled
 			|| safe.vwapMeanReversion.enabled
 			|| safe.fvg.enabled
+			|| safe.ifvg.enabled
 			|| safe.closeMomentum.enabled
 			|| safe.afternoonContinuation.enabled
 			|| safe.marketIntradayMomentum.enabled
@@ -5956,6 +6112,7 @@ public class FuturesManager {
 		copy.vwapReclaim = new StrategyToggle(safe.vwapReclaim.enabled, safe.vwapReclaim.maxTradesPerDay);
 		copy.vwapMeanReversion = new StrategyToggle(safe.vwapMeanReversion.enabled, safe.vwapMeanReversion.maxTradesPerDay);
 		copy.fvg = new StrategyToggle(safe.fvg.enabled, safe.fvg.maxTradesPerDay);
+		copy.ifvg = new StrategyToggle(safe.ifvg.enabled, safe.ifvg.maxTradesPerDay);
 		copy.closeMomentum = new StrategyToggle(safe.closeMomentum.enabled, safe.closeMomentum.maxTradesPerDay);
 		copy.afternoonContinuation = new StrategyToggle(safe.afternoonContinuation.enabled, safe.afternoonContinuation.maxTradesPerDay);
 		copy.marketIntradayMomentum = new StrategyToggle(safe.marketIntradayMomentum.enabled, safe.marketIntradayMomentum.maxTradesPerDay);
@@ -6112,7 +6269,23 @@ public class FuturesManager {
 		copy.fvgRequireCoreQuality = safe.fvgRequireCoreQuality;
 		copy.fvgRequireEmaStack = safe.fvgRequireEmaStack;
 		copy.fvgRequireHigherTimeframeGuard = safe.fvgRequireHigherTimeframeGuard;
+		copy.fvgTradeInversions = safe.fvgTradeInversions;
+		copy.fvgRequireInversionStructureBreak = safe.fvgRequireInversionStructureBreak;
+		copy.fvgInversionBreakBars = safe.fvgInversionBreakBars;
+		copy.fvgInversionStructureBars = safe.fvgInversionStructureBars;
+		copy.fvgMinInversionBodyPct = safe.fvgMinInversionBodyPct;
 		copy.fvgMinImpulseBodyPct = safe.fvgMinImpulseBodyPct;
+		copy.fvgMinReclaimBodyPct = safe.fvgMinReclaimBodyPct;
+		copy.fvgMinReclaimTicks = safe.fvgMinReclaimTicks;
+		copy.fvgMaxRetestDepthPct = safe.fvgMaxRetestDepthPct;
+		copy.fvgMinReclaimCloseLocation = safe.fvgMinReclaimCloseLocation;
+		copy.fvgMaxPriorMoveTicks = safe.fvgMaxPriorMoveTicks;
+		copy.fvgSourceMode = safe.fvgSourceMode;
+		copy.fvgSourceRangeBars = safe.fvgSourceRangeBars;
+		copy.fvgMinSourceBreakTicks = safe.fvgMinSourceBreakTicks;
+		copy.fvgAcceptanceBars = safe.fvgAcceptanceBars;
+		copy.fvgAcceptanceMinCloseLocation = safe.fvgAcceptanceMinCloseLocation;
+		copy.fvgAcceptanceRequireReclaimExtremeBreak = safe.fvgAcceptanceRequireReclaimExtremeBreak;
 		copy.fvgMinTrendSlopeTicks = safe.fvgMinTrendSlopeTicks;
 		copy.fvgMaxVwapDistanceTicks = safe.fvgMaxVwapDistanceTicks;
 		copy.fvgMaxEntryExtensionTicks = safe.fvgMaxEntryExtensionTicks;
@@ -6510,79 +6683,59 @@ public class FuturesManager {
 		String strategySettingsJson,
 		String riskSettingsJson,
 		String portfolioSettingsJson,
-		String sourceMetricsJson,
-		String codeVersion,
-		String now
-	) throws SQLException {
-		Integer activeSnapshotId = null;
-		try (Statement stmt = conn.createStatement();
-			 ResultSet rs = stmt.executeQuery("SELECT snapshotID FROM FuturesLiveStrategySnapshots WHERE active = 1 ORDER BY snapshotID DESC LIMIT 1")) {
-			if (rs.next()) {
-				activeSnapshotId = rs.getInt("snapshotID");
-			}
+			String sourceMetricsJson,
+			String codeVersion,
+			String now
+		) throws SQLException {
+		boolean originalAutoCommit = conn.getAutoCommit();
+		if (originalAutoCommit) {
+			conn.setAutoCommit(false);
 		}
-
-		if (activeSnapshotId != null) {
-			try (PreparedStatement deactivateOthers = conn.prepareStatement("UPDATE FuturesLiveStrategySnapshots SET active = 0, updatedAt = ? WHERE active = 1 AND snapshotID <> ?")) {
-				deactivateOthers.setString(1, now);
-				deactivateOthers.setInt(2, activeSnapshotId.intValue());
-				deactivateOthers.executeUpdate();
+		try {
+			try (PreparedStatement deactivate = conn.prepareStatement("UPDATE FuturesLiveStrategySnapshots SET active = 0, updatedAt = ? WHERE active = 1")) {
+				deactivate.setString(1, now);
+				deactivate.executeUpdate();
 			}
-			String updateSql = "UPDATE FuturesLiveStrategySnapshots SET "
-				+ "sourcePortfolioBacktestID = ?, active = 1, symbols = ?, fundedProfile = ?, accountMode = ?, practiceAccountId = ?, "
-				+ "maxOpenPositions = ?, maxAggregateContracts = ?, maxAggregateMiniUnits = ?, strategySettingsJson = ?, riskSettingsJson = ?, "
-				+ "portfolioSettingsJson = ?, sourceMetricsJson = ?, codeVersion = ?, updatedAt = ? WHERE snapshotID = ?";
-			try (PreparedStatement update = conn.prepareStatement(updateSql)) {
+
+			String insertSql = "INSERT INTO FuturesLiveStrategySnapshots ("
+				+ "sourcePortfolioBacktestID, active, symbols, fundedProfile, accountMode, practiceAccountId, "
+				+ "maxOpenPositions, maxAggregateContracts, maxAggregateMiniUnits, strategySettingsJson, riskSettingsJson, "
+				+ "portfolioSettingsJson, sourceMetricsJson, codeVersion, createdAt, updatedAt"
+				+ ") VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+			try (PreparedStatement insert = conn.prepareStatement(insertSql)) {
 				if (sourcePortfolioBacktestId == null || sourcePortfolioBacktestId.intValue() <= 0) {
-					update.setNull(1, Types.INTEGER);
+					insert.setNull(1, Types.INTEGER);
 				} else {
-					update.setInt(1, sourcePortfolioBacktestId.intValue());
+					insert.setInt(1, sourcePortfolioBacktestId.intValue());
 				}
-				update.setString(2, symbols);
-				update.setString(3, fundedProfile);
-				update.setString(4, accountMode);
-				update.setString(5, accountId);
-				update.setInt(6, maxOpenPositions);
-				update.setInt(7, maxAggregateContracts);
-				update.setDouble(8, maxAggregateMiniUnits);
-				update.setString(9, strategySettingsJson);
-				update.setString(10, riskSettingsJson);
-				update.setString(11, portfolioSettingsJson);
-				update.setString(12, sourceMetricsJson);
-				update.setString(13, codeVersion);
-				update.setString(14, now);
-				update.setInt(15, activeSnapshotId.intValue());
-				update.executeUpdate();
+				insert.setString(2, symbols);
+				insert.setString(3, fundedProfile);
+				insert.setString(4, accountMode);
+				insert.setString(5, accountId);
+				insert.setInt(6, maxOpenPositions);
+				insert.setInt(7, maxAggregateContracts);
+				insert.setDouble(8, maxAggregateMiniUnits);
+				insert.setString(9, strategySettingsJson);
+				insert.setString(10, riskSettingsJson);
+				insert.setString(11, portfolioSettingsJson);
+				insert.setString(12, sourceMetricsJson);
+				insert.setString(13, codeVersion);
+				insert.setString(14, now);
+				insert.setString(15, now);
+				insert.executeUpdate();
 			}
-			return;
-		}
-
-		String insertSql = "INSERT INTO FuturesLiveStrategySnapshots ("
-			+ "sourcePortfolioBacktestID, active, symbols, fundedProfile, accountMode, practiceAccountId, "
-			+ "maxOpenPositions, maxAggregateContracts, maxAggregateMiniUnits, strategySettingsJson, riskSettingsJson, "
-			+ "portfolioSettingsJson, sourceMetricsJson, codeVersion, createdAt, updatedAt"
-			+ ") VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-		try (PreparedStatement insert = conn.prepareStatement(insertSql)) {
-			if (sourcePortfolioBacktestId == null || sourcePortfolioBacktestId.intValue() <= 0) {
-				insert.setNull(1, Types.INTEGER);
-			} else {
-				insert.setInt(1, sourcePortfolioBacktestId.intValue());
+			if (originalAutoCommit) {
+				conn.commit();
 			}
-			insert.setString(2, symbols);
-			insert.setString(3, fundedProfile);
-			insert.setString(4, accountMode);
-			insert.setString(5, accountId);
-			insert.setInt(6, maxOpenPositions);
-			insert.setInt(7, maxAggregateContracts);
-			insert.setDouble(8, maxAggregateMiniUnits);
-			insert.setString(9, strategySettingsJson);
-			insert.setString(10, riskSettingsJson);
-			insert.setString(11, portfolioSettingsJson);
-			insert.setString(12, sourceMetricsJson);
-			insert.setString(13, codeVersion);
-			insert.setString(14, now);
-			insert.setString(15, now);
-			insert.executeUpdate();
+		} catch (SQLException e) {
+			if (originalAutoCommit) {
+				conn.rollback();
+			}
+			throw e;
+		} finally {
+			if (originalAutoCommit) {
+				conn.setAutoCommit(true);
+			}
 		}
 	}
 
@@ -9209,6 +9362,7 @@ public class FuturesManager {
 		settings.vwapReclaim = new StrategyToggle(true, 4);
 		settings.vwapMeanReversion = new StrategyToggle(true, 4);
 		settings.fvg = new StrategyToggle(true, 4);
+		settings.ifvg = new StrategyToggle(true, 4);
 		settings.closeMomentum = new StrategyToggle(true, 4);
 		settings.afternoonContinuation = new StrategyToggle(true, 4);
 		settings.marketIntradayMomentum = new StrategyToggle(true, 4);
@@ -9344,7 +9498,7 @@ public class FuturesManager {
 
 	private static String[] selfTestStrategyCodes() {
 		return new String[] {
-			"ORB", "ORB2", "LORB", "OMOM", "SWEEP", "SWEEP2", "PDB", "VWAP", "VRCL", "MRVWAP", "FVG", "CMOM", "AFT", "MIM", "IPB", "KELT", "KREV", "MSCALP", "SHDW", "ECHO", "WFT", "TLAD", "RCB", "VPB", "EIA", "COPEN", "IDXCONF", "MYMORB2", "MYMBR", "MCLTC"
+			"ORB", "ORB2", "LORB", "OMOM", "SWEEP", "SWEEP2", "PDB", "VWAP", "VRCL", "MRVWAP", "FVG", "IFVG", "CMOM", "AFT", "MIM", "IPB", "KELT", "KREV", "MSCALP", "SHDW", "ECHO", "WFT", "TLAD", "RCB", "VPB", "EIA", "COPEN", "IDXCONF", "MYMORB2", "MYMBR", "MCLTC"
 		};
 	}
 
@@ -9360,6 +9514,7 @@ public class FuturesManager {
 		if ("VRCL".equals(strategyCode)) return "VWAP Reclaim";
 		if ("MRVWAP".equals(strategyCode)) return "VWAP Reversion";
 		if ("FVG".equals(strategyCode)) return "Fair Value Gap";
+		if ("IFVG".equals(strategyCode)) return "Inversion Fair Value Gap";
 		if ("CMOM".equals(strategyCode)) return "Close Momentum";
 		if ("AFT".equals(strategyCode)) return "Afternoon Continuation";
 		if ("MIM".equals(strategyCode)) return "Market Momentum";
@@ -9513,8 +9668,8 @@ public class FuturesManager {
 			startDate = endDate;
 			endDate = swap;
 		}
-		int startMinute = clampMinuteOfDay(startMinuteValue <= 0 ? LIVE_MIDDAY_DIAGNOSTIC_START_MINUTE : startMinuteValue);
-		int endMinute = clampMinuteOfDay(endMinuteValue <= 0 ? LIVE_MIDDAY_DIAGNOSTIC_END_MINUTE : endMinuteValue);
+		int startMinute = clampMinuteOfDay(startMinuteValue <= 0 ? LIVE_ENTRY_DIAGNOSTIC_START_MINUTE : startMinuteValue);
+		int endMinute = clampMinuteOfDay(endMinuteValue <= 0 ? LIVE_ENTRY_DIAGNOSTIC_END_MINUTE : endMinuteValue);
 		if (startMinute > endMinute) {
 			int swap = startMinute;
 			startMinute = endMinute;
@@ -9527,11 +9682,13 @@ public class FuturesManager {
 		boolean appendedNearMiss = false;
 		int totalBars = 0;
 		int totalCandidates = 0;
+		List<String> sourceUnavailableSymbols = new ArrayList<String>();
 		for (int symbolIndex = 0; symbolIndex < symbolList.size(); symbolIndex++) {
 			String symbol = normalizeSymbol(symbolList.get(symbolIndex));
 			FuturesStrategySettings settings = loadFuturesStrategySettings(symbol, presetSlot);
 			Map<String, StrategyFilterDiagnostic> diagnostics = emptyStrategyDiagnostics(symbol, settings);
 			String dataSource = historySource ? "LOCAL_NATIVE_HISTORY" : (recordedSource ? "RECORDED_REALTIME" : "LIVE_REALTIME");
+			int symbolBarsBefore = diagnosticBarsChecked(diagnostics);
 			if (historySource) {
 				analyzeHistoricalStrategyDiagnostics(symbol, settings, diagnostics, startDate, endDate, startMinute, endMinute);
 			} else if (recordedSource) {
@@ -9561,6 +9718,9 @@ public class FuturesManager {
 					List<Bar> oneHourBars = realtimeBarsForSymbol(symbol, "1h", 48);
 					analyzeStrategyDiagnosticsDay(symbol, settings, diagnostics, dayBars, previousBars, groupByDay(fifteenMinuteBars).get(latestDay), groupByDay(oneHourBars).get(latestDay), startMinute, endMinute);
 				}
+			}
+			if (diagnosticBarsChecked(diagnostics) == symbolBarsBefore) {
+				sourceUnavailableSymbols.add(symbol);
 			}
 			for (StrategyFilterDiagnostic diagnostic : diagnostics.values()) {
 				diagnostic.htfBars = Math.max(0, diagnostic.htfBars);
@@ -9594,6 +9754,9 @@ public class FuturesManager {
 			+ "\"endMinute\":" + endMinute + ","
 			+ "\"windowLabel\":" + jsonString(minuteLabel(startMinute) + "-" + minuteLabel(endMinute) + " ET") + ","
 			+ "\"generatedAt\":" + jsonString(LocalDateTime.now(NEW_YORK_ZONE).format(SERVER_TIME_FORMAT)) + ","
+			+ "\"sourceDataAvailable\":" + sourceUnavailableSymbols.isEmpty() + ","
+			+ "\"sourceUnavailableSymbols\":" + jsonStringArray(sourceUnavailableSymbols) + ","
+			+ "\"sourceDataWarning\":" + jsonString(sourceUnavailableSymbols.isEmpty() ? "" : "No bars were available from " + normalizedSource + " diagnostics for: " + String.join(",", sourceUnavailableSymbols)) + ","
 			+ "\"totalBarsChecked\":" + totalBars + ","
 			+ "\"totalFinalCandidates\":" + totalCandidates + ","
 			+ "\"rows\":" + rows + ","
@@ -9632,6 +9795,19 @@ public class FuturesManager {
 				endMinute
 			);
 		}
+	}
+
+	private static int diagnosticBarsChecked(Map<String, StrategyFilterDiagnostic> diagnostics) {
+		if (diagnostics == null || diagnostics.isEmpty()) {
+			return 0;
+		}
+		int bars = 0;
+		for (StrategyFilterDiagnostic diagnostic : diagnostics.values()) {
+			if (diagnostic != null) {
+				bars += diagnostic.barsChecked;
+			}
+		}
+		return bars;
 	}
 
 	private static void analyzeStrategyDiagnosticsDay(
@@ -9735,6 +9911,7 @@ public class FuturesManager {
 		addDiagnosticTarget(targets, "VRCL", "VWAP Reclaim", safe.vwapReclaim, false);
 		addDiagnosticTarget(targets, "MRVWAP", "VWAP Reversion", safe.vwapMeanReversion, false);
 		addDiagnosticTarget(targets, "FVG", "Fair Value Gap", safe.fvg, false);
+		addDiagnosticTarget(targets, "IFVG", "Inversion Fair Value Gap", safe.ifvg, false);
 		addDiagnosticTarget(targets, "CMOM", "Close Momentum", safe.closeMomentum, false);
 		addDiagnosticTarget(targets, "AFT", "Afternoon Continuation", safe.afternoonContinuation, false);
 		addDiagnosticTarget(targets, "MIM", "Market/Impulse Momentum", safe.marketIntradayMomentum, false);
@@ -9974,7 +10151,7 @@ public class FuturesManager {
 		if ("MRVWAP".equals(normalized)) {
 			return !bar.marketTime.isBefore(MEAN_REVERSION_START) && !bar.marketTime.isAfter(MEAN_REVERSION_END);
 		}
-		if ("FVG".equals(normalized)) {
+		if ("FVG".equals(normalized) || "IFVG".equals(normalized)) {
 			return minute >= settings.fvgStartMinute
 				&& minute <= settings.fvgEndMinute
 				&& !inMinuteWindow(minute, settings.fvgSkipStartMinute, settings.fvgSkipEndMinute);
@@ -10053,7 +10230,7 @@ public class FuturesManager {
 		if ("PDB".equals(normalized)) return ratio >= settings.priorDayBreakoutMinVolumeRatio;
 		if ("VWAP".equals(normalized)) return ratio >= settings.vwapMinVolumeRatio;
 		if ("VRCL".equals(normalized)) return ratio >= settings.vwapReclaimMinVolumeRatio;
-		if ("FVG".equals(normalized)) return ratio >= settings.fvgMinVolumeRatio;
+		if ("FVG".equals(normalized) || "IFVG".equals(normalized)) return ratio >= settings.fvgMinVolumeRatio;
 		if ("CMOM".equals(normalized)) return ratio >= settings.closeMomentumVolumeRatio;
 		if ("AFT".equals(normalized)) return ratio >= settings.afternoonMinVolumeRatio;
 		if ("MIM".equals(normalized)) return ratio >= settings.marketIntradayMomentumMinVolumeRatio;
@@ -10133,7 +10310,7 @@ public class FuturesManager {
 				&& ((bar.close < bar.vwap && bar.rsi14 <= settings.meanReversionOversoldRsi + 3.0 && bar.close > previous.high)
 					|| (settings.allowShorts && bar.close > bar.vwap && bar.rsi14 >= settings.meanReversionOverboughtRsi - 3.0 && bar.close < previous.low));
 		}
-		if ("FVG".equals(normalized)) {
+		if ("FVG".equals(normalized) || "IFVG".equals(normalized)) {
 			return diagnosticFvgStructurePass(spec, bars, settings, index);
 		}
 		if ("AFT".equals(normalized)) {
@@ -10225,7 +10402,7 @@ public class FuturesManager {
 		} else if ("VWAP".equals(normalized) || "VRCL".equals(normalized) || "TLAD".equals(normalized)) {
 			best = Math.min(best, riskTicks(spec, bar.close, Math.min(recentSwingLow(bars, index, 5), bar.ema20 > 0.0 ? bar.ema20 : bar.low) - (spec.tickSize * 2.0)));
 			best = Math.min(best, riskTicks(spec, bar.close, Math.max(recentSwingHigh(bars, index, 5), bar.ema20 > 0.0 ? bar.ema20 : bar.high) + (spec.tickSize * 2.0)));
-		} else if ("FVG".equals(normalized)) {
+		} else if ("FVG".equals(normalized) || "IFVG".equals(normalized)) {
 			best = Math.min(best, Math.max(settings.fvgMinRiskTicks, riskTicks(spec, bar.close, recentSwingLow(bars, index, 5) - (spec.tickSize * 2.0))));
 			best = Math.min(best, Math.max(settings.fvgMinRiskTicks, riskTicks(spec, bar.close, recentSwingHigh(bars, index, 5) + (spec.tickSize * 2.0))));
 		} else if ("RCB".equals(normalized)) {
@@ -10262,7 +10439,7 @@ public class FuturesManager {
 		if ("PDB".equals(normalized)) return Math.min(maxInitial, safe.priorDayBreakoutMaxRiskTicks);
 		if ("VWAP".equals(normalized)) return Math.min(maxInitial, safe.vwapMaxRiskTicks);
 		if ("VRCL".equals(normalized)) return Math.min(maxInitial, safe.vwapReclaimMaxRiskTicks);
-		if ("FVG".equals(normalized)) return Math.min(maxInitial, safe.fvgMaxRiskTicks);
+		if ("FVG".equals(normalized) || "IFVG".equals(normalized)) return Math.min(maxInitial, safe.fvgMaxRiskTicks);
 		if ("AFT".equals(normalized)) return Math.min(maxInitial, safe.afternoonMaxRiskTicks);
 		if ("MIM".equals(normalized)) return Math.min(maxInitial, safe.marketIntradayMomentumMaxRiskTicks);
 		if ("KELT".equals(normalized) || "KREV".equals(normalized)) return Math.min(maxInitial, safe.keltnerMaxRiskTicks);
@@ -12114,8 +12291,8 @@ public class FuturesManager {
 						previousBars,
 						groupByDay(fifteenMinuteBars).get(latestDay),
 						groupByDay(oneHourBars).get(latestDay),
-						LIVE_MIDDAY_DIAGNOSTIC_START_MINUTE,
-						LIVE_MIDDAY_DIAGNOSTIC_END_MINUTE
+						LIVE_ENTRY_DIAGNOSTIC_START_MINUTE,
+						LIVE_ENTRY_DIAGNOSTIC_END_MINUTE
 					);
 					analysis.strategyDiagnosticsJson = strategyFilterDiagnosticsArrayJson(diagnostics, "LIVE_MONITOR");
 					analysis.latestNearMissesJson = latestNearMissesArrayJson(diagnostics);
@@ -12159,6 +12336,7 @@ public class FuturesManager {
 		count += safe.vwapReclaim.enabled ? 1 : 0;
 		count += safe.vwapMeanReversion.enabled ? 1 : 0;
 		count += safe.fvg.enabled ? 1 : 0;
+		count += safe.ifvg.enabled ? 1 : 0;
 		count += safe.closeMomentum.enabled ? 1 : 0;
 		count += safe.afternoonContinuation.enabled ? 1 : 0;
 		count += safe.marketIntradayMomentum.enabled ? 1 : 0;
@@ -12190,16 +12368,17 @@ public class FuturesManager {
 		appendStrategyWatch(json, 5, "VRCL", "VWAP Reclaim", safe.vwapReclaim, signals, bars);
 		appendStrategyWatch(json, 6, "MRVWAP", "VWAP Reversion", safe.vwapMeanReversion, signals, bars);
 		appendStrategyWatch(json, 7, "FVG", "Fair Value Gap", safe.fvg, signals, bars);
-		appendStrategyWatch(json, 8, "CMOM", "Close Momentum", safe.closeMomentum, signals, bars);
-		appendStrategyWatch(json, 9, "AFT", "Afternoon Continuation", safe.afternoonContinuation, signals, bars);
-		appendStrategyWatch(json, 10, "MIM", "Market Momentum", safe.marketIntradayMomentum, signals, bars);
-		appendStrategyWatch(json, 11, "KELT", "Keltner Scalp", safe.keltnerScalp, signals, bars);
-		appendStrategyWatch(json, 12, "KREV", "Keltner Reversion", safe.keltnerReversion, signals, bars);
-		appendStrategyWatch(json, 13, "SHDW", "Mini Shadow", safe.microShadow, signals, bars);
-		appendStrategyWatch(json, 14, "TLAD", "Trend Ladder", safe.trendLadder, signals, bars);
-		appendStrategyWatch(json, 15, "MSCALP", "Micro Scalp", safe.microScalp, signals, bars);
-		appendStrategyWatch(json, 16, "RCB", "Compression Breakout", safe.rangeCompressionBreakout, signals, bars);
-		appendStrategyWatch(json, 17, "VPB", "Value Area Reclaim", safe.valueAreaReclaim, signals, bars);
+		appendStrategyWatch(json, 8, "IFVG", "Inversion Fair Value Gap", safe.ifvg, signals, bars);
+		appendStrategyWatch(json, 9, "CMOM", "Close Momentum", safe.closeMomentum, signals, bars);
+		appendStrategyWatch(json, 10, "AFT", "Afternoon Continuation", safe.afternoonContinuation, signals, bars);
+		appendStrategyWatch(json, 11, "MIM", "Market Momentum", safe.marketIntradayMomentum, signals, bars);
+		appendStrategyWatch(json, 12, "KELT", "Keltner Scalp", safe.keltnerScalp, signals, bars);
+		appendStrategyWatch(json, 13, "KREV", "Keltner Reversion", safe.keltnerReversion, signals, bars);
+		appendStrategyWatch(json, 14, "SHDW", "Mini Shadow", safe.microShadow, signals, bars);
+		appendStrategyWatch(json, 15, "TLAD", "Trend Ladder", safe.trendLadder, signals, bars);
+		appendStrategyWatch(json, 16, "MSCALP", "Micro Scalp", safe.microScalp, signals, bars);
+		appendStrategyWatch(json, 17, "RCB", "Compression Breakout", safe.rangeCompressionBreakout, signals, bars);
+		appendStrategyWatch(json, 18, "VPB", "Value Area Reclaim", safe.valueAreaReclaim, signals, bars);
 		appendStrategyWatch(json, 19, "ECHO", "Micro Echo", safe.microEcho, signals, bars);
 		appendStrategyWatch(json, 20, "WFT", "Winner Follow-Through", safe.winnerFollowThrough, signals, bars);
 		appendStrategyWatch(json, 21, "EIA", "MCL EIA Continuation", safe.mclEiaContinuation, signals, bars);
@@ -12834,6 +13013,7 @@ public class FuturesManager {
 		if ("SWEEP".equals(code) || "SWEEP2".equals(code)) return "ENTRY_LIQUIDITY_SWEEP";
 		if ("PDB".equals(code)) return "ENTRY_PRIOR_DAY_BREAKOUT";
 		if ("FVG".equals(code)) return "ENTRY_FAIR_VALUE_GAP";
+		if ("IFVG".equals(code)) return "ENTRY_INVERSION_FAIR_VALUE_GAP";
 		if ("AFT".equals(code)) return "ENTRY_AFTERNOON_CONTINUATION";
 		if ("CMOM".equals(code)) return "ENTRY_CLOSE_MOMENTUM";
 		if ("KELT".equals(code)) return "ENTRY_KELTNER_BREAKOUT";
@@ -12862,6 +13042,7 @@ public class FuturesManager {
 		if ("SWEEP".equals(code) || "SWEEP2".equals(code)) return "a prior-day liquidity sweep reclaimed and triggered continuation.";
 		if ("PDB".equals(code)) return "a prior-day high/low breakout or retest continued.";
 		if ("FVG".equals(code)) return "a fair-value-gap reclaim/retest setup triggered.";
+		if ("IFVG".equals(code)) return "an inverted fair-value-gap retest triggered after a displacement through the prior gap.";
 		if ("AFT".equals(code)) return "an afternoon local-range continuation setup triggered.";
 		if ("CMOM".equals(code)) return "late-session momentum stayed aligned near the close.";
 		if ("KELT".equals(code)) return "Keltner/ATR volatility expanded in the trade direction.";
@@ -14542,7 +14723,7 @@ public class FuturesManager {
 		}
 		addMicroShadowSignalEvents(scan.contexts);
 		addMicroEchoSignalEvents(scan.contexts);
-		scan.candidates.addAll(currentLiveSignalCandidates(session.sessionId, scan.contexts, scan.currentBarsBySymbol, false));
+		scan.candidates.addAll(currentLiveSignalCandidates(session.sessionId, snapshot.snapshotId, scan.contexts, scan.currentBarsBySymbol, false));
 		rankLivePortfolioSignalCandidates(scan.candidates, scan.contexts);
 		return scan;
 	}
@@ -14847,7 +15028,7 @@ public class FuturesManager {
 		}
 			addMicroShadowSignalEvents(liveContexts);
 			addMicroEchoSignalEvents(liveContexts);
-			candidates.addAll(currentLiveSignalCandidates(session.sessionId, liveContexts, currentBarsBySymbol));
+			candidates.addAll(currentLiveSignalCandidates(session.sessionId, snapshot.snapshotId, liveContexts, currentBarsBySymbol));
 			List<PortfolioPosition> trackedOpenPositions = liveOpenPositionsForSession(session.sessionId, snapshot.snapshotId);
 			int exitsProcessed = 0;
 			if ("TOPSTEPX".equals(session.executionMode)) {
@@ -16303,14 +16484,16 @@ public class FuturesManager {
 
 	private static List<LivePortfolioSignalCandidate> currentLiveSignalCandidates(
 		int sessionId,
+		int snapshotId,
 		Map<String, PortfolioSymbolContext> contexts,
 		Map<String, Bar> currentBarsBySymbol
 	) {
-		return currentLiveSignalCandidates(sessionId, contexts, currentBarsBySymbol, true);
+		return currentLiveSignalCandidates(sessionId, snapshotId, contexts, currentBarsBySymbol, true);
 	}
 
 	private static List<LivePortfolioSignalCandidate> currentLiveSignalCandidates(
 		int sessionId,
+		int snapshotId,
 		Map<String, PortfolioSymbolContext> contexts,
 		Map<String, Bar> currentBarsBySymbol,
 		boolean enforceForcedExitCutoff
@@ -16335,19 +16518,26 @@ public class FuturesManager {
 				continue;
 			}
 			List<SignalEvent> events = context.eventsByDay.get(entryBar.marketDate);
-			if (events == null || events.isEmpty()) {
-				continue;
-			}
-			for (int eventIndex = 0; eventIndex < events.size(); eventIndex++) {
-				SignalEvent event = events.get(eventIndex);
-				if (event == null || event.signal == null || event.executionIndex != currentIndex.intValue() || !entryBar.marketTime.equals(event.entryTime)) {
+				if (events == null || events.isEmpty()) {
 					continue;
 				}
-				Bar signalBar = signalBarForEvent(context, event);
-				String signalTime = signalBar == null ? entryBar.displayTime : signalBar.displayTime;
-				if (liveDecisionExists(sessionId, context.symbol, event.signal.strategyCode, signalTime)) {
-					continue;
-				}
+				for (int eventIndex = 0; eventIndex < events.size(); eventIndex++) {
+					SignalEvent event = events.get(eventIndex);
+					if (event == null || event.signal == null) {
+						continue;
+					}
+					Bar signalBar = signalBarForEvent(context, event);
+					String signalTime = signalBar == null ? entryBar.displayTime : signalBar.displayTime;
+					if (event.executionIndex < currentIndex.intValue()) {
+						auditStaleLiveSignalCandidate(sessionId, snapshotId, context, event, signalTime, entryBar, currentIndex.intValue());
+						continue;
+					}
+					if (event.executionIndex != currentIndex.intValue() || !entryBar.marketTime.equals(event.entryTime)) {
+						continue;
+					}
+					if (liveDecisionExists(sessionId, context.symbol, event.signal.strategyCode, signalTime)) {
+						continue;
+					}
 				LivePortfolioSignalCandidate candidate = new LivePortfolioSignalCandidate();
 				candidate.symbol = context.symbol;
 				candidate.context = context;
@@ -16358,7 +16548,96 @@ public class FuturesManager {
 				candidates.add(candidate);
 			}
 		}
-		return candidates;
+			return candidates;
+		}
+
+	private static void auditStaleLiveSignalCandidate(
+		int sessionId,
+		int snapshotId,
+		PortfolioSymbolContext context,
+		SignalEvent event,
+		String signalTime,
+		Bar currentBar,
+		int currentIndex
+	) {
+		if (sessionId <= 0 || snapshotId <= 0 || context == null || event == null || event.signal == null || currentBar == null) {
+			return;
+		}
+		int skippedBars = currentIndex - event.executionIndex;
+		if (skippedBars < 1 || skippedBars > LIVE_STALE_SIGNAL_AUDIT_LOOKBACK_BARS) {
+			return;
+		}
+		if (event.entryTime == null || event.entryTime.isBefore(LIVE_ENTRY_WINDOW_START) || !event.entryTime.isBefore(LIVE_ENTRY_WINDOW_END)) {
+			return;
+		}
+		Signal signal = event.signal;
+		if (liveDecisionExists(sessionId, context.symbol, signal.strategyCode, signalTime)) {
+			return;
+		}
+		Bar plannedEntryBar = barForEventIndex(context, event);
+		String entryTime = plannedEntryBar == null ? displayTime(event.day, event.entryTime) : cleanOrDefault(plannedEntryBar.displayTime, "");
+		String reason = "Diagnostics-only: live signal execution bar passed without an order submission; catch-up orders are disabled.";
+		String payload = "{"
+			+ "\"symbol\":" + jsonString(normalizeSymbol(context.symbol)) + ","
+			+ "\"strategyCode\":" + jsonString(cleanOrDefault(signal.strategyCode, "")) + ","
+			+ "\"strategyName\":" + jsonString(cleanOrDefault(signal.strategyName, "")) + ","
+			+ "\"side\":" + jsonString(cleanOrDefault(signal.side, "")) + ","
+			+ "\"signalTime\":" + jsonString(cleanOrDefault(signalTime, "")) + ","
+			+ "\"entryTime\":" + jsonString(entryTime) + ","
+			+ "\"currentBarTime\":" + jsonString(cleanOrDefault(currentBar.displayTime, "")) + ","
+			+ "\"skippedBars\":" + skippedBars + ","
+			+ "\"catchUpOrdersEnabled\":false,"
+			+ "\"entryPrice\":" + round(signal.entryPrice) + ","
+			+ "\"stopPrice\":" + round(signal.stopPrice) + ","
+			+ "\"targetPrice\":" + round(signal.targetPrice) + ","
+			+ "\"reason\":" + jsonString(reason)
+			+ "}";
+		insertLiveSignalDecisionFromSignal(
+			sessionId,
+			snapshotId,
+			context.symbol,
+			signal,
+			signalTime,
+			entryTime,
+			0,
+			0.0,
+			signal.stopPrice,
+			signal.targetPrice,
+			0.0,
+			"REJECTED_STALE_SIGNAL",
+			reason,
+			"",
+			payload
+		);
+		pushLiveEvent(
+			sessionId,
+			"STALE_SIGNAL_SKIPPED",
+			"Signal Audit",
+			"blocked",
+			context.symbol,
+			entryTime,
+			normalizeSymbol(context.symbol) + " " + cleanOrDefault(signal.strategyCode, "LIVE") + " " + cleanOrDefault(signal.side, "") + " stale signal skipped.",
+			reason,
+			payload
+		);
+	}
+
+	private static Bar barForEventIndex(PortfolioSymbolContext context, SignalEvent event) {
+		if (context == null || event == null || event.day == null || event.executionIndex < 0) {
+			return null;
+		}
+		List<Bar> dayBars = context.byDay.get(event.day);
+		if (dayBars == null || event.executionIndex >= dayBars.size()) {
+			return null;
+		}
+		return dayBars.get(event.executionIndex);
+	}
+
+	private static String displayTime(LocalDate day, LocalTime time) {
+		if (day == null || time == null) {
+			return "";
+		}
+		return day.toString() + " " + time.format(DateTimeFormatter.ofPattern("HH:mm"));
 	}
 
 	private static void rankLivePortfolioSignalCandidates(final List<LivePortfolioSignalCandidate> candidates, final Map<String, PortfolioSymbolContext> contexts) {
@@ -16445,7 +16724,7 @@ public class FuturesManager {
 		if ("KREV".equals(code) || "MRVWAP".equals(code)) {
 			return 0.70;
 		}
-		if ("FVG".equals(code) || "VWAP".equals(code) || "VRCL".equals(code) || "SWEEP".equals(code) || "PDB".equals(code)) {
+		if ("FVG".equals(code) || "IFVG".equals(code) || "VWAP".equals(code) || "VRCL".equals(code) || "SWEEP".equals(code) || "PDB".equals(code)) {
 			return 0.60;
 		}
 		return 0.50;
@@ -16539,6 +16818,7 @@ public class FuturesManager {
 	private static boolean entryOptimizerRequiresFreshConfirmation(String strategyCode) {
 		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
 		return "FVG".equals(code)
+			|| "IFVG".equals(code)
 			|| "VWAP".equals(code)
 			|| "VRCL".equals(code)
 			|| "KREV".equals(code)
@@ -17487,6 +17767,7 @@ public class FuturesManager {
 		if ("MIM".equals(code)) return 35;
 		if ("PDB".equals(code)) return 35;
 		if ("FVG".equals(code)) return Math.max(0, safe.fvgMaxHoldBars);
+		if ("IFVG".equals(code)) return Math.max(0, safe.fvgMaxHoldBars);
 		if ("CMOM".equals(code)) return 40;
 		if ("SHDW".equals(code)) return Math.max(0, safe.microShadowMaxHoldBars);
 		if ("ECHO".equals(code)) return Math.max(0, safe.microEchoMaxHoldBars);
@@ -20798,7 +21079,10 @@ public class FuturesManager {
 			signals.addAll(findPriorDayBreakoutSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings));
 		}
 		if (settings.fvg.enabled) {
-			signals.addAll(findFvgSignals(spec, bars, fifteenMinuteBars, oneHourBars, settings));
+			signals.addAll(findFvgSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings));
+		}
+		if (settings.ifvg.enabled) {
+			signals.addAll(findIfvgSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings));
 		}
 		if (settings.closeMomentum.enabled) {
 			signals.addAll(findCloseMomentumSignals(spec, bars, fifteenMinuteBars, oneHourBars, settings));
@@ -22795,7 +23079,7 @@ public class FuturesManager {
 		return dedupeByHour(signals, settings.priorDayBreakout.maxTradesPerDay);
 	}
 
-	private static List<Signal> findFvgSignals(InstrumentSpec spec, List<Bar> bars, List<Bar> fifteenMinuteBars, List<Bar> oneHourBars, FuturesStrategySettings settings) {
+	private static List<Signal> findFvgSignals(InstrumentSpec spec, List<Bar> bars, List<Bar> previousBars, List<Bar> fifteenMinuteBars, List<Bar> oneHourBars, FuturesStrategySettings settings) {
 		List<Signal> signals = new ArrayList<Signal>();
 		double maxRiskTicks = Math.min(settings.fvgMaxRiskTicks, settings.maxInitialRiskTicks);
 		for (int index = 2; index < bars.size(); index++) {
@@ -22820,6 +23104,9 @@ public class FuturesManager {
 				if (widthTicks >= settings.fvgMinWidthTicks) {
 					for (int entryIndex = index + 1; entryIndex < Math.min(index + settings.fvgRetestBars, bars.size()); entryIndex++) {
 						Bar entry = bars.get(entryIndex);
+						if (entry.close < gapLow) {
+							break;
+						}
 						int entryMinuteOfDay = (entry.marketTime.getHour() * 60) + entry.marketTime.getMinute();
 						if (inDayOfWeekMinuteWindow(entry.marketDate, entryMinuteOfDay, settings.fvgLongDowWindowSkipMask, settings.fvgLongDowWindowSkipStartMinute, settings.fvgLongDowWindowSkipEndMinute)) {
 							continue;
@@ -22831,15 +23118,20 @@ public class FuturesManager {
 							&& entry.close > entry.open
 							&& closeLocation(entry) >= 0.58
 							&& entryVolumeRatio >= settings.fvgMinVolumeRatio
-							&& fvgCoreQualityPass(spec, bars, fifteenMinuteBars, oneHourBars, settings, index, entryIndex, "LONG", gapLow, gapHigh)) {
-							double stop = Math.min(gapLow - (spec.tickSize * 2.0), recentSwingLow(bars, entryIndex, 5) - (spec.tickSize * 2.0));
-							double minRisk = settings.fvgMinRiskTicks * spec.tickSize;
-							if (entry.close - stop < minRisk) {
-								stop = entry.close - minRisk;
+							&& fvgCoreQualityPass(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings, index, entryIndex, "LONG", gapLow, gapHigh)) {
+							int acceptedIndex = fvgAcceptanceIndex(spec, bars, settings, entryIndex, "LONG", gapLow, gapHigh);
+							if (acceptedIndex < 0) {
+								continue;
 							}
-							double risk = entry.close - stop;
-							if (risk > 0.0 && riskTicks(spec, entry.close, stop) <= maxRiskTicks) {
-								signals.add(signal("FVG", "Fair Value Gap Reclaim", "LONG", entryIndex, entry.close, stop, entry.close + (risk * settings.fvgRewardRisk), settings.fvgMaxHoldBars, "Bullish futures FVG reclaim with bounded gap risk."));
+							Bar accepted = bars.get(acceptedIndex);
+							double stop = Math.min(gapLow - (spec.tickSize * 2.0), recentSwingLow(bars, acceptedIndex, 5) - (spec.tickSize * 2.0));
+							double minRisk = settings.fvgMinRiskTicks * spec.tickSize;
+							if (accepted.close - stop < minRisk) {
+								stop = accepted.close - minRisk;
+							}
+							double risk = accepted.close - stop;
+							if (risk > 0.0 && riskTicks(spec, accepted.close, stop) <= maxRiskTicks) {
+								signals.add(signal("FVG", "Fair Value Gap Reclaim", "LONG", acceptedIndex, accepted.close, stop, accepted.close + (risk * settings.fvgRewardRisk), settings.fvgMaxHoldBars, fvgSignalNotes(spec, "Bullish", gapLow, gapHigh, index, acceptedIndex, settings)));
 								break;
 							}
 						}
@@ -22855,6 +23147,9 @@ public class FuturesManager {
 				}
 				for (int entryIndex = index + 1; entryIndex < Math.min(index + settings.fvgRetestBars, bars.size()); entryIndex++) {
 					Bar entry = bars.get(entryIndex);
+					if (entry.close > gapHigh) {
+						break;
+					}
 					int entryMinuteOfDay = (entry.marketTime.getHour() * 60) + entry.marketTime.getMinute();
 					if (inDayOfWeekMinuteWindow(entry.marketDate, entryMinuteOfDay, settings.fvgShortDowWindowSkipMask, settings.fvgShortDowWindowSkipStartMinute, settings.fvgShortDowWindowSkipEndMinute)) {
 						continue;
@@ -22866,15 +23161,20 @@ public class FuturesManager {
 						&& entry.close < entry.open
 						&& closeLocation(entry) <= 0.42
 						&& entryVolumeRatio >= settings.fvgMinVolumeRatio
-						&& fvgCoreQualityPass(spec, bars, fifteenMinuteBars, oneHourBars, settings, index, entryIndex, "SHORT", gapLow, gapHigh)) {
-						double stop = Math.max(gapHigh + (spec.tickSize * 2.0), recentSwingHigh(bars, entryIndex, 5) + (spec.tickSize * 2.0));
-						double minRisk = settings.fvgMinRiskTicks * spec.tickSize;
-						if (stop - entry.close < minRisk) {
-							stop = entry.close + minRisk;
+						&& fvgCoreQualityPass(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings, index, entryIndex, "SHORT", gapLow, gapHigh)) {
+						int acceptedIndex = fvgAcceptanceIndex(spec, bars, settings, entryIndex, "SHORT", gapLow, gapHigh);
+						if (acceptedIndex < 0) {
+							continue;
 						}
-						double risk = stop - entry.close;
-						if (risk > 0.0 && riskTicks(spec, entry.close, stop) <= maxRiskTicks) {
-							signals.add(signal("FVG", "Fair Value Gap Reclaim", "SHORT", entryIndex, entry.close, stop, entry.close - (risk * settings.fvgRewardRisk), settings.fvgMaxHoldBars, "Bearish futures FVG reclaim with bounded gap risk."));
+						Bar accepted = bars.get(acceptedIndex);
+						double stop = Math.max(gapHigh + (spec.tickSize * 2.0), recentSwingHigh(bars, acceptedIndex, 5) + (spec.tickSize * 2.0));
+						double minRisk = settings.fvgMinRiskTicks * spec.tickSize;
+						if (stop - accepted.close < minRisk) {
+							stop = accepted.close + minRisk;
+						}
+						double risk = stop - accepted.close;
+						if (risk > 0.0 && riskTicks(spec, accepted.close, stop) <= maxRiskTicks) {
+							signals.add(signal("FVG", "Fair Value Gap Reclaim", "SHORT", acceptedIndex, accepted.close, stop, accepted.close - (risk * settings.fvgRewardRisk), settings.fvgMaxHoldBars, fvgSignalNotes(spec, "Bearish", gapLow, gapHigh, index, acceptedIndex, settings)));
 							break;
 						}
 					}
@@ -22884,13 +23184,161 @@ public class FuturesManager {
 		return dedupeByHour(signals, settings.fvg.maxTradesPerDay);
 	}
 
-	private static boolean fvgCoreQualityPass(
+	private static List<Signal> findIfvgSignals(InstrumentSpec spec, List<Bar> bars, List<Bar> previousBars, List<Bar> fifteenMinuteBars, List<Bar> oneHourBars, FuturesStrategySettings settings) {
+		List<Signal> signals = new ArrayList<Signal>();
+		if (spec == null || bars == null || settings == null) {
+			return signals;
+		}
+		double maxRiskTicks = Math.min(settings.fvgMaxRiskTicks, settings.maxInitialRiskTicks);
+		double breakDistance = Math.max(0.0, settings.fvgMinSourceBreakTicks) * spec.tickSize;
+		for (int index = 2; index < bars.size(); index++) {
+			Bar first = bars.get(index - 2);
+			Bar middle = bars.get(index - 1);
+			Bar third = bars.get(index);
+			int minuteOfDay = minuteOfDay(third);
+			if (minuteOfDay < settings.fvgStartMinute
+				|| minuteOfDay > settings.fvgEndMinute
+				|| inMinuteWindow(minuteOfDay, settings.fvgSkipStartMinute, settings.fvgSkipEndMinute)) {
+				continue;
+			}
+			double middleVolumeRatio = middle.volumeSma20 <= 0.0 ? 1.0 : middle.volume / middle.volumeSma20;
+			double thirdVolumeRatio = third.volumeSma20 <= 0.0 ? 1.0 : third.volume / third.volumeSma20;
+			if (Math.max(middleVolumeRatio, thirdVolumeRatio) < settings.fvgMinVolumeRatio) {
+				continue;
+			}
+			if (settings.allowShorts && settings.allowFvgShorts && !inDayOfWeekMask(third.marketDate, settings.fvgShortSkipDowMask) && first.high < third.low && middle.close > middle.open) {
+				double gapLow = first.high;
+				double gapHigh = third.low;
+				double widthTicks = (gapHigh - gapLow) / spec.tickSize;
+				if (widthTicks >= settings.fvgMinWidthTicks) {
+					int invalidationIndex = ifvgInvalidationIndex(spec, bars, settings, index, true, gapLow, gapHigh, breakDistance);
+					if (invalidationIndex >= 0) {
+						for (int entryIndex = invalidationIndex + 1; entryIndex < Math.min(invalidationIndex + settings.fvgRetestBars, bars.size()); entryIndex++) {
+							Bar entry = bars.get(entryIndex);
+							int entryMinuteOfDay = minuteOfDay(entry);
+							if (inDayOfWeekMinuteWindow(entry.marketDate, entryMinuteOfDay, settings.fvgShortDowWindowSkipMask, settings.fvgShortDowWindowSkipStartMinute, settings.fvgShortDowWindowSkipEndMinute)) {
+								continue;
+							}
+							double entryVolumeRatio = entry.volumeSma20 <= 0.0 ? 1.0 : entry.volume / entry.volumeSma20;
+							if (entry.high >= gapLow - (spec.tickSize * 2.0)
+								&& entry.high <= gapHigh + (spec.tickSize * 2.0)
+								&& entry.close < gapLow - breakDistance
+								&& entry.close < entry.open
+								&& closeLocation(entry) <= 0.42
+								&& entryVolumeRatio >= settings.fvgMinVolumeRatio
+								&& ifvgQualityPass(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings, index, invalidationIndex, entryIndex, "SHORT", gapLow, gapHigh)) {
+								double stop = Math.max(gapHigh + (spec.tickSize * 2.0), recentSwingHigh(bars, entryIndex, 5) + (spec.tickSize * 2.0));
+								double minRisk = settings.fvgMinRiskTicks * spec.tickSize;
+								if (stop - entry.close < minRisk) {
+									stop = entry.close + minRisk;
+								}
+								double risk = stop - entry.close;
+								if (risk > 0.0 && riskTicks(spec, entry.close, stop) <= maxRiskTicks) {
+									signals.add(signal("IFVG", "Inversion Fair Value Gap Retest", "SHORT", entryIndex, entry.close, stop, entry.close - (risk * settings.fvgRewardRisk), settings.fvgMaxHoldBars, ifvgSignalNotes(spec, "Bearish", gapLow, gapHigh, index, invalidationIndex, entryIndex, settings)));
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+			if (settings.allowFvgLongs && !inDayOfWeekMask(third.marketDate, settings.fvgLongSkipDowMask) && first.low > third.high && middle.close < middle.open) {
+				double gapLow = third.high;
+				double gapHigh = first.low;
+				double widthTicks = (gapHigh - gapLow) / spec.tickSize;
+				if (widthTicks >= settings.fvgMinWidthTicks) {
+					int invalidationIndex = ifvgInvalidationIndex(spec, bars, settings, index, false, gapLow, gapHigh, breakDistance);
+					if (invalidationIndex >= 0) {
+						for (int entryIndex = invalidationIndex + 1; entryIndex < Math.min(invalidationIndex + settings.fvgRetestBars, bars.size()); entryIndex++) {
+							Bar entry = bars.get(entryIndex);
+							int entryMinuteOfDay = minuteOfDay(entry);
+							if (inDayOfWeekMinuteWindow(entry.marketDate, entryMinuteOfDay, settings.fvgLongDowWindowSkipMask, settings.fvgLongDowWindowSkipStartMinute, settings.fvgLongDowWindowSkipEndMinute)) {
+								continue;
+							}
+							double entryVolumeRatio = entry.volumeSma20 <= 0.0 ? 1.0 : entry.volume / entry.volumeSma20;
+							if (entry.low <= gapHigh + (spec.tickSize * 2.0)
+								&& entry.low >= gapLow - (spec.tickSize * 2.0)
+								&& entry.close > gapHigh + breakDistance
+								&& entry.close > entry.open
+								&& closeLocation(entry) >= 0.58
+								&& entryVolumeRatio >= settings.fvgMinVolumeRatio
+								&& ifvgQualityPass(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings, index, invalidationIndex, entryIndex, "LONG", gapLow, gapHigh)) {
+								double stop = Math.min(gapLow - (spec.tickSize * 2.0), recentSwingLow(bars, entryIndex, 5) - (spec.tickSize * 2.0));
+								double minRisk = settings.fvgMinRiskTicks * spec.tickSize;
+								if (entry.close - stop < minRisk) {
+									stop = entry.close - minRisk;
+								}
+								double risk = entry.close - stop;
+								if (risk > 0.0 && riskTicks(spec, entry.close, stop) <= maxRiskTicks) {
+									signals.add(signal("IFVG", "Inversion Fair Value Gap Retest", "LONG", entryIndex, entry.close, stop, entry.close + (risk * settings.fvgRewardRisk), settings.fvgMaxHoldBars, ifvgSignalNotes(spec, "Bullish", gapLow, gapHigh, index, invalidationIndex, entryIndex, settings)));
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		return dedupeByHour(signals, settings.ifvg.maxTradesPerDay);
+	}
+
+	private static int ifvgInvalidationIndex(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int gapIndex, boolean bullishGap, double gapLow, double gapHigh, double breakDistance) {
+		int endIndex = Math.min(bars.size() - 1, gapIndex + Math.max(2, settings.fvgInversionBreakBars));
+		for (int index = gapIndex + 1; index <= endIndex; index++) {
+			Bar bar = bars.get(index);
+			double volumeRatio = bar.volumeSma20 <= 0.0 ? 1.0 : bar.volume / bar.volumeSma20;
+			if (volumeRatio < settings.fvgMinVolumeRatio) {
+				continue;
+			}
+			if (settings.fvgMinInversionBodyPct > 0.0 && bar.bodyPct < settings.fvgMinInversionBodyPct) {
+				continue;
+			}
+			if (settings.fvgRequireInversionStructureBreak && !ifvgBreaksLocalStructure(spec, bars, settings, index, bullishGap, breakDistance)) {
+				continue;
+			}
+			if (bullishGap) {
+				if (bar.close < gapLow - breakDistance && bar.close < bar.open && closeLocation(bar) <= 0.42) {
+					return index;
+				}
+			} else if (bar.close > gapHigh + breakDistance && bar.close > bar.open && closeLocation(bar) >= 0.58) {
+				return index;
+			}
+		}
+		return -1;
+	}
+
+	private static boolean ifvgBreaksLocalStructure(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int invalidationIndex, boolean bullishGap, double breakDistance) {
+		if (spec == null || spec.tickSize <= 0.0 || bars == null || settings == null || invalidationIndex <= 0 || invalidationIndex >= bars.size()) {
+			return false;
+		}
+		int lookback = Math.max(5, settings.fvgInversionStructureBars);
+		int start = Math.max(0, invalidationIndex - lookback);
+		int end = invalidationIndex - 1;
+		if (end < start) {
+			return false;
+		}
+		double high = Double.NEGATIVE_INFINITY;
+		double low = Double.POSITIVE_INFINITY;
+		for (int index = start; index <= end; index++) {
+			Bar bar = bars.get(index);
+			high = Math.max(high, bar.high);
+			low = Math.min(low, bar.low);
+		}
+		Bar invalidation = bars.get(invalidationIndex);
+		return bullishGap
+			? low < Double.POSITIVE_INFINITY && invalidation.close < low - breakDistance
+			: high > Double.NEGATIVE_INFINITY && invalidation.close > high + breakDistance;
+	}
+
+	private static boolean ifvgQualityPass(
 		InstrumentSpec spec,
 		List<Bar> bars,
+		List<Bar> previousBars,
 		List<Bar> fifteenMinuteBars,
 		List<Bar> oneHourBars,
 		FuturesStrategySettings settings,
 		int gapIndex,
+		int invalidationIndex,
 		int entryIndex,
 		String side,
 		double gapLow,
@@ -22899,7 +23347,7 @@ public class FuturesManager {
 		if (settings == null || !settings.fvgRequireCoreQuality) {
 			return true;
 		}
-		if (spec == null || bars == null || gapIndex < 2 || entryIndex <= gapIndex || entryIndex >= bars.size()) {
+		if (spec == null || bars == null || gapIndex < 2 || invalidationIndex <= gapIndex || entryIndex <= invalidationIndex || entryIndex >= bars.size()) {
 			return false;
 		}
 		Bar middle = bars.get(gapIndex - 1);
@@ -22910,11 +23358,29 @@ public class FuturesManager {
 		if (settings.fvgMinImpulseBodyPct > 0.0 && impulseBody < settings.fvgMinImpulseBodyPct) {
 			return false;
 		}
-		if (settings.fvgMaxEntryExtensionTicks > 0.0) {
-			double extensionTicks = longSide
-				? riskTicks(spec, entry.close, gapHigh)
-				: riskTicks(spec, gapLow, entry.close);
-			if (extensionTicks > settings.fvgMaxEntryExtensionTicks) {
+		if (settings.fvgMinReclaimBodyPct > 0.0 && entry.bodyPct < settings.fvgMinReclaimBodyPct) {
+			return false;
+		}
+		double boundary = longSide ? gapHigh : gapLow;
+		double reclaimTicks = riskTicks(spec, entry.close, boundary);
+		if (settings.fvgMinReclaimTicks > 0.0 && reclaimTicks < settings.fvgMinReclaimTicks) {
+			return false;
+		}
+		if (settings.fvgMaxEntryExtensionTicks > 0.0 && reclaimTicks > settings.fvgMaxEntryExtensionTicks) {
+			return false;
+		}
+		if (settings.fvgMaxRetestDepthPct > 0.0) {
+			double gapHeight = Math.max(spec.tickSize, gapHigh - gapLow);
+			double retestDepth = longSide
+				? (gapHigh - entry.low) / gapHeight
+				: (entry.high - gapLow) / gapHeight;
+			if (retestDepth > settings.fvgMaxRetestDepthPct) {
+				return false;
+			}
+		}
+		if (settings.fvgMinReclaimCloseLocation > 0.0) {
+			double sideCloseLocation = longSide ? closeLocation(entry) : 1.0 - closeLocation(entry);
+			if (sideCloseLocation < settings.fvgMinReclaimCloseLocation) {
 				return false;
 			}
 		}
@@ -22957,6 +23423,383 @@ public class FuturesManager {
 			}
 		}
 		return true;
+	}
+
+	private static String ifvgSignalNotes(InstrumentSpec spec, String bias, double gapLow, double gapHigh, int gapIndex, int invalidationIndex, int entryIndex, FuturesStrategySettings settings) {
+		double tickSize = spec == null || spec.tickSize <= 0.0 ? 1.0 : spec.tickSize;
+		double widthTicks = (gapHigh - gapLow) / tickSize;
+		return bias + " futures IFVG retest after gap invalidation"
+			+ ", flipped gap " + round(gapLow) + " to " + round(gapHigh)
+			+ ", gap " + round(gapLow) + "-" + round(gapHigh)
+			+ ", width " + round(widthTicks) + " ticks"
+			+ ", gap bar index " + gapIndex
+			+ ", invalidation lag " + Math.max(0, invalidationIndex - gapIndex) + " bars"
+			+ ", retest lag " + Math.max(0, entryIndex - invalidationIndex) + " bars"
+			+ ", core quality " + (settings != null && settings.fvgRequireCoreQuality ? "required" : "not required")
+			+ ".";
+	}
+
+	private static String fvgSignalNotes(InstrumentSpec spec, String bias, double gapLow, double gapHigh, int gapIndex, int entryIndex, FuturesStrategySettings settings) {
+		double tickSize = spec == null || spec.tickSize <= 0.0 ? 1.0 : spec.tickSize;
+		double widthTicks = (gapHigh - gapLow) / tickSize;
+		return bias + " futures FVG reclaim with bounded gap risk"
+			+ ", gap " + round(gapLow) + "-" + round(gapHigh)
+			+ ", width " + round(widthTicks) + " ticks"
+			+ ", gap bar index " + gapIndex
+			+ ", reclaim lag " + Math.max(0, entryIndex - gapIndex) + " bars"
+			+ ", core quality " + (settings != null && settings.fvgRequireCoreQuality ? "required" : "not required")
+			+ ".";
+	}
+
+	private static int fvgAcceptanceIndex(
+		InstrumentSpec spec,
+		List<Bar> bars,
+		FuturesStrategySettings settings,
+		int reclaimIndex,
+		String side,
+		double gapLow,
+		double gapHigh
+	) {
+		int acceptanceBars = settings == null ? 0 : settings.fvgAcceptanceBars;
+		if (acceptanceBars <= 0) {
+			return reclaimIndex;
+		}
+		if (spec == null || bars == null || reclaimIndex < 0 || reclaimIndex >= bars.size()) {
+			return -1;
+		}
+		Bar reclaim = bars.get(reclaimIndex);
+		boolean longSide = "LONG".equals(side);
+		double minCloseLocation = Math.max(0.0, settings.fvgAcceptanceMinCloseLocation);
+		double tickSize = Math.max(spec.tickSize, 0.000001);
+		int endIndex = Math.min(bars.size() - 1, reclaimIndex + acceptanceBars);
+		for (int index = reclaimIndex + 1; index <= endIndex; index++) {
+			Bar candidate = bars.get(index);
+			if (longSide && candidate.close < gapLow) {
+				return -1;
+			}
+			if (!longSide && candidate.close > gapHigh) {
+				return -1;
+			}
+			double sideCloseLocation = longSide ? closeLocation(candidate) : 1.0 - closeLocation(candidate);
+			if (sideCloseLocation < minCloseLocation) {
+				continue;
+			}
+			if (longSide) {
+				double requiredClose = settings.fvgAcceptanceRequireReclaimExtremeBreak ? reclaim.high : reclaim.close;
+				if (candidate.close > candidate.open && candidate.close > requiredClose + (tickSize * 0.01)) {
+					return index;
+				}
+			} else {
+				double requiredClose = settings.fvgAcceptanceRequireReclaimExtremeBreak ? reclaim.low : reclaim.close;
+				if (candidate.close < candidate.open && candidate.close < requiredClose - (tickSize * 0.01)) {
+					return index;
+				}
+			}
+		}
+		return -1;
+	}
+
+	private static boolean fvgCoreQualityPass(
+		InstrumentSpec spec,
+		List<Bar> bars,
+		List<Bar> previousBars,
+		List<Bar> fifteenMinuteBars,
+		List<Bar> oneHourBars,
+		FuturesStrategySettings settings,
+		int gapIndex,
+		int entryIndex,
+		String side,
+		double gapLow,
+		double gapHigh
+	) {
+		if (settings == null) {
+			return true;
+		}
+		if (spec == null || bars == null || gapIndex < 2 || entryIndex <= gapIndex || entryIndex >= bars.size()) {
+			return false;
+		}
+		Bar middle = bars.get(gapIndex - 1);
+		Bar third = bars.get(gapIndex);
+		Bar entry = bars.get(entryIndex);
+		boolean longSide = "LONG".equals(side);
+		if (!fvgSourceEventPass(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings, gapIndex, longSide)) {
+			return false;
+		}
+		if (!settings.fvgRequireCoreQuality) {
+			return true;
+		}
+		double impulseBody = Math.max(middle == null ? 0.0 : middle.bodyPct, third == null ? 0.0 : third.bodyPct);
+		if (settings.fvgMinImpulseBodyPct > 0.0 && impulseBody < settings.fvgMinImpulseBodyPct) {
+			return false;
+		}
+		if (settings.fvgMinReclaimBodyPct > 0.0 && entry.bodyPct < settings.fvgMinReclaimBodyPct) {
+			return false;
+		}
+		double reclaimTicks = longSide
+			? riskTicks(spec, entry.close, gapHigh)
+			: riskTicks(spec, gapLow, entry.close);
+		if (settings.fvgMinReclaimTicks > 0.0 && reclaimTicks < settings.fvgMinReclaimTicks) {
+			return false;
+		}
+		if (settings.fvgMaxEntryExtensionTicks > 0.0) {
+			if (reclaimTicks > settings.fvgMaxEntryExtensionTicks) {
+				return false;
+			}
+		}
+		if (settings.fvgMaxRetestDepthPct > 0.0) {
+			double gapHeight = Math.max(spec.tickSize, gapHigh - gapLow);
+			double retestDepth = longSide
+				? (gapHigh - entry.low) / gapHeight
+				: (entry.high - gapLow) / gapHeight;
+			if (retestDepth > settings.fvgMaxRetestDepthPct) {
+				return false;
+			}
+		}
+		if (settings.fvgMinReclaimCloseLocation > 0.0) {
+			double sideCloseLocation = longSide ? closeLocation(entry) : 1.0 - closeLocation(entry);
+			if (sideCloseLocation < settings.fvgMinReclaimCloseLocation) {
+				return false;
+			}
+		}
+		if (settings.fvgMaxPriorMoveTicks > 0.0) {
+			Bar reference = bars.get(Math.max(0, gapIndex - 20));
+			double priorMoveTicks = longSide
+				? (third.close - reference.close) / spec.tickSize
+				: (reference.close - third.close) / spec.tickSize;
+			if (priorMoveTicks > settings.fvgMaxPriorMoveTicks) {
+				return false;
+			}
+		}
+		if (!fvgSourceRangeBreakPass(spec, bars, settings, gapIndex, longSide)) {
+			return false;
+		}
+		if (settings.fvgMaxVwapDistanceTicks > 0.0) {
+			if (entry.vwap <= 0.0 || riskTicks(spec, entry.close, entry.vwap) > settings.fvgMaxVwapDistanceTicks) {
+				return false;
+			}
+		}
+		if (settings.fvgRequireEmaStack) {
+			if (entry.ema9 <= 0.0 || entry.ema20 <= 0.0 || entry.ema50 <= 0.0 || entry.vwap <= 0.0) {
+				return false;
+			}
+			if (longSide) {
+				if (!(entry.close > entry.vwap && entry.ema9 >= entry.ema20 && entry.ema20 >= entry.ema50)) {
+					return false;
+				}
+			} else if (!(entry.close < entry.vwap && entry.ema9 <= entry.ema20 && entry.ema20 <= entry.ema50)) {
+				return false;
+			}
+		}
+		if (settings.fvgRequireHigherTimeframeGuard) {
+			boolean higherTimeframePass = longSide
+				? higherTimeframeBreakoutLong(fifteenMinuteBars, oneHourBars, entry.marketTime)
+				: higherTimeframeBearish(fifteenMinuteBars, oneHourBars, entry.marketTime);
+			if (!higherTimeframePass) {
+				return false;
+			}
+		}
+		if (settings.fvgMinTrendSlopeTicks > 0.0) {
+			Bar reference = bars.get(Math.max(0, entryIndex - 10));
+			if (entry.ema20 <= 0.0 || reference.ema20 <= 0.0 || spec.tickSize <= 0.0) {
+				return false;
+			}
+			double slopeTicks = (entry.ema20 - reference.ema20) / spec.tickSize;
+			if (longSide && slopeTicks < settings.fvgMinTrendSlopeTicks) {
+				return false;
+			}
+			if (!longSide && slopeTicks > -settings.fvgMinTrendSlopeTicks) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static boolean fvgSourceRangeBreakPass(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int gapIndex, boolean longSide) {
+		int sourceRangeBars = settings == null ? 0 : settings.fvgSourceRangeBars;
+		if (sourceRangeBars <= 0) {
+			return true;
+		}
+		if (spec == null || spec.tickSize <= 0.0 || bars == null || gapIndex < 3 || gapIndex >= bars.size()) {
+			return false;
+		}
+		int priorEnd = gapIndex - 3;
+		int priorStart = Math.max(0, priorEnd - sourceRangeBars + 1);
+		if (priorEnd < priorStart || (priorEnd - priorStart + 1) < Math.min(5, sourceRangeBars)) {
+			return false;
+		}
+		double priorHigh = Double.NEGATIVE_INFINITY;
+		double priorLow = Double.POSITIVE_INFINITY;
+		for (int index = priorStart; index <= priorEnd; index++) {
+			Bar prior = bars.get(index);
+			priorHigh = Math.max(priorHigh, prior.high);
+			priorLow = Math.min(priorLow, prior.low);
+		}
+		if (priorHigh == Double.NEGATIVE_INFINITY || priorLow == Double.POSITIVE_INFINITY) {
+			return false;
+		}
+		Bar displacement = bars.get(gapIndex);
+		double breakDistance = Math.max(0.0, settings.fvgMinSourceBreakTicks) * spec.tickSize;
+		return longSide
+			? displacement.close > priorHigh + breakDistance
+			: displacement.close < priorLow - breakDistance;
+	}
+
+	private static String normalizedFvgSourceMode(String rawMode) {
+		String mode = cleanOrDefault(rawMode, FVG_SOURCE_NONE).trim().toUpperCase(Locale.US).replace('-', '_').replace(' ', '_');
+		if (FVG_SOURCE_PRIOR_LEVEL_BREAK.equals(mode)
+			|| FVG_SOURCE_ORB_BREAK.equals(mode)
+			|| FVG_SOURCE_SWEEP_DISPLACEMENT.equals(mode)
+			|| FVG_SOURCE_VWAP_TREND_RECLAIM.equals(mode)
+			|| FVG_SOURCE_HTF_BREAKOUT.equals(mode)
+			|| FVG_SOURCE_ANY_CONTEXT.equals(mode)) {
+			return mode;
+		}
+		return FVG_SOURCE_NONE;
+	}
+
+	private static boolean fvgSourceEventPass(
+		InstrumentSpec spec,
+		List<Bar> bars,
+		List<Bar> previousBars,
+		List<Bar> fifteenMinuteBars,
+		List<Bar> oneHourBars,
+		FuturesStrategySettings settings,
+		int gapIndex,
+		boolean longSide
+	) {
+		String mode = settings == null ? FVG_SOURCE_NONE : normalizedFvgSourceMode(settings.fvgSourceMode);
+		if (FVG_SOURCE_NONE.equals(mode)) {
+			return true;
+		}
+		if (FVG_SOURCE_ANY_CONTEXT.equals(mode)) {
+			return fvgPriorLevelBreakPass(spec, bars, previousBars, settings, gapIndex, longSide)
+				|| fvgOrbBreakPass(spec, bars, settings, gapIndex, longSide)
+				|| fvgSweepDisplacementPass(spec, bars, previousBars, settings, gapIndex, longSide)
+				|| fvgVwapTrendReclaimPass(spec, bars, gapIndex, longSide)
+				|| fvgHtfBreakoutPass(fifteenMinuteBars, oneHourBars, bars, gapIndex, longSide);
+		}
+		if (FVG_SOURCE_PRIOR_LEVEL_BREAK.equals(mode)) {
+			return fvgPriorLevelBreakPass(spec, bars, previousBars, settings, gapIndex, longSide);
+		}
+		if (FVG_SOURCE_ORB_BREAK.equals(mode)) {
+			return fvgOrbBreakPass(spec, bars, settings, gapIndex, longSide);
+		}
+		if (FVG_SOURCE_SWEEP_DISPLACEMENT.equals(mode)) {
+			return fvgSweepDisplacementPass(spec, bars, previousBars, settings, gapIndex, longSide);
+		}
+		if (FVG_SOURCE_VWAP_TREND_RECLAIM.equals(mode)) {
+			return fvgVwapTrendReclaimPass(spec, bars, gapIndex, longSide);
+		}
+		if (FVG_SOURCE_HTF_BREAKOUT.equals(mode)) {
+			return fvgHtfBreakoutPass(fifteenMinuteBars, oneHourBars, bars, gapIndex, longSide);
+		}
+		return true;
+	}
+
+	private static boolean fvgPriorLevelBreakPass(InstrumentSpec spec, List<Bar> bars, List<Bar> previousBars, FuturesStrategySettings settings, int gapIndex, boolean longSide) {
+		if (spec == null || spec.tickSize <= 0.0 || bars == null || gapIndex < 0 || gapIndex >= bars.size() || previousBars == null || previousBars.isEmpty()) {
+			return false;
+		}
+		Bar displacement = bars.get(gapIndex);
+		double breakDistance = Math.max(0.0, settings == null ? 0.0 : settings.fvgMinSourceBreakTicks) * spec.tickSize;
+		double previousHigh = highest(previousBars);
+		double previousLow = lowest(previousBars);
+		return longSide
+			? previousHigh > 0.0 && displacement.close > previousHigh + breakDistance
+			: previousLow > 0.0 && displacement.close < previousLow - breakDistance;
+	}
+
+	private static boolean fvgOrbBreakPass(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int gapIndex, boolean longSide) {
+		if (spec == null || spec.tickSize <= 0.0 || bars == null || gapIndex < 0 || gapIndex >= bars.size()) {
+			return false;
+		}
+		Bar displacement = bars.get(gapIndex);
+		if (displacement.marketTime == null || !displacement.marketTime.isAfter(ORB_END)) {
+			return false;
+		}
+		double openingHigh = Double.NEGATIVE_INFINITY;
+		double openingLow = Double.POSITIVE_INFINITY;
+		int count = 0;
+		for (int index = 0; index < gapIndex; index++) {
+			Bar bar = bars.get(index);
+			if (bar.marketTime == null || bar.marketTime.isBefore(RTH_START) || !bar.marketTime.isBefore(ORB_END)) {
+				continue;
+			}
+			openingHigh = Math.max(openingHigh, bar.high);
+			openingLow = Math.min(openingLow, bar.low);
+			count++;
+		}
+		if (count < 5 || openingHigh == Double.NEGATIVE_INFINITY || openingLow == Double.POSITIVE_INFINITY) {
+			return false;
+		}
+		double breakDistance = Math.max(0.0, settings == null ? 0.0 : settings.fvgMinSourceBreakTicks) * spec.tickSize;
+		return longSide
+			? displacement.close > openingHigh + breakDistance
+			: displacement.close < openingLow - breakDistance;
+	}
+
+	private static boolean fvgSweepDisplacementPass(InstrumentSpec spec, List<Bar> bars, List<Bar> previousBars, FuturesStrategySettings settings, int gapIndex, boolean longSide) {
+		if (spec == null || spec.tickSize <= 0.0 || bars == null || gapIndex < 3 || gapIndex >= bars.size() || previousBars == null || previousBars.isEmpty()) {
+			return false;
+		}
+		int lookback = Math.max(6, settings == null ? 20 : settings.fvgSourceRangeBars);
+		int start = Math.max(0, gapIndex - lookback);
+		double recentHigh = Double.NEGATIVE_INFINITY;
+		double recentLow = Double.POSITIVE_INFINITY;
+		for (int index = start; index <= gapIndex; index++) {
+			Bar bar = bars.get(index);
+			recentHigh = Math.max(recentHigh, bar.high);
+			recentLow = Math.min(recentLow, bar.low);
+		}
+		Bar displacement = bars.get(gapIndex);
+		double previousHigh = highest(previousBars);
+		double previousLow = lowest(previousBars);
+		double breakDistance = Math.max(0.0, settings == null ? 0.0 : settings.fvgMinSourceBreakTicks) * spec.tickSize;
+		double sweepBuffer = spec.tickSize;
+		return longSide
+			? previousLow > 0.0 && recentLow < previousLow - sweepBuffer && displacement.close > previousLow + breakDistance && displacement.close > displacement.open
+			: previousHigh > 0.0 && recentHigh > previousHigh + sweepBuffer && displacement.close < previousHigh - breakDistance && displacement.close < displacement.open;
+	}
+
+	private static boolean fvgVwapTrendReclaimPass(InstrumentSpec spec, List<Bar> bars, int gapIndex, boolean longSide) {
+		if (spec == null || spec.tickSize <= 0.0 || bars == null || gapIndex < 1 || gapIndex >= bars.size()) {
+			return false;
+		}
+		Bar displacement = bars.get(gapIndex);
+		if (displacement.vwap <= 0.0 || displacement.ema9 <= 0.0 || displacement.ema20 <= 0.0 || displacement.ema50 <= 0.0) {
+			return false;
+		}
+		boolean touchedVwap = false;
+		int start = Math.max(0, gapIndex - 8);
+		double touchBuffer = spec.tickSize * 2.0;
+		for (int index = start; index <= gapIndex; index++) {
+			Bar bar = bars.get(index);
+			if (bar.vwap <= 0.0) {
+				continue;
+			}
+			if (longSide && bar.low <= bar.vwap + touchBuffer) {
+				touchedVwap = true;
+			}
+			if (!longSide && bar.high >= bar.vwap - touchBuffer) {
+				touchedVwap = true;
+			}
+		}
+		if (!touchedVwap) {
+			return false;
+		}
+		return longSide
+			? displacement.close > displacement.vwap && displacement.ema9 >= displacement.ema20 && displacement.ema20 >= displacement.ema50 && displacement.close > displacement.open
+			: displacement.close < displacement.vwap && displacement.ema9 <= displacement.ema20 && displacement.ema20 <= displacement.ema50 && displacement.close < displacement.open;
+	}
+
+	private static boolean fvgHtfBreakoutPass(List<Bar> fifteenMinuteBars, List<Bar> oneHourBars, List<Bar> bars, int gapIndex, boolean longSide) {
+		if (bars == null || gapIndex < 0 || gapIndex >= bars.size()) {
+			return false;
+		}
+		Bar displacement = bars.get(gapIndex);
+		return longSide
+			? higherTimeframeBreakoutLong(fifteenMinuteBars, oneHourBars, displacement.marketTime)
+			: higherTimeframeBearish(fifteenMinuteBars, oneHourBars, displacement.marketTime);
 	}
 
 	private static List<Signal> findCloseMomentumSignals(InstrumentSpec spec, List<Bar> bars, List<Bar> fifteenMinuteBars, List<Bar> oneHourBars, FuturesStrategySettings settings) {
@@ -23525,6 +24368,9 @@ public class FuturesManager {
 		}
 		if ("FVG".equals(strategyCode)) {
 			return safeSettings.fvg.maxTradesPerDay;
+		}
+		if ("IFVG".equals(strategyCode)) {
+			return safeSettings.ifvg.maxTradesPerDay;
 		}
 		if ("CMOM".equals(strategyCode)) {
 			return safeSettings.closeMomentum.maxTradesPerDay;
