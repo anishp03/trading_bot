@@ -100,6 +100,7 @@ public class FuturesManager {
 	private static final String WINDOWED_94K_STRATEGY_PRESET = "backtestwindows94k";
 	private static final String BIAS_FREE_94K_STRATEGY_PRESET = "biasfree94k";
 	private static final String ALL_ENABLED_BIAS_FREE_STRATEGY_PRESET = "allenabledbiasfree";
+	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-05-27-biasfree-window-removal-v2";
 	private static final String[] VISIBLE_STRATEGY_PRESETS = new String[] { WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, ALL_ENABLED_BIAS_FREE_STRATEGY_PRESET };
 	private static final String[] SEEDED_STRATEGY_PRESETS = new String[] { DEFAULT_STRATEGY_PRESET, WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, ALL_ENABLED_BIAS_FREE_STRATEGY_PRESET, WIP_STRATEGY_PRESET };
 	private static final String RESEARCH_RELAXED_WINDOWS_PROPERTY = "tradingbot.research.relaxedWindows";
@@ -1280,6 +1281,7 @@ public class FuturesManager {
 			}
 		recordBackendRestartLogIfNeeded();
 		ensureDefaultStrategyPresets();
+		ensureApprovedStrategyPresetPolicy();
 		backfillActiveSnapshotPortfolioSettings();
 	}
 
@@ -1341,6 +1343,124 @@ public class FuturesManager {
 			defaultStrategyPresetsSeeded = true;
 		} catch (SQLException e) {
 			e.printStackTrace();
+		}
+	}
+
+	private static synchronized void ensureApprovedStrategyPresetPolicy() {
+		try (Connection conn = DatabaseManager.getConnection()) {
+			String versionKey = "SYSTEM.strategyPresetPolicyVersion";
+			String currentVersion = settingValue(conn, versionKey);
+			if (APPROVED_STRATEGY_PRESET_POLICY_VERSION.equals(currentVersion)) {
+				return;
+			}
+			for (String symbol : supportedInstrumentSymbols()) {
+				copyStrategySlotRows(conn, symbol, strategyPresetSlot(DEFAULT_STRATEGY_PRESET), strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET));
+				copyStrategySlotRows(conn, symbol, strategyPresetSlot(DEFAULT_STRATEGY_PRESET), strategyPresetSlot(BIAS_FREE_94K_STRATEGY_PRESET));
+			}
+			applyBiasFreeWindowPolicy(conn, strategyPresetSlot(BIAS_FREE_94K_STRATEGY_PRESET));
+			for (String symbol : supportedInstrumentSymbols()) {
+				copyStrategySlotRows(conn, symbol, strategyPresetSlot(BIAS_FREE_94K_STRATEGY_PRESET), strategyPresetSlot(ALL_ENABLED_BIAS_FREE_STRATEGY_PRESET));
+			}
+			applyAllEnabledPresetPolicy(conn, strategyPresetSlot(ALL_ENABLED_BIAS_FREE_STRATEGY_PRESET));
+			try (PreparedStatement stmt = conn.prepareStatement("INSERT OR REPLACE INTO FuturesStrategySettings (settingKey, settingValue) VALUES (?, ?)")) {
+				stmt.setString(1, versionKey);
+				stmt.setString(2, APPROVED_STRATEGY_PRESET_POLICY_VERSION);
+				stmt.executeUpdate();
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+	}
+
+	private static void applyBiasFreeWindowPolicy(Connection conn, String slot) throws SQLException {
+		setSlotSuffix(conn, slot, "sweepShortSkipStartMinute", "0");
+		setSlotSuffix(conn, slot, "sweepShortSkipEndMinute", "0");
+		setSlotSuffix(conn, slot, "fvgStartMinute", "570");
+		setSlotSuffix(conn, slot, "fvgEndMinute", "930");
+		setSlotSuffix(conn, slot, "fvgSkipStartMinute", "0");
+		setSlotSuffix(conn, slot, "fvgSkipEndMinute", "0");
+		setSlotSuffix(conn, slot, "fvgLongSkipDowMask", "0");
+		setSlotSuffix(conn, slot, "fvgShortSkipDowMask", "0");
+		setSlotSuffix(conn, slot, "fvgLongDowWindowSkipMask", "0");
+		setSlotSuffix(conn, slot, "fvgLongDowWindowSkipStartMinute", "0");
+		setSlotSuffix(conn, slot, "fvgLongDowWindowSkipEndMinute", "0");
+		setSlotSuffix(conn, slot, "fvgShortDowWindowSkipMask", "0");
+		setSlotSuffix(conn, slot, "fvgShortDowWindowSkipStartMinute", "0");
+		setSlotSuffix(conn, slot, "fvgShortDowWindowSkipEndMinute", "0");
+		setSlotSuffix(conn, slot, "priorDayBreakoutStartMinute", "570");
+		setSlotSuffix(conn, slot, "priorDayBreakoutEndMinute", "930");
+		setSlotSuffix(conn, slot, "priorDayBreakoutLongSkipStartMinute", "0");
+		setSlotSuffix(conn, slot, "priorDayBreakoutLongSkipEndMinute", "0");
+		setSlotSuffix(conn, slot, "priorDayBreakoutShortSkipStartMinute", "0");
+		setSlotSuffix(conn, slot, "priorDayBreakoutShortSkipEndMinute", "0");
+		setSlotSuffix(conn, slot, "priorDayBreakoutShortSecondSkipStartMinute", "0");
+		setSlotSuffix(conn, slot, "priorDayBreakoutShortSecondSkipEndMinute", "0");
+		setSlotSuffix(conn, slot, "priorDayBreakoutShortThirdSkipStartMinute", "0");
+		setSlotSuffix(conn, slot, "priorDayBreakoutShortThirdSkipEndMinute", "0");
+		setSlotSuffix(conn, slot, "vwapStartMinute", "0");
+		setSlotSuffix(conn, slot, "vwapEndMinute", "0");
+		setSlotSuffix(conn, slot, "vwapSkipStartMinute", "0");
+		setSlotSuffix(conn, slot, "vwapSkipEndMinute", "0");
+		setSlotSuffix(conn, slot, "vwapShortSkipDowMask", "0");
+		setSlotSuffix(conn, slot, "valueAreaStartMinute", "570");
+		setSlotSuffix(conn, slot, "valueAreaEndMinute", "920");
+		setSlotSuffix(conn, slot, "microScalpStartMinute", "570");
+		setSlotSuffix(conn, slot, "microScalpEndMinute", "920");
+		setSlotSuffix(conn, slot, "microScalpLongStartMinute", "0");
+		setSlotSuffix(conn, slot, "microScalpLongEndMinute", "0");
+		setSlotSuffix(conn, slot, "microScalpShortStartMinute", "0");
+		setSlotSuffix(conn, slot, "microScalpShortEndMinute", "0");
+		setSlotSuffix(conn, slot, "microScalpSkipStartMinute", "0");
+		setSlotSuffix(conn, slot, "microScalpSkipEndMinute", "0");
+		setSlotSuffix(conn, slot, "microScalpSkipDowMask", "0");
+		setSlotSuffix(conn, slot, "microShadowStartMinute", "570");
+		setSlotSuffix(conn, slot, "microShadowEndMinute", "920");
+		setSlotSuffix(conn, slot, "microEchoStartMinute", "570");
+		setSlotSuffix(conn, slot, "microEchoEndMinute", "920");
+		setSlotSuffix(conn, slot, "winnerFollowThroughStartMinute", "570");
+		setSlotSuffix(conn, slot, "winnerFollowThroughEndMinute", "920");
+		insertSlotSuffixForSymbols(conn, slot, "relaxPatternHardWindows", "true");
+	}
+
+	private static void applyAllEnabledPresetPolicy(Connection conn, String slot) throws SQLException {
+		String prefix = normalizeStrategySlot(slot) + ".";
+		try (PreparedStatement stmt = conn.prepareStatement("UPDATE FuturesStrategySettings SET settingValue = 'true' WHERE settingKey LIKE ? AND (lower(settingKey) LIKE ? OR lower(settingKey) LIKE ? OR lower(settingKey) LIKE ?)")) {
+			stmt.setString(1, prefix + "%");
+			stmt.setString(2, prefix.toLowerCase(Locale.US) + "%.allow%");
+			stmt.setString(3, prefix.toLowerCase(Locale.US) + "%.enable%");
+			stmt.setString(4, prefix.toLowerCase(Locale.US) + "%.enabled");
+			stmt.executeUpdate();
+		}
+	}
+
+	private static void setSlotSuffix(Connection conn, String slot, String suffix, String value) throws SQLException {
+		String prefix = normalizeStrategySlot(slot) + ".";
+		try (PreparedStatement update = conn.prepareStatement("UPDATE FuturesStrategySettings SET settingValue = ? WHERE settingKey LIKE ?")) {
+			update.setString(1, value);
+			update.setString(2, prefix + "%." + suffix);
+			update.executeUpdate();
+		}
+	}
+
+	private static void insertSlotSuffixForSymbols(Connection conn, String slot, String suffix, String value) throws SQLException {
+		String prefix = normalizeStrategySlot(slot) + ".";
+		try (PreparedStatement stmt = conn.prepareStatement("INSERT OR REPLACE INTO FuturesStrategySettings (settingKey, settingValue) SELECT ? || symbol || ? AS settingKey, ? FROM (SELECT DISTINCT substr(settingKey, ?, instr(substr(settingKey, ?), '.') - 1) AS symbol FROM FuturesStrategySettings WHERE settingKey LIKE ?)")) {
+			stmt.setString(1, prefix);
+			stmt.setString(2, "." + suffix);
+			stmt.setString(3, value);
+			stmt.setInt(4, prefix.length() + 1);
+			stmt.setInt(5, prefix.length() + 1);
+			stmt.setString(6, prefix + "%");
+			stmt.executeUpdate();
+		}
+	}
+
+	private static String settingValue(Connection conn, String key) throws SQLException {
+		try (PreparedStatement stmt = conn.prepareStatement("SELECT settingValue FROM FuturesStrategySettings WHERE settingKey = ? LIMIT 1")) {
+			stmt.setString(1, key);
+			try (ResultSet rs = stmt.executeQuery()) {
+				return rs.next() ? cleanOrDefault(rs.getString(1), "") : "";
+			}
 		}
 	}
 
