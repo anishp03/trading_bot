@@ -627,7 +627,7 @@ public class MainServer {
 
 	        app.post("/api/futures/strategy-presets", ctx -> {
 	            String preset = valueOrDefault(ctx.queryParam("preset"), "");
-	            String sourcePreset = valueOrDefault(ctx.queryParam("sourcePreset"), "94k");
+	            String sourcePreset = valueOrDefault(ctx.queryParam("sourcePreset"), "backtestbias92k");
 	            String result = FuturesManager.createStrategyPreset(preset, sourcePreset);
 	            if (result.contains("\"success\":false")) {
 	                ctx.status(400);
@@ -643,8 +643,8 @@ public class MainServer {
 	                ctx.status(400).contentType("application/json").result("{\"message\":\"Live Strategy slot is legacy read-only. Save a named strategy preset instead.\"}");
 	                return;
 	            }
-	            if (preset != null && "94k".equalsIgnoreCase(preset.trim())) {
-	                ctx.status(400).contentType("application/json").result("{\"message\":\"94k is the frozen backup Strategy Config. Save strategy-improvement edits to wip.\"}");
+	            if (preset != null && ("94k".equalsIgnoreCase(preset.trim()) || "backtestbias92k".equalsIgnoreCase(preset.trim()) || "backtestwindows94k".equalsIgnoreCase(preset.trim()))) {
+	                ctx.status(400).contentType("application/json").result("{\"message\":\"backtestbias92k is the frozen Strategy Config. Save edits to biasfree92k or bestbiasfree.\"}");
 	                return;
 	            }
 	            FuturesManager.FuturesStrategySettings settings = FuturesManager.loadFuturesStrategySettings(symbol, slot);
@@ -1040,7 +1040,7 @@ public class MainServer {
 	            double profitTarget = parseDoubleOrDefault(ctx.queryParam("profitTarget"), savedRisk.profitTarget);
 	            String fundedProfile = valueOrDefault(ctx.queryParam("fundedProfile"), "CUSTOM");
 	            boolean continueAfterRuleViolation = parseBooleanOrDefault(ctx.queryParam("continueAfterRuleViolation"), false);
-	            String strategyPreset = valueOrDefault(ctx.queryParam("strategyPreset"), "94k");
+	            String strategyPreset = valueOrDefault(ctx.queryParam("strategyPreset"), "backtestbias92k");
 	            String presetValidationMessage = FuturesManager.validateStrategyPresetForSymbols(strategyPreset, symbols);
 	            if (!presetValidationMessage.isEmpty()) {
 	                ctx.status(400).contentType("application/json").result("{\"message\":\"" + presetValidationMessage.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}");
@@ -1267,7 +1267,7 @@ public class MainServer {
 
         app.get("/api/futures/live/strategy-diagnostics", ctx -> {
             String symbols = valueOrDefault(ctx.queryParam("symbols"), DEFAULT_PORTFOLIO_SYMBOLS);
-            String strategyPreset = valueOrDefault(ctx.queryParam("strategyPreset"), "94k");
+            String strategyPreset = valueOrDefault(ctx.queryParam("strategyPreset"), "backtestbias92k");
             String source = valueOrDefault(ctx.queryParam("source"), "live");
             String startDate = valueOrDefault(ctx.queryParam("startDate"), "");
             String endDate = valueOrDefault(ctx.queryParam("endDate"), "");
@@ -1338,7 +1338,7 @@ public class MainServer {
 	            String executionMode = valueOrDefault(ctx.queryParam("executionMode"), "SIMULATED");
 	            String fundedProfile = valueOrDefault(ctx.queryParam("fundedProfile"), "TOPSTEP_50K_RESEARCH");
 	            String accountId = valueOrDefault(ctx.queryParam("accountId"), "");
-	            String strategyPreset = valueOrDefault(ctx.queryParam("strategyPreset"), "94k");
+	            String strategyPreset = valueOrDefault(ctx.queryParam("strategyPreset"), "backtestbias92k");
             FuturesManager.FuturesRiskSettings savedRisk = FuturesManager.loadFuturesRiskSettings(symbol);
                 double accountSize = parseDoubleOrDefault(ctx.queryParam("accountSize"), savedRisk.accountSize);
                 double maxTrailingDrawdown = parseDoubleOrDefault(ctx.queryParam("maxTrailingDrawdown"), savedRisk.maxTrailingDrawdown);

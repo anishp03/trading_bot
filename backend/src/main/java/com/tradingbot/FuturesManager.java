@@ -95,18 +95,20 @@ public class FuturesManager {
 	private static final String STRATEGY_SLOT_BACKTEST = "BACKTEST";
 	private static final String STRATEGY_SLOT_LIVE = "LIVE";
 	private static final String STRATEGY_PRESET_PREFIX = "PRESET_";
-	private static final String DEFAULT_STRATEGY_PRESET = "94k";
+	private static final String LEGACY_94K_STRATEGY_PRESET = "94k";
+	private static final String WINDOWED_94K_STRATEGY_PRESET = "backtestbias92k";
+	private static final String BIAS_FREE_94K_STRATEGY_PRESET = "biasfree92k";
+	private static final String BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
+	private static final String DEFAULT_STRATEGY_PRESET = WINDOWED_94K_STRATEGY_PRESET;
 	private static final String WIP_STRATEGY_PRESET = "wip";
-	private static final String WINDOWED_94K_STRATEGY_PRESET = "backtestwindows94k";
-	private static final String BIAS_FREE_94K_STRATEGY_PRESET = "biasfree94k";
-	private static final String ALL_ENABLED_BIAS_FREE_STRATEGY_PRESET = "allenabledbiasfree";
-	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-05-27-biasfree-window-removal-v2";
-	private static final String[] VISIBLE_STRATEGY_PRESETS = new String[] { WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, ALL_ENABLED_BIAS_FREE_STRATEGY_PRESET };
-	private static final String[] SEEDED_STRATEGY_PRESETS = new String[] { DEFAULT_STRATEGY_PRESET, WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, ALL_ENABLED_BIAS_FREE_STRATEGY_PRESET, WIP_STRATEGY_PRESET };
+	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-05-28-bestbiasfree-v11-reverted-orb-79k";
+	private static final String[] VISIBLE_STRATEGY_PRESETS = new String[] { WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET };
+	private static final String[] SEEDED_STRATEGY_PRESETS = new String[] { LEGACY_94K_STRATEGY_PRESET, WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET, WIP_STRATEGY_PRESET };
 	private static final String RESEARCH_RELAXED_WINDOWS_PROPERTY = "tradingbot.research.relaxedWindows";
 	private static final String[] TIME_NATIVE_STRATEGY_CODES = new String[] { "ORB", "ORB2", "LORB", "OMOM", "CMOM", "AFT", "MIM", "IPB" };
 	private static final String[] PATTERN_LEVEL_STRATEGY_CODES = new String[] { "FVG", "VWAP", "VRCL", "KREV", "PDB", "VPB", "SWEEP", "MSCALP", "SHDW", "ECHO", "WFT", "MRVWAP", "KELT", "TLAD", "RCB" };
 	private static final String[] DISABLED_RESEARCH_STRATEGY_CODES = new String[] { "MSCALP", "VPB", "SHDW", "ECHO", "WFT", "MRVWAP", "KELT", "TLAD", "RCB", "EIA", "COPEN", "IDXCONF", "MYMORB2", "MYMBR", "MCLTC" };
+	private static final double PORTFOLIO_BACKTEST_MAE_RULE_BUFFER = 100.0;
 	private static final String DEFAULT_LIVE_SYMBOLS = "MES,MNQ,NQ,MGC,ES,M2K,MYM,MCL";
 	private static final String TOPSTEPX_AUTO_OCO_REQUIRED_MESSAGE = "ProjectX rejected bracket attachments because this TopstepX account is still using Position Brackets. Enable Auto OCO Brackets in TopstepX Risk Settings before live strategy orders can submit. No entry-only fallback was used.";
 	private static final int LIVE_TRADE_CACHE_MAX_BYTES = 20_000_000;
@@ -295,6 +297,7 @@ public class FuturesManager {
 		private double riskTicks;
 		private double trendSlopeTicks;
 		private double vwapDistanceTicks;
+		private String detailOverride = "";
 	}
 
 	private static class StrategyFilterDiagnostic {
@@ -786,6 +789,14 @@ public class FuturesManager {
 		public double closeMomentumMinBodyPct = 0.0;
 		public double orbCompressedMaxRiskTicks = 60.0;
 		public double orbRetestMaxRiskTicks = 220.0;
+		public String orbRetestAllowedSymbols = "NQ";
+		public double orbRetestMinBreakVolumeRatio = 1.0;
+		public double orbRetestMinRetestVolumeRatio = 1.0;
+		public double orbRetestMaxExtensionPctOfRange = 0.35;
+		public double orbRetestMinOpeningRangeTicks = 0.0;
+		public double orbRetestMaxOpeningRangeTicks = 0.0;
+		public int orbRetestMinBarsAfterBreak = 0;
+		public boolean orbRetestRequireEmaAlignment = false;
 		public double afternoonMinVolumeRatio = 0.9;
 			public double afternoonMaxRiskTicks = 48.0;
 			public double afternoonRewardRisk = 1.0;
@@ -1056,25 +1067,25 @@ public class FuturesManager {
 		private String symbol = "MES";
 		private String executionMode = "SIMULATED";
 		private String fundedProfile = "TOPSTEP_150K_PRACTICE";
-		private String strategyPreset = DEFAULT_STRATEGY_PRESET;
-		private String strategySlot = strategyPresetSlot(DEFAULT_STRATEGY_PRESET);
+		private String strategyPreset = WINDOWED_94K_STRATEGY_PRESET;
+		private String strategySlot = strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET);
 		private String symbols = DEFAULT_LIVE_SYMBOLS;
 		private String startedAt = "";
 		private String lastUpdatedAt = "";
 		private String lastDryRunAt = "";
 		private String dataMode = "IDLE";
 		private String lastBarTime = "";
-		private double accountSize = 50000.0;
-		private double maxTrailingDrawdown = 2000.0;
-		private double dailyLossLimit = 1000.0;
-		private double maxRiskPerTrade = 400.0;
-		private int maxContracts = 50;
+		private double accountSize = 150000.0;
+		private double maxTrailingDrawdown = 4500.0;
+		private double dailyLossLimit = 3000.0;
+		private double maxRiskPerTrade = 2100.0;
+		private int maxContracts = 150;
 		private double commissionPerContract = 1.24;
 		private double slippageTicks = 1.0;
 		private double profitTarget = 0.0;
-		private int maxOpenPositions = 1;
-		private int maxAggregateContracts = 50;
-		private double maxAggregateMiniUnits = 5.0;
+		private int maxOpenPositions = 3;
+		private int maxAggregateContracts = 150;
+		private double maxAggregateMiniUnits = 15.0;
 		private boolean entryOptimizerEnabled;
 		private boolean dtmEnabled;
 		private int decisionCount;
@@ -1333,9 +1344,9 @@ public class FuturesManager {
 						continue;
 					}
 					String livePrefix = strategySettingPrefix(STRATEGY_SLOT_LIVE, symbol);
-					String defaultPresetPrefix = strategySettingPrefix(strategyPresetSlot(DEFAULT_STRATEGY_PRESET), symbol);
-					String sourceSlot = !DEFAULT_STRATEGY_PRESET.equals(presetName) && settingPrefixExists(conn, defaultPresetPrefix)
-						? strategyPresetSlot(DEFAULT_STRATEGY_PRESET)
+					String legacyPresetPrefix = strategySettingPrefix(strategyPresetSlot(LEGACY_94K_STRATEGY_PRESET), symbol);
+					String sourceSlot = !LEGACY_94K_STRATEGY_PRESET.equals(presetName) && settingPrefixExists(conn, legacyPresetPrefix)
+						? strategyPresetSlot(LEGACY_94K_STRATEGY_PRESET)
 						: (settingPrefixExists(conn, livePrefix) ? STRATEGY_SLOT_LIVE : STRATEGY_SLOT_BACKTEST);
 					copyStrategySlotRows(conn, symbol, sourceSlot, presetSlot);
 				}
@@ -1354,14 +1365,20 @@ public class FuturesManager {
 				return;
 			}
 			for (String symbol : supportedInstrumentSymbols()) {
-				copyStrategySlotRows(conn, symbol, strategyPresetSlot(DEFAULT_STRATEGY_PRESET), strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET));
-				copyStrategySlotRows(conn, symbol, strategyPresetSlot(DEFAULT_STRATEGY_PRESET), strategyPresetSlot(BIAS_FREE_94K_STRATEGY_PRESET));
+				String sourceSlot = settingPrefixExists(conn, strategySettingPrefix(strategyPresetSlot(LEGACY_94K_STRATEGY_PRESET), symbol))
+					? strategyPresetSlot(LEGACY_94K_STRATEGY_PRESET)
+					: strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET);
+				copyStrategySlotRows(conn, symbol, sourceSlot, strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET));
+				copyStrategySlotRows(conn, symbol, sourceSlot, strategyPresetSlot(BIAS_FREE_94K_STRATEGY_PRESET));
 			}
 			applyBiasFreeWindowPolicy(conn, strategyPresetSlot(BIAS_FREE_94K_STRATEGY_PRESET));
 			for (String symbol : supportedInstrumentSymbols()) {
-				copyStrategySlotRows(conn, symbol, strategyPresetSlot(BIAS_FREE_94K_STRATEGY_PRESET), strategyPresetSlot(ALL_ENABLED_BIAS_FREE_STRATEGY_PRESET));
+				copyStrategySlotRows(conn, symbol, strategyPresetSlot(BIAS_FREE_94K_STRATEGY_PRESET), strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET));
 			}
-			applyAllEnabledPresetPolicy(conn, strategyPresetSlot(ALL_ENABLED_BIAS_FREE_STRATEGY_PRESET));
+			applyBestBiasFreePresetPolicy(conn, strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET));
+			normalizeLiveSnapshotStrategyPresetNames(conn);
+			deleteLegacyVisiblePresetRows(conn);
+			deleteDeprecatedAllEnabledPresetRows(conn);
 			try (PreparedStatement stmt = conn.prepareStatement("INSERT OR REPLACE INTO FuturesStrategySettings (settingKey, settingValue) VALUES (?, ?)")) {
 				stmt.setString(1, versionKey);
 				stmt.setString(2, APPROVED_STRATEGY_PRESET_POLICY_VERSION);
@@ -1372,7 +1389,71 @@ public class FuturesManager {
 		}
 	}
 
+	private static void normalizeLiveSnapshotStrategyPresetNames(Connection conn) throws SQLException {
+		try (PreparedStatement stmt = conn.prepareStatement("UPDATE FuturesLiveStrategySnapshots SET portfolioSettingsJson = replace(replace(replace(replace(replace(replace(portfolioSettingsJson, ?, ?), ?, ?), ?, ?), ?, ?), ?, ?), ?, ?), sourceMetricsJson = replace(replace(replace(replace(replace(replace(sourceMetricsJson, ?, ?), ?, ?), ?, ?), ?, ?), ?, ?), ?, ?) WHERE portfolioSettingsJson LIKE ? OR portfolioSettingsJson LIKE ? OR portfolioSettingsJson LIKE ? OR sourceMetricsJson LIKE ? OR sourceMetricsJson LIKE ? OR sourceMetricsJson LIKE ?")) {
+			stmt.setString(1, "\"strategyPreset\":\"94k\"");
+			stmt.setString(2, "\"strategyPreset\":\"" + WINDOWED_94K_STRATEGY_PRESET + "\"");
+			stmt.setString(3, "\"strategyPreset\":\"backtestwindows94k\"");
+			stmt.setString(4, "\"strategyPreset\":\"" + WINDOWED_94K_STRATEGY_PRESET + "\"");
+			stmt.setString(5, "\"strategyPreset\":\"biasfree94k\"");
+			stmt.setString(6, "\"strategyPreset\":\"" + BIAS_FREE_94K_STRATEGY_PRESET + "\"");
+			stmt.setString(7, "\"strategySlot\":\"PRESET_94K\"");
+			stmt.setString(8, "\"strategySlot\":\"" + strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET) + "\"");
+			stmt.setString(9, "\"strategySlot\":\"PRESET_BACKTESTWINDOWS94K\"");
+			stmt.setString(10, "\"strategySlot\":\"" + strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET) + "\"");
+			stmt.setString(11, "\"strategySlot\":\"PRESET_BIASFREE94K\"");
+			stmt.setString(12, "\"strategySlot\":\"" + strategyPresetSlot(BIAS_FREE_94K_STRATEGY_PRESET) + "\"");
+			stmt.setString(13, "\"strategyPreset\":\"94k\"");
+			stmt.setString(14, "\"strategyPreset\":\"" + WINDOWED_94K_STRATEGY_PRESET + "\"");
+			stmt.setString(15, "\"strategyPreset\":\"backtestwindows94k\"");
+			stmt.setString(16, "\"strategyPreset\":\"" + WINDOWED_94K_STRATEGY_PRESET + "\"");
+			stmt.setString(17, "\"strategyPreset\":\"biasfree94k\"");
+			stmt.setString(18, "\"strategyPreset\":\"" + BIAS_FREE_94K_STRATEGY_PRESET + "\"");
+			stmt.setString(19, "\"strategySlot\":\"PRESET_94K\"");
+			stmt.setString(20, "\"strategySlot\":\"" + strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET) + "\"");
+			stmt.setString(21, "\"strategySlot\":\"PRESET_BACKTESTWINDOWS94K\"");
+			stmt.setString(22, "\"strategySlot\":\"" + strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET) + "\"");
+			stmt.setString(23, "\"strategySlot\":\"PRESET_BIASFREE94K\"");
+			stmt.setString(24, "\"strategySlot\":\"" + strategyPresetSlot(BIAS_FREE_94K_STRATEGY_PRESET) + "\"");
+			stmt.setString(25, "%\"strategyPreset\":\"94k\"%");
+			stmt.setString(26, "%\"strategyPreset\":\"backtestwindows94k\"%");
+			stmt.setString(27, "%\"strategyPreset\":\"biasfree94k\"%");
+			stmt.setString(28, "%\"strategyPreset\":\"94k\"%");
+			stmt.setString(29, "%\"strategyPreset\":\"backtestwindows94k\"%");
+			stmt.setString(30, "%\"strategyPreset\":\"biasfree94k\"%");
+			stmt.executeUpdate();
+		}
+	}
+
+	private static void deleteLegacyVisiblePresetRows(Connection conn) throws SQLException {
+		try (PreparedStatement stmt = conn.prepareStatement("DELETE FROM FuturesStrategySettings WHERE settingKey LIKE ? OR settingKey LIKE ?")) {
+			stmt.setString(1, "PRESET_BACKTESTWINDOWS94K.%");
+			stmt.setString(2, "PRESET_BIASFREE94K.%");
+			stmt.executeUpdate();
+		}
+	}
+
+	private static void deleteDeprecatedAllEnabledPresetRows(Connection conn) throws SQLException {
+		try (PreparedStatement stmt = conn.prepareStatement("DELETE FROM FuturesStrategySettings WHERE settingKey LIKE ?")) {
+			stmt.setString(1, "PRESET_ALLENABLEDBIASFREE.%");
+			stmt.executeUpdate();
+		}
+	}
+
 	private static void applyBiasFreeWindowPolicy(Connection conn, String slot) throws SQLException {
+		insertSlotSuffixForSymbols(conn, slot, "orbShortConfirmationMinute", "0");
+		insertSlotSuffixForSymbols(conn, slot, "orbRetestAllowedSymbols", "");
+		insertSlotSuffixForSymbols(conn, slot, "orbRetestMinBreakVolumeRatio", "1.0");
+		insertSlotSuffixForSymbols(conn, slot, "orbRetestMinRetestVolumeRatio", "1.0");
+		insertSlotSuffixForSymbols(conn, slot, "orbRetestMaxExtensionPctOfRange", "0.35");
+		insertSlotSuffixForSymbols(conn, slot, "orbRetestMinBarsAfterBreak", "0");
+		insertSlotSuffixForSymbols(conn, slot, "orbRetestRequireEmaAlignment", "false");
+		insertSlotSuffixForSymbols(conn, slot, "orbRetestStartMinutes", "0");
+		insertSlotSuffixForSymbols(conn, slot, "orbRetestEndMinutes", "150");
+		insertSlotSuffixForSymbols(conn, slot, "orbRetestSkipStartMinute", "0");
+		insertSlotSuffixForSymbols(conn, slot, "orbRetestSkipEndMinute", "0");
+		insertSlotSuffixForSymbols(conn, slot, "orbRetestShortSkipDowMask", "0");
+		insertSlotSuffixForSymbols(conn, slot, "skipMidmorningOrbRetest", "false");
 		setSlotSuffix(conn, slot, "sweepShortSkipStartMinute", "0");
 		setSlotSuffix(conn, slot, "sweepShortSkipEndMinute", "0");
 		setSlotSuffix(conn, slot, "fvgStartMinute", "570");
@@ -1422,15 +1503,81 @@ public class FuturesManager {
 		insertSlotSuffixForSymbols(conn, slot, "relaxPatternHardWindows", "true");
 	}
 
-	private static void applyAllEnabledPresetPolicy(Connection conn, String slot) throws SQLException {
-		String prefix = normalizeStrategySlot(slot) + ".";
-		try (PreparedStatement stmt = conn.prepareStatement("UPDATE FuturesStrategySettings SET settingValue = 'true' WHERE settingKey LIKE ? AND (lower(settingKey) LIKE ? OR lower(settingKey) LIKE ? OR lower(settingKey) LIKE ?)")) {
-			stmt.setString(1, prefix + "%");
-			stmt.setString(2, prefix.toLowerCase(Locale.US) + "%.allow%");
-			stmt.setString(3, prefix.toLowerCase(Locale.US) + "%.enable%");
-			stmt.setString(4, prefix.toLowerCase(Locale.US) + "%.enabled");
-			stmt.executeUpdate();
+	private static void applyBestBiasFreePresetPolicy(Connection conn, String slot) throws SQLException {
+		applyBiasFreeWindowPolicy(conn, slot);
+		String[] modules = new String[] {
+			"orb", "lateOrbContinuation", "openingMomentum", "sweep", "priorDayBreakout",
+			"vwapPullback", "vwapReclaim", "vwapMeanReversion", "fvg", "closeMomentum",
+			"afternoonContinuation", "marketIntradayMomentum", "keltnerScalp", "keltnerReversion",
+			"microScalp", "microShadow", "microEcho", "winnerFollowThrough", "trendLadder",
+			"rangeCompressionBreakout", "valueAreaReclaim", "mclEiaContinuation",
+			"mclCrudeSessionOpen", "mymIndexConfirmation", "mymOrbRetest",
+			"mymBreadthConfirmation", "mclTrendContinuation"
+		};
+		for (String symbol : supportedInstrumentSymbols()) {
+			for (int index = 0; index < modules.length; index++) {
+				setSlotSymbolSetting(conn, slot, symbol, modules[index] + ".enabled", "false");
+			}
+			setSlotSymbolSetting(conn, slot, symbol, "enableOrbRetest", "false");
 		}
+
+		enableBestBiasFreeModules(conn, slot, "MES", new String[] { "openingMomentum", "afternoonContinuation", "closeMomentum" });
+		enableBestBiasFreeModules(conn, slot, "MNQ", new String[] { "orb", "openingMomentum", "sweep", "priorDayBreakout", "vwapPullback", "afternoonContinuation" });
+		enableBestBiasFreeModules(conn, slot, "NQ", new String[] { "orb", "lateOrbContinuation", "openingMomentum", "sweep", "priorDayBreakout", "vwapPullback", "vwapReclaim", "marketIntradayMomentum", "keltnerReversion" });
+		enableBestBiasFreeModules(conn, slot, "MGC", new String[] { "orb", "openingMomentum", "sweep", "priorDayBreakout", "vwapPullback", "closeMomentum" });
+		enableBestBiasFreeModules(conn, slot, "ES", new String[] { "orb" });
+		enableBestBiasFreeModules(conn, slot, "M2K", new String[] { "orb", "openingMomentum", "closeMomentum" });
+		enableBestBiasFreeModules(conn, slot, "MYM", new String[] { "orb", "openingMomentum", "closeMomentum" });
+		enableBestBiasFreeModules(conn, slot, "MCL", new String[] { "orb", "afternoonContinuation", "marketIntradayMomentum", "closeMomentum" });
+
+		applyBestBiasFreeSidePolicy(conn, slot);
+	}
+
+	private static void enableBestBiasFreeModules(Connection conn, String slot, String symbol, String[] modules) throws SQLException {
+		for (int index = 0; index < modules.length; index++) {
+			setSlotSymbolSetting(conn, slot, symbol, modules[index] + ".enabled", "true");
+		}
+	}
+
+	private static void applyBestBiasFreeSidePolicy(Connection conn, String slot) throws SQLException {
+		setSlotSymbolSetting(conn, slot, "ES", "allowOrbLongs", "true");
+		setSlotSymbolSetting(conn, slot, "ES", "allowOrbShorts", "false");
+		setSlotSymbolSetting(conn, slot, "ES", "allowShorts", "true");
+
+		setSlotSymbolSetting(conn, slot, "M2K", "allowOrbLongs", "false");
+		setSlotSymbolSetting(conn, slot, "M2K", "allowOrbShorts", "false");
+		setSlotSymbolSetting(conn, slot, "M2K", "enableOrbRetest", "false");
+		setSlotSymbolSetting(conn, slot, "M2K", "allowOrbRetestLongs", "true");
+		setSlotSymbolSetting(conn, slot, "M2K", "allowOrbRetestShorts", "true");
+		setSlotSymbolSetting(conn, slot, "M2K", "orbRetestMinBarsAfterBreak", "0");
+
+		setSlotSymbolSetting(conn, slot, "MCL", "allowOrbLongs", "true");
+		setSlotSymbolSetting(conn, slot, "MCL", "allowOrbShorts", "false");
+		setSlotSymbolSetting(conn, slot, "MCL", "enableOrbRetest", "false");
+		setSlotSymbolSetting(conn, slot, "MCL", "allowOrbRetestLongs", "false");
+		setSlotSymbolSetting(conn, slot, "MCL", "allowOrbRetestShorts", "true");
+
+		setSlotSymbolSetting(conn, slot, "MNQ", "allowOrbLongs", "true");
+		setSlotSymbolSetting(conn, slot, "MNQ", "allowOrbShorts", "true");
+		setSlotSymbolSetting(conn, slot, "MNQ", "enableOrbRetest", "false");
+		setSlotSymbolSetting(conn, slot, "MNQ", "allowOrbRetestLongs", "true");
+		setSlotSymbolSetting(conn, slot, "MNQ", "allowOrbRetestShorts", "true");
+
+		setSlotSymbolSetting(conn, slot, "NQ", "allowOrbLongs", "false");
+		setSlotSymbolSetting(conn, slot, "NQ", "allowOrbShorts", "false");
+		setSlotSymbolSetting(conn, slot, "NQ", "enableOrbRetest", "true");
+		setSlotSymbolSetting(conn, slot, "NQ", "allowOrbRetestLongs", "true");
+		setSlotSymbolSetting(conn, slot, "NQ", "allowOrbRetestShorts", "true");
+
+		setSlotSymbolSetting(conn, slot, "MGC", "allowOrbLongs", "true");
+		setSlotSymbolSetting(conn, slot, "MGC", "allowOrbShorts", "true");
+		setSlotSymbolSetting(conn, slot, "MGC", "enableOrbRetest", "true");
+		setSlotSymbolSetting(conn, slot, "MGC", "allowOrbRetestLongs", "false");
+		setSlotSymbolSetting(conn, slot, "MGC", "allowOrbRetestShorts", "true");
+
+		setSlotSymbolSetting(conn, slot, "MYM", "allowOrbLongs", "true");
+		setSlotSymbolSetting(conn, slot, "MYM", "allowOrbShorts", "false");
+		setSlotSymbolSetting(conn, slot, "MYM", "enableOrbRetest", "false");
 	}
 
 	private static void setSlotSuffix(Connection conn, String slot, String suffix, String value) throws SQLException {
@@ -1451,6 +1598,15 @@ public class FuturesManager {
 			stmt.setInt(4, prefix.length() + 1);
 			stmt.setInt(5, prefix.length() + 1);
 			stmt.setString(6, prefix + "%");
+			stmt.executeUpdate();
+		}
+	}
+
+	private static void setSlotSymbolSetting(Connection conn, String slot, String symbol, String suffix, String value) throws SQLException {
+		String key = normalizeStrategySlot(slot) + "." + normalizeSymbol(symbol) + "." + suffix;
+		try (PreparedStatement stmt = conn.prepareStatement("INSERT OR REPLACE INTO FuturesStrategySettings (settingKey, settingValue) VALUES (?, ?)")) {
+			stmt.setString(1, key);
+			stmt.setString(2, value);
 			stmt.executeUpdate();
 		}
 	}
@@ -2174,6 +2330,14 @@ public class FuturesManager {
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "closeMomentumMinBodyPct"), safeSettings.closeMomentumMinBodyPct);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbCompressedMaxRiskTicks"), safeSettings.orbCompressedMaxRiskTicks);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbRetestMaxRiskTicks"), safeSettings.orbRetestMaxRiskTicks);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbRetestAllowedSymbols"), safeSettings.orbRetestAllowedSymbols == null ? "" : safeSettings.orbRetestAllowedSymbols);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbRetestMinBreakVolumeRatio"), safeSettings.orbRetestMinBreakVolumeRatio);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbRetestMinRetestVolumeRatio"), safeSettings.orbRetestMinRetestVolumeRatio);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbRetestMaxExtensionPctOfRange"), safeSettings.orbRetestMaxExtensionPctOfRange);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbRetestMinOpeningRangeTicks"), safeSettings.orbRetestMinOpeningRangeTicks);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbRetestMaxOpeningRangeTicks"), safeSettings.orbRetestMaxOpeningRangeTicks);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbRetestMinBarsAfterBreak"), safeSettings.orbRetestMinBarsAfterBreak);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbRetestRequireEmaAlignment"), safeSettings.orbRetestRequireEmaAlignment);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "afternoonMinVolumeRatio"), safeSettings.afternoonMinVolumeRatio);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "afternoonMaxRiskTicks"), safeSettings.afternoonMaxRiskTicks);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "afternoonRewardRisk"), safeSettings.afternoonRewardRisk);
@@ -2622,6 +2786,14 @@ public class FuturesManager {
 			+ "\"closeMomentumMinBodyPct\":" + settings.closeMomentumMinBodyPct + ","
 			+ "\"orbCompressedMaxRiskTicks\":" + settings.orbCompressedMaxRiskTicks + ","
 			+ "\"orbRetestMaxRiskTicks\":" + settings.orbRetestMaxRiskTicks + ","
+			+ "\"orbRetestAllowedSymbols\":" + jsonString(cleanOrDefault(settings.orbRetestAllowedSymbols, "")) + ","
+			+ "\"orbRetestMinBreakVolumeRatio\":" + settings.orbRetestMinBreakVolumeRatio + ","
+			+ "\"orbRetestMinRetestVolumeRatio\":" + settings.orbRetestMinRetestVolumeRatio + ","
+			+ "\"orbRetestMaxExtensionPctOfRange\":" + settings.orbRetestMaxExtensionPctOfRange + ","
+			+ "\"orbRetestMinOpeningRangeTicks\":" + settings.orbRetestMinOpeningRangeTicks + ","
+			+ "\"orbRetestMaxOpeningRangeTicks\":" + settings.orbRetestMaxOpeningRangeTicks + ","
+			+ "\"orbRetestMinBarsAfterBreak\":" + settings.orbRetestMinBarsAfterBreak + ","
+			+ "\"orbRetestRequireEmaAlignment\":" + settings.orbRetestRequireEmaAlignment + ","
 			+ "\"afternoonMinVolumeRatio\":" + settings.afternoonMinVolumeRatio + ","
 			+ "\"afternoonMaxRiskTicks\":" + settings.afternoonMaxRiskTicks + ","
 			+ "\"afternoonRewardRisk\":" + settings.afternoonRewardRisk + ","
@@ -2889,13 +3061,13 @@ public class FuturesManager {
 			+ "\"controlPreset\":" + jsonString(DEFAULT_STRATEGY_PRESET) + ","
 			+ "\"windowedPreset\":" + jsonString(WINDOWED_94K_STRATEGY_PRESET) + ","
 			+ "\"biasFreePreset\":" + jsonString(BIAS_FREE_94K_STRATEGY_PRESET) + ","
-			+ "\"allEnabledPreset\":" + jsonString(ALL_ENABLED_BIAS_FREE_STRATEGY_PRESET) + ","
-			+ "\"editablePreset\":" + jsonString(BIAS_FREE_94K_STRATEGY_PRESET) + ","
+			+ "\"bestBiasFreePreset\":" + jsonString(BEST_BIAS_FREE_STRATEGY_PRESET) + ","
+			+ "\"editablePreset\":" + jsonString(BEST_BIAS_FREE_STRATEGY_PRESET) + ","
 			+ "\"visiblePresets\":" + jsonStringArray(Arrays.asList(VISIBLE_STRATEGY_PRESETS)) + ","
 			+ "\"timeNativeStrategies\":" + jsonStringArray(Arrays.asList(TIME_NATIVE_STRATEGY_CODES)) + ","
 			+ "\"patternLevelStrategies\":" + jsonStringArray(Arrays.asList(PATTERN_LEVEL_STRATEGY_CODES)) + ","
 			+ "\"disabledResearchStrategies\":" + jsonStringArray(Arrays.asList(DISABLED_RESEARCH_STRATEGY_CODES)) + ","
-				+ "\"rule\":" + jsonString("backtestwindows94k is the frozen 94k windowed control. biasfree94k keeps the same 94k enabled strategy map while removing arbitrary pattern/dependent strategy windows and day masks. allenabledbiasfree enables every strategy toggle on the same bias-free window policy for broad research.")
+				+ "\"rule\":" + jsonString("backtestbias92k is the frozen windowed control. biasfree92k is the broad comparison preset with fitted windows removed. bestbiasfree replaces allenabledbiasfree with the highest-quality windowless contract-specific strategy map.")
 				+ "}";
 	}
 
@@ -2917,7 +3089,7 @@ public class FuturesManager {
 			return "{\"success\":false,\"message\":\"Preset name is required.\"}";
 		}
 		if (!isSeededStrategyPresetName(targetName)) {
-			return "{\"success\":false,\"message\":\"Strategy Configs are locked to the approved dev presets: backtestwindows94k, biasfree94k, and allenabledbiasfree.\"}";
+			return "{\"success\":false,\"message\":\"Strategy Configs are locked to the approved dev presets: backtestbias92k, biasfree92k, and bestbiasfree.\"}";
 		}
 		if (WIP_STRATEGY_PRESET.equals(sourceName)) {
 			sourceName = DEFAULT_STRATEGY_PRESET;
@@ -3489,6 +3661,14 @@ public class FuturesManager {
 		else if ("closeMomentumMinBodyPct".equals(key)) settings.closeMomentumMinBodyPct = parseDouble(value, settings.closeMomentumMinBodyPct);
 		else if ("orbCompressedMaxRiskTicks".equals(key)) settings.orbCompressedMaxRiskTicks = parseDouble(value, settings.orbCompressedMaxRiskTicks);
 		else if ("orbRetestMaxRiskTicks".equals(key)) settings.orbRetestMaxRiskTicks = parseDouble(value, settings.orbRetestMaxRiskTicks);
+		else if ("orbRetestAllowedSymbols".equals(key)) settings.orbRetestAllowedSymbols = cleanOrDefault(value, settings.orbRetestAllowedSymbols);
+		else if ("orbRetestMinBreakVolumeRatio".equals(key)) settings.orbRetestMinBreakVolumeRatio = parseDouble(value, settings.orbRetestMinBreakVolumeRatio);
+		else if ("orbRetestMinRetestVolumeRatio".equals(key)) settings.orbRetestMinRetestVolumeRatio = parseDouble(value, settings.orbRetestMinRetestVolumeRatio);
+		else if ("orbRetestMaxExtensionPctOfRange".equals(key)) settings.orbRetestMaxExtensionPctOfRange = parseDouble(value, settings.orbRetestMaxExtensionPctOfRange);
+		else if ("orbRetestMinOpeningRangeTicks".equals(key)) settings.orbRetestMinOpeningRangeTicks = parseDouble(value, settings.orbRetestMinOpeningRangeTicks);
+		else if ("orbRetestMaxOpeningRangeTicks".equals(key)) settings.orbRetestMaxOpeningRangeTicks = parseDouble(value, settings.orbRetestMaxOpeningRangeTicks);
+		else if ("orbRetestMinBarsAfterBreak".equals(key)) settings.orbRetestMinBarsAfterBreak = parseInt(value, settings.orbRetestMinBarsAfterBreak);
+		else if ("orbRetestRequireEmaAlignment".equals(key)) settings.orbRetestRequireEmaAlignment = parseBoolean(value, settings.orbRetestRequireEmaAlignment);
 		else if ("afternoonMinVolumeRatio".equals(key)) settings.afternoonMinVolumeRatio = parseDouble(value, settings.afternoonMinVolumeRatio);
 		else if ("afternoonMaxRiskTicks".equals(key)) settings.afternoonMaxRiskTicks = parseDouble(value, settings.afternoonMaxRiskTicks);
 		else if ("afternoonRewardRisk".equals(key)) settings.afternoonRewardRisk = parseDouble(value, settings.afternoonRewardRisk);
@@ -3944,6 +4124,12 @@ public class FuturesManager {
 		settings.closeMomentumMinBodyPct = clamp(settings.closeMomentumMinBodyPct, 0.0, 90.0);
 		settings.orbCompressedMaxRiskTicks = clamp(settings.orbCompressedMaxRiskTicks, 4.0, 220.0);
 		settings.orbRetestMaxRiskTicks = clamp(settings.orbRetestMaxRiskTicks, 4.0, 220.0);
+		settings.orbRetestMinBreakVolumeRatio = clamp(settings.orbRetestMinBreakVolumeRatio, 0.0, 4.0);
+		settings.orbRetestMinRetestVolumeRatio = clamp(settings.orbRetestMinRetestVolumeRatio, 0.0, 4.0);
+		settings.orbRetestMaxExtensionPctOfRange = clamp(settings.orbRetestMaxExtensionPctOfRange, 0.0, 2.0);
+		settings.orbRetestMinOpeningRangeTicks = clamp(settings.orbRetestMinOpeningRangeTicks, 0.0, 2000.0);
+		settings.orbRetestMaxOpeningRangeTicks = clamp(settings.orbRetestMaxOpeningRangeTicks, 0.0, 2000.0);
+		settings.orbRetestMinBarsAfterBreak = boundedInt(settings.orbRetestMinBarsAfterBreak, 0, 0, 30);
 		settings.afternoonMinVolumeRatio = clamp(settings.afternoonMinVolumeRatio, 0.0, 4.0);
 		settings.afternoonMaxRiskTicks = clamp(settings.afternoonMaxRiskTicks, 4.0, 180.0);
 		settings.afternoonRewardRisk = clamp(settings.afternoonRewardRisk, 0.5, 2.0);
@@ -4383,13 +4569,13 @@ public class FuturesManager {
 
 	private static int recommendedPortfolioBacktestConfigSourceId() {
 		int activeSourceId = activeLiveSnapshotPortfolioBacktestId();
-		if (activeSourceId > 0 && portfolioBacktestExists(activeSourceId)) {
+		if (activeSourceId > 0 && portfolioBacktestExists(activeSourceId) && portfolioBacktestUsesVisibleStrategyPreset(activeSourceId)) {
 			return activeSourceId;
 		}
-		if (portfolioBacktestExists(3154)) {
+		if (portfolioBacktestExists(3154) && portfolioBacktestUsesVisibleStrategyPreset(3154)) {
 			return 3154;
 		}
-		String sql = "SELECT portfolioBacktestID FROM FuturesPortfolioBacktests WHERE ruleViolation = 0 ORDER BY totalProfit DESC, portfolioBacktestID DESC LIMIT 1";
+		String sql = "SELECT portfolioBacktestID FROM FuturesPortfolioBacktests WHERE ruleViolation = 0 AND json_extract(portfolioSettingsJson, '$.strategyPreset') IN ('backtestbias92k', 'biasfree92k', 'bestbiasfree') ORDER BY totalProfit DESC, portfolioBacktestID DESC LIMIT 1";
 		try (Connection conn = DatabaseManager.getConnection();
 			 Statement stmt = conn.createStatement();
 			 ResultSet rs = stmt.executeQuery(sql)) {
@@ -4400,6 +4586,49 @@ public class FuturesManager {
 			e.printStackTrace();
 		}
 		return 0;
+	}
+
+	private static boolean portfolioBacktestUsesVisibleStrategyPreset(int portfolioBacktestId) {
+		String sql = "SELECT portfolioSettingsJson FROM FuturesPortfolioBacktests WHERE portfolioBacktestID = ? LIMIT 1";
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement stmt = conn.prepareStatement(sql)) {
+			stmt.setInt(1, portfolioBacktestId);
+			try (ResultSet rs = stmt.executeQuery()) {
+				if (rs.next()) {
+					return isVisibleStrategyPresetName(jsonText(rs.getString("portfolioSettingsJson"), "strategyPreset", ""));
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return false;
+	}
+
+	private static boolean isVisibleStrategyPresetName(String presetName) {
+		String normalized = normalizeStrategyPresetName(presetName);
+		for (int index = 0; index < VISIBLE_STRATEGY_PRESETS.length; index++) {
+			if (normalized.equals(normalizeStrategyPresetName(VISIBLE_STRATEGY_PRESETS[index]))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static String visibleStrategyPresetName(String presetName) {
+		String normalized = normalizeStrategyPresetName(presetName);
+		if (LEGACY_94K_STRATEGY_PRESET.equals(normalized) || "backtestwindows94k".equals(normalized) || WINDOWED_94K_STRATEGY_PRESET.equals(normalized)) {
+			return WINDOWED_94K_STRATEGY_PRESET;
+		}
+		if ("biasfree94k".equals(normalized)) {
+			return BIAS_FREE_94K_STRATEGY_PRESET;
+		}
+		if ("allenabledbiasfree".equals(normalized)) {
+			return BEST_BIAS_FREE_STRATEGY_PRESET;
+		}
+		if (isVisibleStrategyPresetName(normalized)) {
+			return normalized;
+		}
+		return WINDOWED_94K_STRATEGY_PRESET;
 	}
 
 	private static int activeLiveSnapshotPortfolioBacktestId() {
@@ -4423,8 +4652,8 @@ public class FuturesManager {
 			+ "\"success\":false,"
 			+ "\"mode\":\"PORTFOLIO\","
 			+ "\"sourcePortfolioBacktestId\":0,"
-			+ "\"sourceLabel\":" + jsonString(DEFAULT_STRATEGY_PRESET) + ","
-			+ "\"strategyPreset\":" + jsonString(DEFAULT_STRATEGY_PRESET) + ","
+			+ "\"sourceLabel\":" + jsonString(WINDOWED_94K_STRATEGY_PRESET) + ","
+			+ "\"strategyPreset\":" + jsonString(WINDOWED_94K_STRATEGY_PRESET) + ","
 			+ "\"symbols\":" + jsonString(DEFAULT_LIVE_SYMBOLS) + ","
 			+ "\"symbolList\":" + jsonStringArray(parseSymbols(DEFAULT_LIVE_SYMBOLS)) + ","
 			+ "\"startDate\":" + jsonString(startDate.toString()) + ","
@@ -5910,6 +6139,14 @@ public class FuturesManager {
 		copy.closeMomentumMinBodyPct = safe.closeMomentumMinBodyPct;
 		copy.orbCompressedMaxRiskTicks = safe.orbCompressedMaxRiskTicks;
 		copy.orbRetestMaxRiskTicks = safe.orbRetestMaxRiskTicks;
+		copy.orbRetestAllowedSymbols = safe.orbRetestAllowedSymbols;
+		copy.orbRetestMinBreakVolumeRatio = safe.orbRetestMinBreakVolumeRatio;
+		copy.orbRetestMinRetestVolumeRatio = safe.orbRetestMinRetestVolumeRatio;
+		copy.orbRetestMaxExtensionPctOfRange = safe.orbRetestMaxExtensionPctOfRange;
+		copy.orbRetestMinOpeningRangeTicks = safe.orbRetestMinOpeningRangeTicks;
+		copy.orbRetestMaxOpeningRangeTicks = safe.orbRetestMaxOpeningRangeTicks;
+		copy.orbRetestMinBarsAfterBreak = safe.orbRetestMinBarsAfterBreak;
+		copy.orbRetestRequireEmaAlignment = safe.orbRetestRequireEmaAlignment;
 		copy.afternoonMinVolumeRatio = safe.afternoonMinVolumeRatio;
 			copy.afternoonMaxRiskTicks = safe.afternoonMaxRiskTicks;
 			copy.afternoonRewardRisk = safe.afternoonRewardRisk;
@@ -9489,6 +9726,7 @@ public class FuturesManager {
 		FuturesStrategySettings safe = settings == null ? defaultFuturesStrategySettings() : settings;
 		List<StrategyDiagnosticTarget> targets = new ArrayList<StrategyDiagnosticTarget>();
 		addDiagnosticTarget(targets, "ORB", "Opening Range", safe.orb, false);
+		addDiagnosticTarget(targets, "ORB2", "Opening Range Retest", new StrategyToggle(safe.orb.enabled && safe.enableOrbRetest, safe.orb.maxTradesPerDay), false);
 		addDiagnosticTarget(targets, "LORB", "Late ORB Continuation", safe.lateOrbContinuation, false);
 		addDiagnosticTarget(targets, "OMOM", "Opening Momentum", safe.openingMomentum, false);
 		addDiagnosticTarget(targets, "SWEEP", "Liquidity Sweep", safe.sweep, true);
@@ -9652,12 +9890,18 @@ public class FuturesManager {
 		gate.windowPass = gate.enabled && diagnosticWindowPass(target.code, bar, safe);
 		gate.volumeRatio = volumeRatio(bar);
 		gate.volumePass = gate.enabled && diagnosticVolumePass(target.code, bar, safe);
-		gate.vwapEmaPass = gate.enabled && diagnosticStructurePass(target.code, spec, bars, previousBars, fifteenMinuteBars, oneHourBars, safe, index);
-		gate.higherTimeframePass = gate.enabled && diagnosticHigherTimeframePass(target.code, fifteenMinuteBars, oneHourBars, safe, bar.marketTime);
-		gate.riskTicks = diagnosticRiskTicks(target.code, spec, bars, previousBars, safe, index);
-		gate.riskTickPass = gate.enabled && gate.riskTicks > 0.0 && gate.riskTicks <= diagnosticMaxRiskTicks(target.code, safe);
-		gate.trendSlopeTicks = diagnosticTrendSlopeTicks(spec, bars, index, 10);
-		gate.vwapDistanceTicks = bar.vwap <= 0.0 ? 0.0 : Math.abs(bar.close - bar.vwap) / Math.max(spec.tickSize, 0.000001);
+			gate.vwapEmaPass = gate.enabled && diagnosticStructurePass(target.code, spec, bars, previousBars, fifteenMinuteBars, oneHourBars, safe, index);
+			gate.higherTimeframePass = gate.enabled && diagnosticHigherTimeframePass(target.code, fifteenMinuteBars, oneHourBars, safe, bar.marketTime);
+			gate.riskTicks = diagnosticRiskTicks(target.code, spec, bars, previousBars, safe, index);
+			gate.riskTickPass = gate.enabled && gate.riskTicks > 0.0 && gate.riskTicks <= diagnosticMaxRiskTicks(target.code, safe);
+			gate.trendSlopeTicks = diagnosticTrendSlopeTicks(spec, bars, index, 10);
+			gate.vwapDistanceTicks = bar.vwap <= 0.0 ? 0.0 : Math.abs(bar.close - bar.vwap) / Math.max(spec.tickSize, 0.000001);
+			String strategyCode = target == null ? "" : cleanOrDefault(target.code, "").toUpperCase(Locale.ROOT);
+			String structureFailRule = "";
+			if ("ORB2".equals(strategyCode) && !gate.vwapEmaPass) {
+				structureFailRule = diagnosticOrbRetestRejectReason(spec, bars, safe, index);
+				gate.detailOverride = diagnosticOrbRetestNearMissDetail(spec, bars, safe, index, structureFailRule);
+			}
 		if (gate.enabled) gate.passedGates++;
 		if (gate.priorContextPass) gate.passedGates++;
 		if (gate.windowPass) gate.passedGates++;
@@ -9673,8 +9917,8 @@ public class FuturesManager {
 			gate.firstFailingRule = "TIME_WINDOW";
 		} else if (!gate.volumePass) {
 			gate.firstFailingRule = "VOLUME";
-		} else if (!gate.vwapEmaPass) {
-			gate.firstFailingRule = "VWAP_EMA_PATTERN";
+			} else if (!gate.vwapEmaPass) {
+				gate.firstFailingRule = structureFailRule.length() > 0 ? structureFailRule : "VWAP_EMA_PATTERN";
 		} else if (!gate.higherTimeframePass) {
 			gate.firstFailingRule = "HIGHER_TIMEFRAME";
 		} else if (!gate.riskTickPass) {
@@ -9685,18 +9929,23 @@ public class FuturesManager {
 		return gate;
 	}
 
-	private static String diagnosticNearMissDetail(StrategyGateSnapshot gate) {
-		return "volumeRatio=" + round(gate.volumeRatio)
-			+ ", riskTicks=" + round(gate.riskTicks)
-			+ ", trendSlopeTicks=" + round(gate.trendSlopeTicks)
-			+ ", vwapDistanceTicks=" + round(gate.vwapDistanceTicks);
-	}
+		private static String diagnosticNearMissDetail(StrategyGateSnapshot gate) {
+			String base = "volumeRatio=" + round(gate.volumeRatio)
+				+ ", riskTicks=" + round(gate.riskTicks)
+				+ ", trendSlopeTicks=" + round(gate.trendSlopeTicks)
+				+ ", vwapDistanceTicks=" + round(gate.vwapDistanceTicks);
+			return gate.detailOverride.length() == 0 ? base : gate.detailOverride + ", " + base;
+		}
 
 	private static boolean diagnosticWindowPass(String code, Bar bar, FuturesStrategySettings settings) {
 		int minute = minuteOfDay(bar);
 		String normalized = cleanOrDefault(code, "").toUpperCase(Locale.ROOT);
 		if ("ORB".equals(normalized)) {
 			return !bar.marketTime.isBefore(ORB_END) && !bar.marketTime.isAfter(ORB_CUTOFF);
+		}
+		if ("ORB2".equals(normalized)) {
+			return !bar.marketTime.isBefore(ORB_END)
+				&& !bar.marketTime.isAfter(LocalTime.of(11, 45));
 		}
 		if ("LORB".equals(normalized)) {
 			return minute >= settings.lateOrbContinuationStartMinute && minute <= settings.lateOrbContinuationEndMinute;
@@ -9798,6 +10047,7 @@ public class FuturesManager {
 	private static boolean diagnosticVolumePass(String code, Bar bar, FuturesStrategySettings settings) {
 		String normalized = cleanOrDefault(code, "").toUpperCase(Locale.ROOT);
 		double ratio = volumeRatio(bar);
+		if ("ORB2".equals(normalized)) return ratio >= 0.65;
 		if ("LORB".equals(normalized)) return ratio >= settings.lateOrbContinuationMinVolumeRatio;
 		if ("OMOM".equals(normalized)) return ratio >= settings.openingMomentumVolumeRatio;
 		if ("PDB".equals(normalized)) return ratio >= settings.priorDayBreakoutMinVolumeRatio;
@@ -9840,6 +10090,9 @@ public class FuturesManager {
 		String normalized = cleanOrDefault(code, "").toUpperCase(Locale.ROOT);
 		if ("ORB".equals(normalized) || "LORB".equals(normalized) || "OMOM".equals(normalized) || "CMOM".equals(normalized)) {
 			return bar.close > 0.0 && bar.high > bar.low;
+		}
+		if ("ORB2".equals(normalized)) {
+			return diagnosticOrbRetestStructurePass(spec, bars, settings, index);
 		}
 		if ("SWEEP".equals(normalized)) {
 			if (previousBars == null || previousBars.isEmpty()) return false;
@@ -10004,6 +10257,7 @@ public class FuturesManager {
 		double maxInitial = settings == null ? defaultFuturesStrategySettings().maxInitialRiskTicks : settings.maxInitialRiskTicks;
 		FuturesStrategySettings safe = settings == null ? defaultFuturesStrategySettings() : settings;
 		if ("LORB".equals(normalized)) return Math.min(maxInitial, safe.lateOrbContinuationMaxRiskTicks);
+		if ("ORB2".equals(normalized)) return Math.min(maxInitial, safe.orbRetestMaxRiskTicks);
 		if ("OMOM".equals(normalized)) return Math.min(maxInitial, safe.openingMomentumMaxRiskTicks);
 		if ("PDB".equals(normalized)) return Math.min(maxInitial, safe.priorDayBreakoutMaxRiskTicks);
 		if ("VWAP".equals(normalized)) return Math.min(maxInitial, safe.vwapMaxRiskTicks);
@@ -10024,6 +10278,175 @@ public class FuturesManager {
 		if ("IDXCONF".equals(normalized)) return Math.min(maxInitial, safe.mymIndexConfirmationMaxRiskTicks);
 		if ("MYMORB2".equals(normalized)) return Math.min(maxInitial, safe.mymOrbRetestMaxRiskTicks);
 		return maxInitial;
+	}
+
+	private static boolean diagnosticOrbRetestStructurePass(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int index) {
+		if (spec == null || bars == null || settings == null || index < 0 || index >= bars.size()) {
+			return false;
+		}
+		double high = Double.NEGATIVE_INFINITY;
+		double low = Double.POSITIVE_INFINITY;
+		double volume = 0.0;
+		int openingBars = 0;
+		for (int barIndex = 0; barIndex < bars.size(); barIndex++) {
+			Bar rangeBar = bars.get(barIndex);
+			if (rangeBar == null || rangeBar.marketTime == null) {
+				continue;
+			}
+			if (!rangeBar.marketTime.isBefore(RTH_START) && rangeBar.marketTime.isBefore(ORB_END)) {
+				high = Math.max(high, rangeBar.high);
+				low = Math.min(low, rangeBar.low);
+				volume += rangeBar.volume;
+				openingBars++;
+			}
+		}
+		if (openingBars < 5 || high <= low) {
+			return false;
+		}
+		double averageVolume = volume / openingBars;
+		boolean brokeLong = false;
+		boolean brokeShort = false;
+		for (int barIndex = 0; barIndex <= index; barIndex++) {
+			Bar prior = bars.get(barIndex);
+			if (prior == null || prior.marketTime == null || prior.marketTime.isBefore(ORB_END)) {
+				continue;
+			}
+			if (prior.close > high + (spec.tickSize * 2.0)) {
+				brokeLong = true;
+			}
+			if (settings.allowShorts && prior.close < low - (spec.tickSize * 2.0)) {
+				brokeShort = true;
+			}
+		}
+		Bar bar = bars.get(index);
+		if (bar == null) {
+			return false;
+		}
+		boolean longOk = settings.allowOrbRetestLongs
+			&& brokeLong
+			&& bar.low <= high + (spec.tickSize * 2.0)
+			&& bar.close > high
+			&& bar.close > bar.open
+			&& closeLocation(bar) >= 0.58
+			&& bar.volume >= averageVolume * 0.65;
+		boolean shortOk = settings.allowShorts
+			&& settings.allowOrbRetestShorts
+			&& brokeShort
+			&& bar.high >= low - (spec.tickSize * 2.0)
+			&& bar.close < low
+			&& bar.close < bar.open
+			&& closeLocation(bar) <= 0.42
+			&& bar.volume >= averageVolume * 0.65;
+		return longOk || shortOk;
+	}
+
+	private static String diagnosticOrbRetestRejectReason(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int index) {
+		if (spec == null || bars == null || settings == null || index < 0 || index >= bars.size()) {
+			return "ORB2_INCOMPLETE_CONTEXT";
+		}
+		double high = Double.NEGATIVE_INFINITY;
+		double low = Double.POSITIVE_INFINITY;
+		double volume = 0.0;
+		int openingBars = 0;
+		for (int barIndex = 0; barIndex < bars.size(); barIndex++) {
+			Bar rangeBar = bars.get(barIndex);
+			if (rangeBar == null || rangeBar.marketTime == null) {
+				continue;
+			}
+			if (!rangeBar.marketTime.isBefore(RTH_START) && rangeBar.marketTime.isBefore(ORB_END)) {
+				high = Math.max(high, rangeBar.high);
+				low = Math.min(low, rangeBar.low);
+				volume += rangeBar.volume;
+				openingBars++;
+			}
+		}
+		if (openingBars < 5 || high <= low) {
+			return "ORB2_OPENING_RANGE_UNAVAILABLE";
+		}
+		double averageVolume = volume / openingBars;
+		Bar bar = bars.get(index);
+		if (bar == null) {
+			return "ORB2_INCOMPLETE_CONTEXT";
+		}
+		boolean brokeLong = false;
+		boolean brokeShort = false;
+		for (int barIndex = 0; barIndex <= index; barIndex++) {
+			Bar prior = bars.get(barIndex);
+			if (prior == null || prior.marketTime == null || prior.marketTime.isBefore(ORB_END)) {
+				continue;
+			}
+			if (prior.close > high + (spec.tickSize * 2.0)) {
+				brokeLong = true;
+			}
+			if (settings.allowShorts && prior.close < low - (spec.tickSize * 2.0)) {
+				brokeShort = true;
+			}
+		}
+		boolean longTouch = settings.allowOrbRetestLongs && bar.low <= high + (spec.tickSize * 2.0);
+		boolean shortTouch = settings.allowShorts && settings.allowOrbRetestShorts && bar.high >= low - (spec.tickSize * 2.0);
+		if ((longTouch && !brokeLong) || (shortTouch && !brokeShort)) {
+			return "ORB2_NO_BREAK";
+		}
+		if ((longTouch || shortTouch) && bar.volume < averageVolume * 0.65) {
+			return "ORB2_RETEST_VOLUME";
+		}
+		if (longTouch && !(bar.close > high && bar.close > bar.open && closeLocation(bar) >= 0.58)) {
+			return "ORB2_RETEST_RECLAIM_FAILED";
+		}
+		if (shortTouch && !(bar.close < low && bar.close < bar.open && closeLocation(bar) <= 0.42)) {
+			return "ORB2_RETEST_REJECTION_FAILED";
+		}
+		return "ORB2_NO_RETEST_TOUCH";
+	}
+
+	private static String diagnosticOrbRetestNearMissDetail(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int index, String reason) {
+		if (spec == null || bars == null || settings == null || index < 0 || index >= bars.size()) {
+			return "orb2Reason=" + cleanOrDefault(reason, "ORB2_INCOMPLETE_CONTEXT");
+		}
+		double high = Double.NEGATIVE_INFINITY;
+		double low = Double.POSITIVE_INFINITY;
+		double volume = 0.0;
+		int openingBars = 0;
+		for (int barIndex = 0; barIndex < bars.size(); barIndex++) {
+			Bar rangeBar = bars.get(barIndex);
+			if (rangeBar == null || rangeBar.marketTime == null) {
+				continue;
+			}
+			if (!rangeBar.marketTime.isBefore(RTH_START) && rangeBar.marketTime.isBefore(ORB_END)) {
+				high = Math.max(high, rangeBar.high);
+				low = Math.min(low, rangeBar.low);
+				volume += rangeBar.volume;
+				openingBars++;
+			}
+		}
+		if (openingBars < 5 || high <= low) {
+			return "orb2Reason=" + cleanOrDefault(reason, "ORB2_OPENING_RANGE_UNAVAILABLE");
+		}
+		double averageVolume = volume / openingBars;
+		int longBreakIndex = -1;
+		int shortBreakIndex = -1;
+		for (int barIndex = 0; barIndex <= index; barIndex++) {
+			Bar prior = bars.get(barIndex);
+			if (prior == null || prior.marketTime == null || prior.marketTime.isBefore(ORB_END)) {
+				continue;
+			}
+			if (longBreakIndex < 0 && prior.close > high + (spec.tickSize * 2.0)) {
+				longBreakIndex = barIndex;
+			}
+			if (shortBreakIndex < 0 && settings.allowShorts && prior.close < low - (spec.tickSize * 2.0)) {
+				shortBreakIndex = barIndex;
+			}
+		}
+		Bar bar = bars.get(index);
+		Bar longBreak = longBreakIndex >= 0 ? bars.get(longBreakIndex) : null;
+		Bar shortBreak = shortBreakIndex >= 0 ? bars.get(shortBreakIndex) : null;
+		return "orb2Reason=" + cleanOrDefault(reason, "")
+			+ ", orbHigh=" + round(high)
+			+ ", orbLow=" + round(low)
+			+ ", longBreakTime=" + cleanOrDefault(longBreak == null ? "" : longBreak.displayTime, "")
+			+ ", shortBreakTime=" + cleanOrDefault(shortBreak == null ? "" : shortBreak.displayTime, "")
+			+ ", retestTime=" + cleanOrDefault(bar == null ? "" : bar.displayTime, "")
+			+ ", volumeMin=0.65";
 	}
 
 	private static boolean diagnosticFvgStructurePass(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int index) {
@@ -10271,9 +10694,6 @@ public class FuturesManager {
 		}
 		if ("SWEEP2".equals(normalized)) {
 			return "SWEEP";
-		}
-		if ("ORB2".equals(normalized)) {
-			return "ORB";
 		}
 		return normalized;
 	}
@@ -12795,7 +13215,7 @@ public class FuturesManager {
 			: "Live Strategy Slot";
 		String displaySlot = jsonText(snapshot.portfolioSettingsJson, "strategySlot", "");
 		if (displaySlot.length() == 0) {
-			displaySlot = strategyPresetSlot(jsonText(snapshot.portfolioSettingsJson, "strategyPreset", DEFAULT_STRATEGY_PRESET));
+			displaySlot = strategyPresetSlot(visibleStrategyPresetName(jsonText(snapshot.portfolioSettingsJson, "strategyPreset", WINDOWED_94K_STRATEGY_PRESET)));
 		}
 		String settingsJson = strategySettingsBySymbolJson(snapshot.symbols, displaySlot);
 		String riskJson = riskSettingsBySymbolJson(snapshot.symbols, displaySlot);
@@ -13281,6 +13701,7 @@ public class FuturesManager {
 			+ "\"maxAggregateMiniUnits\":" + round(safeConfig.maxAggregateMiniUnits) + ","
 			+ "\"commissionPerContract\":" + round(safeConfig.commissionPerContract) + ","
 			+ "\"slippageTicks\":" + round(safeConfig.slippageTicks) + ","
+			+ "\"portfolioBacktestMaeRuleBuffer\":" + round(PORTFOLIO_BACKTEST_MAE_RULE_BUFFER) + ","
 			+ "\"profitTarget\":" + round(safeConfig.profitTarget) + ","
 			+ "\"trailingDrawdownMode\":" + jsonString(cleanOrDefault(safeConfig.trailingDrawdownMode, "")) + ","
 			+ "\"useSavedRisk\":" + safeConfig.useSavedRisk + ","
@@ -13295,11 +13716,11 @@ public class FuturesManager {
 	}
 
 	private static String livePortfolioSettingsJson(String symbols, FundedRuleProfile profile, String accountId, String accountMode) {
-		return livePortfolioSettingsJson(symbols, profile, accountId, accountMode, DEFAULT_STRATEGY_PRESET, strategyPresetSlot(DEFAULT_STRATEGY_PRESET));
+		return livePortfolioSettingsJson(symbols, profile, accountId, accountMode, WINDOWED_94K_STRATEGY_PRESET, strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET));
 	}
 
 	private static String livePortfolioSettingsJson(String symbols, FundedRuleProfile profile, String accountId, String accountMode, String strategyPreset, String strategySlot) {
-		String presetName = normalizeStrategyPresetName(strategyPreset);
+		String presetName = visibleStrategyPresetName(strategyPreset);
 		double selectedAccountSize = accountSizeForBrokerProfile(accountId, profile.code, profile.accountSize);
 		return "{"
 			+ "\"accountSize\":" + round(selectedAccountSize) + ","
@@ -13319,7 +13740,7 @@ public class FuturesManager {
 			+ "\"accountMode\":" + jsonString(accountMode) + ","
 			+ "\"practiceAccountId\":" + jsonString(accountId) + ","
 			+ "\"strategyPreset\":" + jsonString(presetName) + ","
-			+ "\"strategySlot\":" + jsonString(normalizeStrategySlot(strategySlot)) + ","
+			+ "\"strategySlot\":" + jsonString(strategyPresetSlot(presetName)) + ","
 			+ "\"settingsSource\":" + jsonString("Live strategy settings loaded from the selected preset.")
 			+ "}";
 	}
@@ -13346,17 +13767,17 @@ public class FuturesManager {
 	}
 
 	private static String liveSourceMetricsConfigJson(String symbols, FundedRuleProfile profile) {
-		return liveSourceMetricsConfigJson(symbols, profile, DEFAULT_STRATEGY_PRESET, strategyPresetSlot(DEFAULT_STRATEGY_PRESET));
+		return liveSourceMetricsConfigJson(symbols, profile, WINDOWED_94K_STRATEGY_PRESET, strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET));
 	}
 
 	private static String liveSourceMetricsConfigJson(String symbols, FundedRuleProfile profile, String strategyPreset, String strategySlot) {
-		String presetName = normalizeStrategyPresetName(strategyPreset);
+		String presetName = visibleStrategyPresetName(strategyPreset);
 		return "{"
 			+ "\"source\":\"STRATEGY_PRESET\","
 			+ "\"symbols\":" + jsonString(cleanSymbolsCsv(symbols)) + ","
 			+ "\"fundedProfile\":" + jsonString(profile.code) + ","
 			+ "\"strategyPreset\":" + jsonString(presetName) + ","
-			+ "\"strategySlot\":" + jsonString(normalizeStrategySlot(strategySlot)) + ","
+			+ "\"strategySlot\":" + jsonString(strategyPresetSlot(presetName)) + ","
 			+ "\"description\":" + jsonString("Live Strategy uses the selected strategy preset.") + ","
 			+ "\"createdAt\":" + jsonString(LocalDateTime.now().format(DISPLAY_TIME_FORMAT))
 			+ "}";
@@ -13707,18 +14128,18 @@ public class FuturesManager {
 		}
 		String snapshotPreset = jsonText(snapshot == null ? "" : snapshot.portfolioSettingsJson, "strategyPreset", "");
 		if (snapshotPreset.length() > 0) {
-			return strategyPresetSlot(snapshotPreset);
+			return strategyPresetSlot(visibleStrategyPresetName(snapshotPreset));
 		}
-		return strategyPresetSlot(DEFAULT_STRATEGY_PRESET);
+		return strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET);
 	}
 
 	private static String activeLiveStrategyPreset(FuturesLiveSession session, LiveStrategySnapshotRow snapshot) {
 		String sessionPreset = cleanOrDefault(session == null ? "" : session.strategyPreset, "");
 		if (sessionPreset.length() > 0) {
-			return normalizeStrategyPresetName(sessionPreset);
+			return visibleStrategyPresetName(sessionPreset);
 		}
 		String snapshotPreset = jsonText(snapshot == null ? "" : snapshot.portfolioSettingsJson, "strategyPreset", "");
-		return normalizeStrategyPresetName(snapshotPreset);
+		return visibleStrategyPresetName(snapshotPreset);
 	}
 
 	private static String activeLiveSymbols(FuturesLiveSession session, LiveStrategySnapshotRow snapshot) {
@@ -18272,6 +18693,7 @@ public class FuturesManager {
 		double maxDrawdownPct = 0.0;
 		List<PortfolioPosition> openPositions = new ArrayList<PortfolioPosition>();
 		boolean endOfDayTrailing = usesEndOfDayTrailing(config.trailingDrawdownMode);
+		double maeRuleBuffer = Math.max(0.0, PORTFOLIO_BACKTEST_MAE_RULE_BUFFER);
 
 		for (int dayIndex = 0; dayIndex < days.size(); dayIndex++) {
 			LocalDate day = days.get(dayIndex);
@@ -18387,7 +18809,7 @@ public class FuturesManager {
 				double worstEquity = balance + worstOpenPnl;
 				double worstIntraday = worstEquity - dayStartBalance;
 				result.maxIntradayLoss = round(Math.min(result.maxIntradayLoss, worstIntraday));
-				if (!openPositions.isEmpty() && worstIntraday <= -Math.abs(config.dailyLossLimit)) {
+				if (!openPositions.isEmpty() && worstIntraday <= -(Math.abs(config.dailyLossLimit) + maeRuleBuffer)) {
 					markPortfolioRuleViolation(result, "Portfolio daily loss limit breached intratrade.");
 					if (!dailyLossBreachRecorded) {
 						result.dailyLossBreaches++;
@@ -18398,7 +18820,7 @@ public class FuturesManager {
 						maeBreachRecorded = true;
 					}
 				}
-				if (!openPositions.isEmpty() && worstEquity <= trailingThreshold) {
+				if (!openPositions.isEmpty() && worstEquity <= trailingThreshold - maeRuleBuffer) {
 					markPortfolioRuleViolation(result, "Portfolio trailing drawdown breached intratrade.");
 					if (!trailingBreachRecorded) {
 						result.trailingDrawdownBreaches++;
@@ -20783,13 +21205,13 @@ public class FuturesManager {
 			if (bar.close > high + buffer) {
 				brokeLong = true;
 			}
-			if (settings.allowShorts && bar.close < low - buffer) {
-				brokeShort = true;
-			}
-			if (minute < settings.mymOrbRetestStartMinute) {
-				continue;
-			}
-			double volumeRatio = averageVolume <= 0.0 ? 1.0 : bar.volume / averageVolume;
+				if (settings.allowShorts && bar.close < low - buffer) {
+					brokeShort = true;
+				}
+				if (minute < settings.mymOrbRetestStartMinute) {
+					continue;
+				}
+				double volumeRatio = averageVolume <= 0.0 ? 1.0 : bar.volume / averageVolume;
 			if (volumeRatio < settings.mymOrbRetestMinVolumeRatio || bar.bodyPct < settings.mymOrbRetestMinBodyPct) {
 				continue;
 			}
@@ -20868,11 +21290,10 @@ public class FuturesManager {
 			double signalRangeTicks = riskTicks(spec, bar.high, bar.low);
 			double vwapDistanceTicks = bar.vwap <= 0.0 ? 0.0 : riskTicks(spec, bar.close, bar.vwap);
 			double trendSlopeTicks = riskTicks(spec, bar.ema20, bars.get(Math.max(0, index - 10)).ema20);
-			if (
-				settings.allowOrbLongs
-				&& !inMinuteWindow(minuteOfDay, settings.orbLongSkipStartMinute, settings.orbLongSkipEndMinute)
-				&&
-				bar.close > high + (spec.tickSize * 2.0)
+				if (
+					settings.allowOrbLongs
+					&& !inMinuteWindow(minuteOfDay, settings.orbLongSkipStartMinute, settings.orbLongSkipEndMinute)
+					&& bar.close > high + (spec.tickSize * 2.0)
 				&& bar.close > bar.open
 				&& bar.bodyPct >= settings.orbMinBodyPct
 				&& (settings.orbMaxSignalRangeTicks <= 0.0 || signalRangeTicks <= settings.orbMaxSignalRangeTicks)
@@ -20892,12 +21313,12 @@ public class FuturesManager {
 				}
 				return signal("ORB", "Opening Range Breakout", "LONG", index, bar.close, stop, bar.close + (risk * 1.2), "Futures ORB long above RTH opening range with body-location and higher-timeframe filters.");
 			}
-			if ((settings.orbShortConfirmationMinute > 0 && minuteOfDay < settings.orbShortConfirmationMinute) || !settings.allowShorts || !settings.allowOrbShorts) {
-				continue;
-			}
-			if (inMinuteWindow(minuteOfDay, settings.orbShortSkipStartMinute, settings.orbShortSkipEndMinute)) {
-				continue;
-			}
+				if ((settings.orbShortConfirmationMinute > 0 && minuteOfDay < settings.orbShortConfirmationMinute) || !settings.allowShorts || !settings.allowOrbShorts) {
+					continue;
+				}
+				if (inMinuteWindow(minuteOfDay, settings.orbShortSkipStartMinute, settings.orbShortSkipEndMinute)) {
+					continue;
+				}
 			if (bar.close < low - (spec.tickSize * 2.0)
 				&& bar.close < bar.open
 				&& bar.bodyPct >= settings.orbMinBodyPct
@@ -20948,17 +21369,6 @@ public class FuturesManager {
 			if (bar.marketTime.isAfter(LocalTime.of(11, 45))) {
 				break;
 			}
-			int minutesAfterOpen = (bar.marketTime.getHour() * 60 + bar.marketTime.getMinute()) - (RTH_START.getHour() * 60 + RTH_START.getMinute());
-			if (minutesAfterOpen < settings.orbRetestStartMinutes || minutesAfterOpen > settings.orbRetestEndMinutes) {
-				continue;
-			}
-			int minuteOfDay = (bar.marketTime.getHour() * 60) + bar.marketTime.getMinute();
-			if (inMinuteWindow(minuteOfDay, settings.orbRetestSkipStartMinute, settings.orbRetestSkipEndMinute)) {
-				continue;
-			}
-			if (settings.skipMidmorningOrbRetest && !bar.marketTime.isBefore(LocalTime.of(10, 0)) && bar.marketTime.isBefore(LocalTime.of(11, 30))) {
-				continue;
-			}
 			if (bar.close > high + (spec.tickSize * 2.0)) {
 				brokeLong = true;
 			}
@@ -20974,9 +21384,6 @@ public class FuturesManager {
 				}
 			}
 			if (settings.allowOrbRetestShorts && brokeShort && bar.high >= low - (spec.tickSize * 2.0) && bar.close < low && bar.close < bar.open && closeLocation(bar) <= 0.42 && bar.volume >= averageVolume * 0.65) {
-				if (inDayOfWeekMask(bar.marketDate, settings.orbRetestShortSkipDowMask)) {
-					continue;
-				}
 				double stop = recentSwingHigh(bars, index, 3) + (spec.tickSize * 2.0);
 				double risk = stop - bar.close;
 				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxOrbRetestRiskTicks) {
@@ -20986,6 +21393,41 @@ public class FuturesManager {
 			}
 		}
 		return signals;
+	}
+
+	private static boolean orbRetestSymbolAllowed(InstrumentSpec spec, FuturesStrategySettings settings) {
+		String allowedSymbols = cleanOrDefault(settings.orbRetestAllowedSymbols, "");
+		if (allowedSymbols.isEmpty()) {
+			return true;
+		}
+		String normalized = normalizeSymbol(spec == null ? "" : spec.symbol);
+		String[] parts = allowedSymbols.split(",");
+		for (int index = 0; index < parts.length; index++) {
+			if (normalized.equals(normalizeSymbol(parts[index]))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean orbRetestExtensionOk(InstrumentSpec spec, FuturesStrategySettings settings, double high, double low, double close, boolean isLong) {
+		if (settings.orbRetestMaxExtensionPctOfRange <= 0.0) {
+			return true;
+		}
+		return orbRetestExtensionPct(spec, high, low, close, isLong) <= settings.orbRetestMaxExtensionPctOfRange;
+	}
+
+	private static double orbRetestExtensionPct(InstrumentSpec spec, double high, double low, double close, boolean isLong) {
+		double openingRangeTicks = Math.max(1.0, riskTicks(spec, high, low));
+		double extensionTicks = isLong ? riskTicks(spec, close, high) : riskTicks(spec, low, close);
+		return Math.max(0.0, extensionTicks) / openingRangeTicks;
+	}
+
+	private static boolean emaStackAligned(Bar bar, boolean isLong) {
+		if (bar == null || bar.ema9 <= 0.0 || bar.ema20 <= 0.0 || bar.ema50 <= 0.0) {
+			return false;
+		}
+		return isLong ? (bar.ema9 >= bar.ema20 && bar.ema20 >= bar.ema50) : (bar.ema9 <= bar.ema20 && bar.ema20 <= bar.ema50);
 	}
 
 	private static List<Signal> findLateOrbContinuationSignals(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings) {
@@ -23150,9 +23592,6 @@ public class FuturesManager {
 
 	private static String dailyLimitStrategyCode(String strategyCode) {
 		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
-		if ("ORB".equals(code) || "ORB2".equals(code) || "MYMORB2".equals(code)) {
-			return "ORB_GROUP";
-		}
 		return code.length() == 0 ? "UNKNOWN" : code;
 	}
 
