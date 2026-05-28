@@ -2,12 +2,14 @@
 
 This GitHub package is the cloud-facing frontend for the futures trading bot. The live backend, SQLite database, broker credentials, Topstep/ProjectX credentials, and backend release zip stay private and must not be pushed to GitHub.
 
-## Current Baseline
+## Current Strategy Workflow
 
-- Final promoted portfolio backtest: `3154`
-- Strategy label: `compose_lorb_e671_best_second_wave_third_wave_pruned`
-- Result: `999 trades`, `$80,249.81` total profit, `75.28%` win rate, `2.90` profit factor
-- Live strategy status: copied into the `LIVE` strategy slot and active in the backend DB snapshot
+- Internal preserved source: `94k`
+- Windowed control preset: `backtestwindows94k`
+- Bias-free same-enabled-map preset: `biasfree94k`
+- Broad research preset: `allenabled`
+- The app exposes the three named Strategy Config presets above. `backtestwindows94k` is read-only in the Strategy page; dev edits belong in `biasfree94k` or `allenabled`.
+- Live/backend promotion is manual. Do not push the dev frontend, backend, database, broker credentials, or Topstep/ProjectX credentials to GitHub.
 
 ## Local Frontend
 

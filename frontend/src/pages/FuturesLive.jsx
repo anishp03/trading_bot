@@ -24,7 +24,14 @@ const NEAR_MISS_VISIBLE_LIMIT = 18;
 const NEAR_MISS_REVEAL_MS = 260;
 const DEFAULT_PROFILE = "TOPSTEP_150K_RESEARCH";
 const DEFAULT_ACCOUNT_PROFILE = "TOPSTEP_150K_PRACTICE";
-const DEFAULT_STRATEGY_PRESET = "94k";
+const DEFAULT_STRATEGY_PRESET = "backtestwindows94k";
+const BIAS_FREE_STRATEGY_PRESET = "biasfree94k";
+const ALL_ENABLED_STRATEGY_PRESET = "allenabled";
+const CANONICAL_STRATEGY_PRESETS = [
+  { name: DEFAULT_STRATEGY_PRESET, label: "Backtest Windows 94k" },
+  { name: BIAS_FREE_STRATEGY_PRESET, label: "Bias-Free 94k" },
+  { name: ALL_ENABLED_STRATEGY_PRESET, label: "All Enabled" },
+];
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MGC", "MYM", "MCL"]);
 const LIVE_ACCOUNT_PROFILE_CODES = new Set(["TOPSTEP_150K_PRACTICE", "TOPSTEP_50K_COMBINE"]);
 const PROFILE_ACCOUNTS = {
@@ -728,7 +735,7 @@ export default function FuturesLive() {
         }
       }, (error) => {
         noteBackendError("Error loading strategy presets:", error);
-        setStrategyPresets([{ name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }]);
+        setStrategyPresets(CANONICAL_STRATEGY_PRESETS);
       });
   }
 
@@ -1329,7 +1336,7 @@ function FuturesNearMissPanel({ rows, active }) {
           ))}
         </div>
       ) : (
-        <div className="app-empty">{active ? "No near misses in the current midday window." : "Market monitor is idle."}</div>
+        <div className="app-empty">{active ? "No near misses in the current strategy scan." : "Market monitor is idle."}</div>
       )}
     </section>
   );
@@ -4565,11 +4572,12 @@ function latestChartPrice(candles) {
 }
 
 function mergeStrategyPresets(apiPresets = []) {
-  const byName = new Map([[DEFAULT_STRATEGY_PRESET, { name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }]]);
+  const canonical = new Set(CANONICAL_STRATEGY_PRESETS.map((preset) => preset.name));
+  const byName = new Map(CANONICAL_STRATEGY_PRESETS.map((preset) => [preset.name, preset]));
   const presets = Array.isArray(apiPresets) ? apiPresets : [];
   presets.forEach((preset) => {
     const name = String(preset?.name || "").trim();
-    if (!name) return;
+    if (!canonical.has(name)) return;
     byName.set(name, { ...preset, name, label: preset.label || name });
   });
   return Array.from(byName.values());

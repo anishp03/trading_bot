@@ -621,9 +621,13 @@ public class MainServer {
 	            ctx.contentType("application/json").result(FuturesManager.getStrategyPresetsJson());
 	        });
 
+	        app.get("/api/futures/strategy-window-policy", ctx -> {
+	            ctx.contentType("application/json").result(FuturesManager.getStrategyWindowPolicyJson());
+	        });
+
 	        app.post("/api/futures/strategy-presets", ctx -> {
 	            String preset = valueOrDefault(ctx.queryParam("preset"), "");
-	            String sourcePreset = valueOrDefault(ctx.queryParam("sourcePreset"), "80kprofit");
+	            String sourcePreset = valueOrDefault(ctx.queryParam("sourcePreset"), "94k");
 	            String result = FuturesManager.createStrategyPreset(preset, sourcePreset);
 	            if (result.contains("\"success\":false")) {
 	                ctx.status(400);
@@ -637,6 +641,10 @@ public class MainServer {
 	            String slot = preset == null ? valueOrDefault(ctx.queryParam("slot"), "BACKTEST") : FuturesManager.strategyPresetSlot(preset);
 	            if ("LIVE".equalsIgnoreCase(slot)) {
 	                ctx.status(400).contentType("application/json").result("{\"message\":\"Live Strategy slot is legacy read-only. Save a named strategy preset instead.\"}");
+	                return;
+	            }
+	            if (preset != null && "94k".equalsIgnoreCase(preset.trim())) {
+	                ctx.status(400).contentType("application/json").result("{\"message\":\"94k is the frozen backup Strategy Config. Save strategy-improvement edits to wip.\"}");
 	                return;
 	            }
 	            FuturesManager.FuturesStrategySettings settings = FuturesManager.loadFuturesStrategySettings(symbol, slot);
@@ -680,9 +688,12 @@ public class MainServer {
             settings.allowOrbRetestShorts = parseBooleanOrDefault(ctx.queryParam("allowOrbRetestShorts"), settings.allowOrbRetestShorts);
             settings.orbRetestStartMinutes = parseIntOrDefault(ctx.queryParam("orbRetestStartMinutes"), settings.orbRetestStartMinutes);
             settings.orbRetestEndMinutes = parseIntOrDefault(ctx.queryParam("orbRetestEndMinutes"), settings.orbRetestEndMinutes);
+            settings.orbBreakoutEndMinute = parseIntOrDefault(ctx.queryParam("orbBreakoutEndMinute"), settings.orbBreakoutEndMinute);
+            settings.orbShortConfirmationMinute = parseIntOrDefault(ctx.queryParam("orbShortConfirmationMinute"), settings.orbShortConfirmationMinute);
             settings.enableCompressedOrbBreakout = parseBooleanOrDefault(ctx.queryParam("enableCompressedOrbBreakout"), settings.enableCompressedOrbBreakout);
             settings.skipMidmorningOrbRetest = parseBooleanOrDefault(ctx.queryParam("skipMidmorningOrbRetest"), settings.skipMidmorningOrbRetest);
             settings.requireHigherTimeframeGuard = parseBooleanOrDefault(ctx.queryParam("requireHigherTimeframeGuard"), settings.requireHigherTimeframeGuard);
+            settings.relaxPatternHardWindows = parseBooleanOrDefault(ctx.queryParam("relaxPatternHardWindows"), settings.relaxPatternHardWindows);
             settings.allowShorts = parseBooleanOrDefault(ctx.queryParam("allowShorts"), settings.allowShorts);
             settings.openingMomentumRangeMinutes = parseIntOrDefault(ctx.queryParam("openingMomentumRangeMinutes"), settings.openingMomentumRangeMinutes);
             settings.openingMomentumMaxHoldBars = parseIntOrDefault(ctx.queryParam("openingMomentumMaxHoldBars"), settings.openingMomentumMaxHoldBars);
@@ -697,6 +708,14 @@ public class MainServer {
             settings.vwapMinTrendSlopeTicks = parseDoubleOrDefault(ctx.queryParam("vwapMinTrendSlopeTicks"), settings.vwapMinTrendSlopeTicks);
             settings.vwapMaxDistanceTicks = parseDoubleOrDefault(ctx.queryParam("vwapMaxDistanceTicks"), settings.vwapMaxDistanceTicks);
             settings.vwapMaxRiskTicks = parseDoubleOrDefault(ctx.queryParam("vwapMaxRiskTicks"), settings.vwapMaxRiskTicks);
+            settings.vwapRequireHigherTimeframeGuard = parseBooleanOrDefault(ctx.queryParam("vwapRequireHigherTimeframeGuard"), settings.vwapRequireHigherTimeframeGuard);
+            settings.fvgRequireCoreQuality = parseBooleanOrDefault(ctx.queryParam("fvgRequireCoreQuality"), settings.fvgRequireCoreQuality);
+            settings.fvgRequireEmaStack = parseBooleanOrDefault(ctx.queryParam("fvgRequireEmaStack"), settings.fvgRequireEmaStack);
+            settings.fvgRequireHigherTimeframeGuard = parseBooleanOrDefault(ctx.queryParam("fvgRequireHigherTimeframeGuard"), settings.fvgRequireHigherTimeframeGuard);
+            settings.fvgMinImpulseBodyPct = parseDoubleOrDefault(ctx.queryParam("fvgMinImpulseBodyPct"), settings.fvgMinImpulseBodyPct);
+            settings.fvgMinTrendSlopeTicks = parseDoubleOrDefault(ctx.queryParam("fvgMinTrendSlopeTicks"), settings.fvgMinTrendSlopeTicks);
+            settings.fvgMaxVwapDistanceTicks = parseDoubleOrDefault(ctx.queryParam("fvgMaxVwapDistanceTicks"), settings.fvgMaxVwapDistanceTicks);
+            settings.fvgMaxEntryExtensionTicks = parseDoubleOrDefault(ctx.queryParam("fvgMaxEntryExtensionTicks"), settings.fvgMaxEntryExtensionTicks);
             settings.meanReversionMinDistanceTicks = parseDoubleOrDefault(ctx.queryParam("meanReversionMinDistanceTicks"), settings.meanReversionMinDistanceTicks);
             settings.meanReversionOversoldRsi = parseDoubleOrDefault(ctx.queryParam("meanReversionOversoldRsi"), settings.meanReversionOversoldRsi);
             settings.meanReversionOverboughtRsi = parseDoubleOrDefault(ctx.queryParam("meanReversionOverboughtRsi"), settings.meanReversionOverboughtRsi);
@@ -1020,7 +1039,8 @@ public class MainServer {
 	            boolean useSavedRisk = parseBooleanOrDefault(ctx.queryParam("useSavedRisk"), true);
 	            double profitTarget = parseDoubleOrDefault(ctx.queryParam("profitTarget"), savedRisk.profitTarget);
 	            String fundedProfile = valueOrDefault(ctx.queryParam("fundedProfile"), "CUSTOM");
-	            String strategyPreset = valueOrDefault(ctx.queryParam("strategyPreset"), "80kprofit");
+	            boolean continueAfterRuleViolation = parseBooleanOrDefault(ctx.queryParam("continueAfterRuleViolation"), false);
+	            String strategyPreset = valueOrDefault(ctx.queryParam("strategyPreset"), "94k");
 	            String presetValidationMessage = FuturesManager.validateStrategyPresetForSymbols(strategyPreset, symbols);
 	            if (!presetValidationMessage.isEmpty()) {
 	                ctx.status(400).contentType("application/json").result("{\"message\":\"" + presetValidationMessage.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}");
@@ -1045,7 +1065,8 @@ public class MainServer {
 	                profitTarget,
 	                fundedProfile,
 	                strategyPreset,
-	                sourcePortfolioBacktestId
+	                sourcePortfolioBacktestId,
+	                continueAfterRuleViolation
 	            );
 
             if (backtestId > 0) {
@@ -1228,7 +1249,7 @@ public class MainServer {
 
         app.get("/api/futures/live/strategy-diagnostics", ctx -> {
             String symbols = valueOrDefault(ctx.queryParam("symbols"), DEFAULT_PORTFOLIO_SYMBOLS);
-            String strategyPreset = valueOrDefault(ctx.queryParam("strategyPreset"), "wip");
+            String strategyPreset = valueOrDefault(ctx.queryParam("strategyPreset"), "94k");
             String source = valueOrDefault(ctx.queryParam("source"), "live");
             String startDate = valueOrDefault(ctx.queryParam("startDate"), "");
             String endDate = valueOrDefault(ctx.queryParam("endDate"), "");
@@ -1299,7 +1320,7 @@ public class MainServer {
 	            String executionMode = valueOrDefault(ctx.queryParam("executionMode"), "SIMULATED");
 	            String fundedProfile = valueOrDefault(ctx.queryParam("fundedProfile"), "TOPSTEP_50K_RESEARCH");
 	            String accountId = valueOrDefault(ctx.queryParam("accountId"), "");
-	            String strategyPreset = valueOrDefault(ctx.queryParam("strategyPreset"), "80kprofit");
+	            String strategyPreset = valueOrDefault(ctx.queryParam("strategyPreset"), "94k");
             FuturesManager.FuturesRiskSettings savedRisk = FuturesManager.loadFuturesRiskSettings(symbol);
                 double accountSize = parseDoubleOrDefault(ctx.queryParam("accountSize"), savedRisk.accountSize);
                 double maxTrailingDrawdown = parseDoubleOrDefault(ctx.queryParam("maxTrailingDrawdown"), savedRisk.maxTrailingDrawdown);

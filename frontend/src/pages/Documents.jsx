@@ -222,7 +222,7 @@ export default function Documents() {
           <h2 className="app-title">Candlestick Entry Paths And Exit Requirements</h2>
         </div>
         <p>
-          These diagrams map the bot's actual strategy branches and requirements using synthetic example candles. The live strategy slot is still controlled by promoted backtests; GC is supported and covered here, but it only trades live if a future promoted snapshot includes it.
+          These diagrams map the bot's actual strategy branches and requirements using synthetic example candles. Live runs now choose a Strategy Config directly: `94k` is the preserved read-only control, and `wip` is the dev-only research lane for the next iteration.
         </p>
       </section>
 

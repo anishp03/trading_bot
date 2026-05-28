@@ -5,7 +5,14 @@ import { API_BASE_URL, apiFetch } from "../utils/api.js";
 const TOPSTEP_RESEARCH_PROFILE = "TOPSTEP_150K_RESEARCH";
 const MAIN_PORTFOLIO_SYMBOLS = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K", "MYM", "MCL"];
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MYM", "MGC", "MCL"]);
-const DEFAULT_STRATEGY_PRESET = "94k";
+const DEFAULT_STRATEGY_PRESET = "backtestwindows94k";
+const BIAS_FREE_STRATEGY_PRESET = "biasfree94k";
+const ALL_ENABLED_STRATEGY_PRESET = "allenabled";
+const CANONICAL_STRATEGY_PRESETS = [
+  { name: DEFAULT_STRATEGY_PRESET, label: "Backtest Windows 94k" },
+  { name: BIAS_FREE_STRATEGY_PRESET, label: "Bias-Free 94k" },
+  { name: ALL_ENABLED_STRATEGY_PRESET, label: "All Enabled" },
+];
 const INSTRUMENT_FALLBACKS = [
   { symbol: "MES", name: "Micro E-mini S&P 500", exchange: "CME", tickSize: 0.25, tickValue: 1.25 },
   { symbol: "MNQ", name: "Micro E-mini Nasdaq-100", exchange: "CME", tickSize: 0.25, tickValue: 0.5 },
@@ -94,6 +101,7 @@ const DEFAULT_CONFIG = {
   maxAggregateContracts: "150",
   maxAggregateMiniUnits: "15",
   useSavedRisk: "true",
+  continueAfterRuleViolation: "true",
 };
 
 const DEFAULT_DATA_CONFIG = {
@@ -227,7 +235,7 @@ export default function FuturesBacktest() {
       })
       .catch((error) => {
         console.error("Error loading futures strategy presets:", error);
-        setStrategyPresets([{ name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }]);
+        setStrategyPresets(CANONICAL_STRATEGY_PRESETS);
       });
   }
 
@@ -252,6 +260,7 @@ export default function FuturesBacktest() {
       maxAggregateContracts: String(payload?.maxAggregateContracts ?? DEFAULT_CONFIG.maxAggregateContracts),
       maxAggregateMiniUnits: String(payload?.maxAggregateMiniUnits ?? DEFAULT_CONFIG.maxAggregateMiniUnits),
       useSavedRisk: String(payload?.useSavedRisk ?? DEFAULT_CONFIG.useSavedRisk),
+      continueAfterRuleViolation: String(payload?.continueAfterRuleViolation ?? DEFAULT_CONFIG.continueAfterRuleViolation),
     };
     setConfig(nextConfig);
     setBatchSymbols(nextSymbols);
@@ -354,6 +363,7 @@ export default function FuturesBacktest() {
       maxAggregateContracts: config.maxAggregateContracts,
       maxAggregateMiniUnits: config.maxAggregateMiniUnits,
       useSavedRisk: config.fundedProfile === "CUSTOM" ? "false" : "true",
+      continueAfterRuleViolation: config.continueAfterRuleViolation === "true" ? "true" : "false",
     });
 
     try {
@@ -549,6 +559,17 @@ export default function FuturesBacktest() {
             <input type="number" min="0" step="0.1" value={config.maxAggregateMiniUnits} onChange={(event) => updateConfig("maxAggregateMiniUnits", event.target.value)} className="form-control app-input" />
           </Field>
 
+          <div className="col-12 col-md-4 col-xl-3">
+            <label className="app-toggle-row h-100">
+              <input
+                type="checkbox"
+                checked={config.continueAfterRuleViolation === "true"}
+                onChange={(event) => updateConfig("continueAfterRuleViolation", event.target.checked ? "true" : "false")}
+              />
+              Full Trade Trail
+            </label>
+          </div>
+
           <Field label="Reference Contract" className="col-12 col-md-4 col-xl-3">
             <select
               value={config.referenceSymbol}
@@ -711,11 +732,12 @@ function buildInstrumentOptions(apiInstruments = []) {
 }
 
 function mergeStrategyPresets(apiPresets = []) {
-  const byName = new Map([[DEFAULT_STRATEGY_PRESET, { name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }]]);
+  const canonical = new Set(CANONICAL_STRATEGY_PRESETS.map((preset) => preset.name));
+  const byName = new Map(CANONICAL_STRATEGY_PRESETS.map((preset) => [preset.name, preset]));
   const presets = Array.isArray(apiPresets) ? apiPresets : [];
   presets.forEach((preset) => {
     const name = String(preset?.name || "").trim();
-    if (!name) return;
+    if (!canonical.has(name)) return;
     byName.set(name, { ...preset, name, label: preset.label || name });
   });
   return Array.from(byName.values());

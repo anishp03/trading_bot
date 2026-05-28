@@ -146,7 +146,7 @@ export default function FuturesBacktestHistory() {
                     <strong>{run.symbols}</strong>
                   </div>
                   <span className={run.trades === 0 ? "app-badge app-neutral-badge" : run.ruleViolation ? "app-badge app-risk-badge" : "app-badge app-positive-badge"}>
-                    {run.trades === 0 ? "No Trades" : run.ruleViolation ? "Violation" : "Pass"}
+                    {run.trades === 0 ? "No Trades" : run.ruleViolation ? (run.continueAfterRuleViolation ? "Violation Trail" : "Violation") : "Pass"}
                   </span>
                 </div>
                 <div className="mobile-run-meta-grid">
@@ -219,7 +219,7 @@ export default function FuturesBacktestHistory() {
                 <div>{run.overlapRejections}</div>
                 <div>
                   <span className={run.trades === 0 ? "app-badge app-neutral-badge" : run.ruleViolation ? "app-badge app-risk-badge" : "app-badge app-positive-badge"}>
-                    {run.trades === 0 ? "No Trades" : run.ruleViolation ? "Violation" : "Pass"}
+                    {run.trades === 0 ? "No Trades" : run.ruleViolation ? (run.continueAfterRuleViolation ? "Violation Trail" : "Violation") : "Pass"}
                   </span>
                 </div>
                 <div className="text-end">
@@ -295,6 +295,7 @@ function toPreviewRun(run, summary = null) {
     drawdown: run.maxDrawdownPct,
     ruleViolation: run.ruleViolation,
     ruleMessage: run.ruleMessage,
+    continueAfterRuleViolation: run.continueAfterRuleViolation,
     expectancy: summary?.expectancy,
     averageRiskReward: summary?.averageRiskReward,
     avgWin: summary?.avgWin,

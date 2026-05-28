@@ -145,7 +145,15 @@ const DEFAULT_SETTINGS = {
   managedGivebackMinBars: 3,
 };
 
-const DEFAULT_STRATEGY_PRESET = "94k";
+const DEFAULT_STRATEGY_PRESET = "backtestwindows94k";
+const BIAS_FREE_STRATEGY_PRESET = "biasfree94k";
+const ALL_ENABLED_STRATEGY_PRESET = "allenabled";
+const READ_ONLY_STRATEGY_PRESETS = new Set([DEFAULT_STRATEGY_PRESET]);
+const CANONICAL_STRATEGY_PRESETS = [
+  { name: DEFAULT_STRATEGY_PRESET, label: "Backtest Windows 94k" },
+  { name: BIAS_FREE_STRATEGY_PRESET, label: "Bias-Free 94k" },
+  { name: ALL_ENABLED_STRATEGY_PRESET, label: "All Enabled" },
+];
 const INSTRUMENT_FALLBACKS = [
   { symbol: "MES", name: "Micro E-mini S&P 500", exchange: "CME", tickSize: 0.25, tickValue: 1.25 },
   { symbol: "MNQ", name: "Micro E-mini Nasdaq-100", exchange: "CME", tickSize: 0.25, tickValue: 0.5 },
@@ -192,9 +200,8 @@ const CUSTOM_MODULE_CAPS = {
 export default function FuturesStrategy() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [selectedSymbol, setSelectedSymbol] = useState("MNQ");
-  const [selectedPreset, setSelectedPreset] = useState(DEFAULT_STRATEGY_PRESET);
+  const [selectedPreset, setSelectedPreset] = useState(BIAS_FREE_STRATEGY_PRESET);
   const [strategyPresets, setStrategyPresets] = useState([]);
-  const [newPresetName, setNewPresetName] = useState("");
   const [instruments, setInstruments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -234,7 +241,7 @@ export default function FuturesStrategy() {
       })
       .catch((error) => {
         console.error("Error loading futures strategy presets:", error);
-        setStrategyPresets([{ name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }]);
+        setStrategyPresets(CANONICAL_STRATEGY_PRESETS);
       });
   }
 
@@ -279,6 +286,10 @@ export default function FuturesStrategy() {
   }
 
   async function saveSettings() {
+    if (READ_ONLY_STRATEGY_PRESETS.has(selectedPreset)) {
+      setSaveStatus("backtestwindows94k is read-only. Switch to biasfree94k or allenabled to save edits.");
+      return;
+    }
     setIsSaving(true);
     setSaveStatus("");
 
@@ -326,8 +337,11 @@ export default function FuturesStrategy() {
       enableSweepSecondChance: String(settings.enableSweepSecondChance),
       enableOrbRetest: String(settings.enableOrbRetest),
       enableCompressedOrbBreakout: String(settings.enableCompressedOrbBreakout),
+      orbBreakoutEndMinute: String(settings.orbBreakoutEndMinute),
+      orbShortConfirmationMinute: String(settings.orbShortConfirmationMinute),
       skipMidmorningOrbRetest: String(settings.skipMidmorningOrbRetest),
       requireHigherTimeframeGuard: String(settings.requireHigherTimeframeGuard),
+      relaxPatternHardWindows: String(settings.relaxPatternHardWindows),
       allowShorts: String(settings.allowShorts),
       openingMomentumRangeMinutes: String(settings.openingMomentumRangeMinutes),
       openingMomentumMaxHoldBars: String(settings.openingMomentumMaxHoldBars),
@@ -341,6 +355,14 @@ export default function FuturesStrategy() {
       vwapMinVolumeRatio: String(settings.vwapMinVolumeRatio),
       vwapMinTrendSlopeTicks: String(settings.vwapMinTrendSlopeTicks),
       vwapMaxDistanceTicks: String(settings.vwapMaxDistanceTicks),
+      vwapRequireHigherTimeframeGuard: String(settings.vwapRequireHigherTimeframeGuard),
+      fvgRequireCoreQuality: String(settings.fvgRequireCoreQuality),
+      fvgRequireEmaStack: String(settings.fvgRequireEmaStack),
+      fvgRequireHigherTimeframeGuard: String(settings.fvgRequireHigherTimeframeGuard),
+      fvgMinImpulseBodyPct: String(settings.fvgMinImpulseBodyPct),
+      fvgMinTrendSlopeTicks: String(settings.fvgMinTrendSlopeTicks),
+      fvgMaxVwapDistanceTicks: String(settings.fvgMaxVwapDistanceTicks),
+      fvgMaxEntryExtensionTicks: String(settings.fvgMaxEntryExtensionTicks),
       meanReversionMinDistanceTicks: String(settings.meanReversionMinDistanceTicks),
       meanReversionOversoldRsi: String(settings.meanReversionOversoldRsi),
       meanReversionOverboughtRsi: String(settings.meanReversionOverboughtRsi),
@@ -461,43 +483,19 @@ export default function FuturesStrategy() {
     }
   }
 
-  async function createPreset() {
-    const presetName = newPresetName.trim();
-    if (!presetName) {
-      setSaveStatus("Enter a preset name first.");
-      return;
-    }
-    setIsSaving(true);
-    setSaveStatus("");
-    try {
-      const params = new URLSearchParams({ preset: presetName, sourcePreset: selectedPreset });
-      const response = await apiFetch(`/api/futures/strategy-presets?${params.toString()}`, { method: "POST" });
-      const payload = await response.json();
-      if (!response.ok || payload?.success === false) throw new Error(payload?.message || "Failed to create strategy preset.");
-      setStrategyPresets(mergeStrategyPresets(payload.presets || strategyPresets));
-      setSelectedPreset(payload.preset?.name || presetName);
-      setNewPresetName("");
-      setSaveStatus(payload.message || `Created ${presetName}.`);
-    } catch (error) {
-      console.error("Error creating strategy preset:", error);
-      setSaveStatus(error.message || "Failed to create strategy preset.");
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
   const instrumentOptions = useMemo(() => instruments.length ? instruments : INSTRUMENT_FALLBACKS, [instruments]);
   const selectedInstrument = instrumentOptions.find((instrument) => instrument.symbol === selectedSymbol) || null;
   const enabledCount = MODULES.filter(([key]) => settings[key]?.enabled).length;
   const presetOptions = mergeStrategyPresets(strategyPresets);
+  const selectedPresetReadOnly = READ_ONLY_STRATEGY_PRESETS.has(selectedPreset);
 
   return (
     <div className="app-page futures-config-page">
       <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
         <h2 className="app-title m-0">Futures Strategy Configurations</h2>
         <div className="d-flex gap-2 flex-wrap">
-          <button type="button" className="app-btn app-btn-primary px-3" onClick={saveSettings} disabled={isSaving || isLoading}>
-            {isSaving ? "Saving..." : "Save Strategy Preset"}
+          <button type="button" className="app-btn app-btn-primary px-3" onClick={saveSettings} disabled={isSaving || isLoading || selectedPresetReadOnly}>
+            {selectedPresetReadOnly ? "Read Only" : isSaving ? "Saving..." : "Save Preset"}
           </button>
         </div>
       </div>
@@ -540,21 +538,6 @@ export default function FuturesStrategy() {
             </select>
           </Field>
 
-          <Field label="New Preset" className="col-12 col-md-4 col-xl-3">
-            <div className="d-flex gap-2">
-              <input
-                type="text"
-                value={newPresetName}
-                onChange={(event) => setNewPresetName(event.target.value)}
-                className="form-control app-input"
-                placeholder="preset-name"
-              />
-              <button type="button" className="app-btn px-3" onClick={createPreset} disabled={isSaving || !newPresetName.trim()}>
-                Create
-              </button>
-            </div>
-          </Field>
-
           <Readout label="Enabled" value={`${enabledCount} / ${MODULES.length}`} />
           <Readout label="Tick Value" value={selectedInstrument ? `$${selectedInstrument.tickValue}` : "--"} />
           <Readout label="Status" value={saveStatus || "Ready"} />
@@ -573,23 +556,23 @@ export default function FuturesStrategy() {
             <div className="app-grid-row futures-settings-grid" key={key}>
               <span className="fw-bold">{name}</span>
               <label className="app-toggle-row">
-                <input
-                  type="checkbox"
-                  checked={Boolean(settings[key]?.enabled)}
-                  onChange={(event) => updateModule(key, "enabled", event.target.checked)}
-                  disabled={isLoading}
-                />
+	                <input
+	                  type="checkbox"
+	                  checked={Boolean(settings[key]?.enabled)}
+	                  onChange={(event) => updateModule(key, "enabled", event.target.checked)}
+	                  disabled={isLoading || selectedPresetReadOnly}
+	                />
                 {settings[key]?.enabled ? "On" : "Off"}
               </label>
               <input
                 type="number"
                 min="0"
                 max={moduleMaxTrades(key)}
-                value={settings[key]?.maxTradesPerDay ?? 1}
-                onChange={(event) => updateModule(key, "maxTradesPerDay", event.target.value)}
-                className="form-control app-input"
-                disabled={isLoading}
-              />
+	                value={settings[key]?.maxTradesPerDay ?? 1}
+	                onChange={(event) => updateModule(key, "maxTradesPerDay", event.target.value)}
+	                className="form-control app-input"
+	                disabled={isLoading || selectedPresetReadOnly}
+	              />
             </div>
           ))}
         </div>
@@ -598,7 +581,7 @@ export default function FuturesStrategy() {
       <details className="app-panel">
         <summary className="fw-bold app-kicker">Advanced Rules</summary>
 
-        <fieldset className="row g-3 mt-2 futures-fieldset" disabled={isLoading}>
+        <fieldset className="row g-3 mt-2 futures-fieldset" disabled={isLoading || selectedPresetReadOnly}>
           <ToggleField label="Early Sweep" field="enableEarlySweep" settings={settings} updateField={updateField} />
           <ToggleField label="Late Sweep" field="enableLateSweep" settings={settings} updateField={updateField} />
           <ToggleField label="Second-Chance Sweep" field="enableSweepSecondChance" settings={settings} updateField={updateField} />
@@ -606,8 +589,15 @@ export default function FuturesStrategy() {
           <ToggleField label="Compressed ORB Stop" field="enableCompressedOrbBreakout" settings={settings} updateField={updateField} />
           <ToggleField label="Skip 10:00 ORB Retest" field="skipMidmorningOrbRetest" settings={settings} updateField={updateField} />
           <ToggleField label="Higher-Timeframe Guard" field="requireHigherTimeframeGuard" settings={settings} updateField={updateField} />
+          <ToggleField label="Relax Pattern Windows" field="relaxPatternHardWindows" settings={settings} updateField={updateField} />
           <ToggleField label="Allow Shorts" field="allowShorts" settings={settings} updateField={updateField} />
+          <ToggleField label="VWAP HTF Guard" field="vwapRequireHigherTimeframeGuard" settings={settings} updateField={updateField} />
+          <ToggleField label="FVG Quality Gate" field="fvgRequireCoreQuality" settings={settings} updateField={updateField} />
+          <ToggleField label="FVG EMA Stack" field="fvgRequireEmaStack" settings={settings} updateField={updateField} />
+          <ToggleField label="FVG HTF Guard" field="fvgRequireHigherTimeframeGuard" settings={settings} updateField={updateField} />
 
+          <NumberField label="ORB End Minute" field="orbBreakoutEndMinute" settings={settings} updateField={updateField} />
+          <NumberField label="ORB Short Confirm" field="orbShortConfirmationMinute" settings={settings} updateField={updateField} />
           <NumberField label="Opening Range Minutes" field="openingMomentumRangeMinutes" settings={settings} updateField={updateField} />
           <NumberField label="Opening Max Hold Bars" field="openingMomentumMaxHoldBars" settings={settings} updateField={updateField} />
           <NumberField label="Opening Volume Ratio" field="openingMomentumVolumeRatio" settings={settings} updateField={updateField} step="0.05" />
@@ -620,6 +610,10 @@ export default function FuturesStrategy() {
           <NumberField label="VWAP Volume Ratio" field="vwapMinVolumeRatio" settings={settings} updateField={updateField} step="0.05" />
           <NumberField label="VWAP Slope Ticks" field="vwapMinTrendSlopeTicks" settings={settings} updateField={updateField} />
           <NumberField label="VWAP Max Distance" field="vwapMaxDistanceTicks" settings={settings} updateField={updateField} />
+          <NumberField label="FVG Impulse Body %" field="fvgMinImpulseBodyPct" settings={settings} updateField={updateField} />
+          <NumberField label="FVG Slope Ticks" field="fvgMinTrendSlopeTicks" settings={settings} updateField={updateField} />
+          <NumberField label="FVG VWAP Distance" field="fvgMaxVwapDistanceTicks" settings={settings} updateField={updateField} />
+          <NumberField label="FVG Entry Extension" field="fvgMaxEntryExtensionTicks" settings={settings} updateField={updateField} />
           <NumberField label="MRVWAP Min Distance" field="meanReversionMinDistanceTicks" settings={settings} updateField={updateField} />
           <NumberField label="Oversold RSI" field="meanReversionOversoldRsi" settings={settings} updateField={updateField} />
           <NumberField label="Overbought RSI" field="meanReversionOverboughtRsi" settings={settings} updateField={updateField} />
@@ -788,11 +782,12 @@ function buildInstrumentOptions(apiInstruments = []) {
 }
 
 function mergeStrategyPresets(apiPresets = []) {
-  const byName = new Map([[DEFAULT_STRATEGY_PRESET, { name: DEFAULT_STRATEGY_PRESET, label: DEFAULT_STRATEGY_PRESET }]]);
+  const canonical = new Set(CANONICAL_STRATEGY_PRESETS.map((preset) => preset.name));
+  const byName = new Map(CANONICAL_STRATEGY_PRESETS.map((preset) => [preset.name, preset]));
   const presets = Array.isArray(apiPresets) ? apiPresets : [];
   presets.forEach((preset) => {
     const name = String(preset?.name || "").trim();
-    if (!name) return;
+    if (!canonical.has(name)) return;
     byName.set(name, { ...preset, name, label: preset.label || name });
   });
   return Array.from(byName.values());
