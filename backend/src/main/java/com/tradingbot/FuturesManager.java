@@ -106,11 +106,13 @@ public class FuturesManager {
 	private static final String WINDOWED_94K_STRATEGY_PRESET = "backtestbias92k";
 	private static final String BIAS_FREE_94K_STRATEGY_PRESET = "biasfree92k";
 	private static final String BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
+	private static final String ALL_DAY_LIQUIDITY_RECLAIM_STRATEGY_PRESET = "liquidityreclaim";
+	private static final int ALL_DAY_LIQUIDITY_RECLAIM_SOURCE_RUN_ID = 2268;
 	private static final String DEFAULT_STRATEGY_PRESET = WINDOWED_94K_STRATEGY_PRESET;
 	private static final String WIP_STRATEGY_PRESET = "wip";
-	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-05-28-bestbiasfree-v13-fvg-reclaim-quality";
-	private static final String[] VISIBLE_STRATEGY_PRESETS = new String[] { WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET };
-	private static final String[] SEEDED_STRATEGY_PRESETS = new String[] { LEGACY_94K_STRATEGY_PRESET, WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET, WIP_STRATEGY_PRESET };
+	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-05-31-liquidityreclaim-v1-all-day-source2268";
+	private static final String[] VISIBLE_STRATEGY_PRESETS = new String[] { WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET, ALL_DAY_LIQUIDITY_RECLAIM_STRATEGY_PRESET };
+	private static final String[] SEEDED_STRATEGY_PRESETS = new String[] { LEGACY_94K_STRATEGY_PRESET, WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET, ALL_DAY_LIQUIDITY_RECLAIM_STRATEGY_PRESET, WIP_STRATEGY_PRESET };
 	private static final String RESEARCH_RELAXED_WINDOWS_PROPERTY = "tradingbot.research.relaxedWindows";
 	private static final String[] TIME_NATIVE_STRATEGY_CODES = new String[] { "ORB", "ORB2", "LORB", "OMOM", "CMOM", "AFT", "MIM", "IPB" };
 	private static final String[] PATTERN_LEVEL_STRATEGY_CODES = new String[] { "FVG", "IFVG", "VWAP", "VRCL", "KREV", "PDB", "VPB", "SWEEP", "MSCALP", "SHDW", "ECHO", "WFT", "MRVWAP", "KELT", "TLAD", "RCB" };
@@ -1399,8 +1401,10 @@ public class FuturesManager {
 			applyBiasFreeWindowPolicy(conn, strategyPresetSlot(BIAS_FREE_94K_STRATEGY_PRESET));
 			for (String symbol : supportedInstrumentSymbols()) {
 				copyStrategySlotRows(conn, symbol, strategyPresetSlot(BIAS_FREE_94K_STRATEGY_PRESET), strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET));
+				copyStrategySlotRows(conn, symbol, strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET), strategyPresetSlot(ALL_DAY_LIQUIDITY_RECLAIM_STRATEGY_PRESET));
 			}
 			applyBestBiasFreePresetPolicy(conn, strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET));
+			applyAllDayLiquidityReclaimPresetPolicy(conn, strategyPresetSlot(ALL_DAY_LIQUIDITY_RECLAIM_STRATEGY_PRESET));
 			normalizeLiveSnapshotStrategyPresetNames(conn);
 			deleteLegacyVisiblePresetRows(conn);
 			deleteDeprecatedAllEnabledPresetRows(conn);
@@ -1526,6 +1530,75 @@ public class FuturesManager {
 		setSlotSuffix(conn, slot, "winnerFollowThroughStartMinute", "570");
 		setSlotSuffix(conn, slot, "winnerFollowThroughEndMinute", "920");
 		insertSlotSuffixForSymbols(conn, slot, "relaxPatternHardWindows", "true");
+	}
+
+	private static void applyAllDayLiquidityReclaimPresetPolicy(Connection conn, String slot) throws SQLException {
+		boolean copiedSource = copyPortfolioBacktestSettingsToStrategySlot(conn, ALL_DAY_LIQUIDITY_RECLAIM_SOURCE_RUN_ID, slot, supportedInstrumentSymbols());
+		if (!copiedSource) {
+			applyBiasFreeWindowPolicy(conn, slot);
+		}
+		String[] modules = new String[] {
+			"orb", "lateOrbContinuation", "openingMomentum", "sweep", "priorDayBreakout",
+			"vwapPullback", "vwapReclaim", "vwapMeanReversion", "fvg", "ifvg", "closeMomentum",
+			"afternoonContinuation", "marketIntradayMomentum", "keltnerScalp", "keltnerReversion",
+			"microScalp", "microShadow", "microEcho", "winnerFollowThrough", "trendLadder",
+			"rangeCompressionBreakout", "valueAreaReclaim", "mclEiaContinuation",
+			"mclCrudeSessionOpen", "mymIndexConfirmation", "mymOrbRetest",
+			"mymBreadthConfirmation", "mclTrendContinuation"
+		};
+		for (String symbol : supportedInstrumentSymbols()) {
+			for (int index = 0; index < modules.length; index++) {
+				setSlotSymbolSetting(conn, slot, symbol, modules[index] + ".enabled", "false");
+			}
+			setSlotSymbolSetting(conn, slot, symbol, "enableOrbRetest", "false");
+		}
+
+		enableBestBiasFreeModules(conn, slot, "ES", new String[] { "vwapPullback", "sweep" });
+		enableBestBiasFreeModules(conn, slot, "M2K", new String[] { "valueAreaReclaim" });
+		enableBestBiasFreeModules(conn, slot, "MCL", new String[] { "afternoonContinuation", "priorDayBreakout" });
+		enableBestBiasFreeModules(conn, slot, "MES", new String[] { "afternoonContinuation", "microShadow" });
+		enableBestBiasFreeModules(conn, slot, "MGC", new String[] { "priorDayBreakout", "vwapPullback", "sweep", "keltnerReversion" });
+		enableBestBiasFreeModules(conn, slot, "MNQ", new String[] { "fvg", "vwapPullback", "afternoonContinuation", "sweep", "priorDayBreakout", "keltnerReversion" });
+		enableBestBiasFreeModules(conn, slot, "MYM", new String[] { "microShadow", "sweep" });
+		enableBestBiasFreeModules(conn, slot, "NQ", new String[] { "fvg", "priorDayBreakout", "vwapPullback", "keltnerReversion", "sweep" });
+
+		if (!copiedSource) {
+			setSlotSuffix(conn, slot, "fvgStartMinute", "570");
+			setSlotSuffix(conn, slot, "fvgEndMinute", "930");
+			setSlotSuffix(conn, slot, "priorDayBreakoutStartMinute", "570");
+			setSlotSuffix(conn, slot, "priorDayBreakoutEndMinute", "930");
+			setSlotSuffix(conn, slot, "valueAreaStartMinute", "570");
+			setSlotSuffix(conn, slot, "valueAreaEndMinute", "920");
+			setSlotSuffix(conn, slot, "microShadowStartMinute", "570");
+			setSlotSuffix(conn, slot, "microShadowEndMinute", "920");
+		}
+	}
+
+	private static boolean copyPortfolioBacktestSettingsToStrategySlot(Connection conn, int portfolioBacktestId, String slot, List<String> symbols) throws SQLException {
+		if (portfolioBacktestId <= 0 || symbols == null || symbols.isEmpty()) {
+			return false;
+		}
+		Map<String, String> rows = loadPortfolioBacktestSettingRows(conn, portfolioBacktestId, symbols);
+		if (rows.isEmpty()) {
+			return false;
+		}
+		String normalizedSlot = normalizeStrategySlot(slot);
+		for (int index = 0; index < symbols.size(); index++) {
+			String symbol = normalizeSymbol(symbols.get(index));
+			try (PreparedStatement delete = conn.prepareStatement("DELETE FROM FuturesStrategySettings WHERE settingKey LIKE ?")) {
+				delete.setString(1, normalizedSlot + "." + symbol + ".%");
+				delete.executeUpdate();
+			}
+		}
+		try (PreparedStatement insert = conn.prepareStatement("INSERT OR REPLACE INTO FuturesStrategySettings (settingKey, settingValue) VALUES (?, ?)")) {
+			for (Map.Entry<String, String> entry : rows.entrySet()) {
+				insert.setString(1, normalizedSlot + "." + entry.getKey());
+				insert.setString(2, entry.getValue());
+				insert.addBatch();
+			}
+			insert.executeBatch();
+		}
+		return true;
 	}
 
 	private static void applyBestBiasFreePresetPolicy(Connection conn, String slot) throws SQLException {
@@ -3185,12 +3258,13 @@ public class FuturesManager {
 			+ "\"windowedPreset\":" + jsonString(WINDOWED_94K_STRATEGY_PRESET) + ","
 			+ "\"biasFreePreset\":" + jsonString(BIAS_FREE_94K_STRATEGY_PRESET) + ","
 			+ "\"bestBiasFreePreset\":" + jsonString(BEST_BIAS_FREE_STRATEGY_PRESET) + ","
+			+ "\"allDayLiquidityReclaimPreset\":" + jsonString(ALL_DAY_LIQUIDITY_RECLAIM_STRATEGY_PRESET) + ","
 			+ "\"editablePreset\":" + jsonString(BEST_BIAS_FREE_STRATEGY_PRESET) + ","
 			+ "\"visiblePresets\":" + jsonStringArray(Arrays.asList(VISIBLE_STRATEGY_PRESETS)) + ","
 			+ "\"timeNativeStrategies\":" + jsonStringArray(Arrays.asList(TIME_NATIVE_STRATEGY_CODES)) + ","
 			+ "\"patternLevelStrategies\":" + jsonStringArray(Arrays.asList(PATTERN_LEVEL_STRATEGY_CODES)) + ","
 			+ "\"disabledResearchStrategies\":" + jsonStringArray(Arrays.asList(DISABLED_RESEARCH_STRATEGY_CODES)) + ","
-				+ "\"rule\":" + jsonString("backtestbias92k is the frozen windowed control. biasfree92k is the broad comparison preset with fitted windows removed. bestbiasfree replaces allenabledbiasfree with the highest-quality windowless contract-specific strategy map.")
+				+ "\"rule\":" + jsonString("backtestbias92k is the frozen windowed control. biasfree92k is the broad comparison preset with fitted windows removed. bestbiasfree is the highest-quality bias-free contract map. liquidityreclaim is the all-day FVG/VWAP/AFT/SWEEP/PDB/KREV/SHDW/VPB liquidity-reclaim map sourced from run 2268.")
 				+ "}";
 	}
 
@@ -3212,7 +3286,7 @@ public class FuturesManager {
 			return "{\"success\":false,\"message\":\"Preset name is required.\"}";
 		}
 		if (!isSeededStrategyPresetName(targetName)) {
-			return "{\"success\":false,\"message\":\"Strategy Configs are locked to the approved dev presets: backtestbias92k, biasfree92k, and bestbiasfree.\"}";
+			return "{\"success\":false,\"message\":\"Strategy Configs are locked to the approved dev presets: backtestbias92k, biasfree92k, bestbiasfree, and liquidityreclaim.\"}";
 		}
 		if (WIP_STRATEGY_PRESET.equals(sourceName)) {
 			sourceName = DEFAULT_STRATEGY_PRESET;
@@ -4730,7 +4804,7 @@ public class FuturesManager {
 		if (portfolioBacktestExists(3154) && portfolioBacktestUsesVisibleStrategyPreset(3154)) {
 			return 3154;
 		}
-		String sql = "SELECT portfolioBacktestID FROM FuturesPortfolioBacktests WHERE ruleViolation = 0 AND json_extract(portfolioSettingsJson, '$.strategyPreset') IN ('backtestbias92k', 'biasfree92k', 'bestbiasfree') ORDER BY totalProfit DESC, portfolioBacktestID DESC LIMIT 1";
+		String sql = "SELECT portfolioBacktestID FROM FuturesPortfolioBacktests WHERE ruleViolation = 0 AND json_extract(portfolioSettingsJson, '$.strategyPreset') IN ('backtestbias92k', 'biasfree92k', 'bestbiasfree', 'liquidityreclaim') ORDER BY totalProfit DESC, portfolioBacktestID DESC LIMIT 1";
 		try (Connection conn = DatabaseManager.getConnection();
 			 Statement stmt = conn.createStatement();
 			 ResultSet rs = stmt.executeQuery(sql)) {
@@ -12791,10 +12865,6 @@ public class FuturesManager {
 	}
 
 	private static void insertLiveExitDecision(int sessionId, int snapshotId, FuturesTrade trade, String status, String reason, String brokerCloseJson) {
-		String brokerPayload = cleanOrDefault(brokerCloseJson, "").length() == 0
-			? ""
-			: ",\"brokerClose\":" + jsonObjectOrDefault(brokerCloseJson, "{}");
-		String tradeReasonJson = liveExitTradeReasoningJson(trade, status, reason, brokerCloseJson);
 		insertLiveDecision(
 			sessionId,
 			snapshotId,
@@ -12811,19 +12881,70 @@ public class FuturesManager {
 			round(fundedMiniUnitsPerContract(trade.symbol) * trade.contracts),
 			status,
 			reason,
-				"{"
-					+ "\"openedAt\":" + jsonString(trade.openedAt) + ","
-					+ "\"closedAt\":" + jsonString(trade.closedAt) + ","
-					+ "\"entryPrice\":" + round(trade.entryPrice) + ","
-					+ "\"exitPrice\":" + round(trade.exitPrice) + ","
-					+ "\"pnl\":" + round(trade.pnl) + ","
-					+ "\"mfe\":" + round(trade.mfe) + ","
-					+ "\"mae\":" + round(trade.mae) + ","
-					+ "\"exitReason\":" + jsonString(trade.exitReason)
-					+ ",\"tradeReason\":" + tradeReasonJson
-					+ brokerPayload
-				+ "}"
+			liveExitPayloadJson(trade, status, reason, brokerCloseJson)
 		);
+	}
+
+	private static String liveExitPayloadJson(FuturesTrade trade, String status, String reason, String brokerCloseJson) {
+		String brokerPayload = cleanOrDefault(brokerCloseJson, "").length() == 0
+			? ""
+			: ",\"brokerClose\":" + jsonObjectOrDefault(brokerCloseJson, "{}");
+		String tradeReasonJson = liveExitTradeReasoningJson(trade, status, reason, brokerCloseJson);
+		return "{"
+			+ "\"openedAt\":" + jsonString(trade.openedAt) + ","
+			+ "\"closedAt\":" + jsonString(trade.closedAt) + ","
+			+ "\"entryPrice\":" + round(trade.entryPrice) + ","
+			+ "\"exitPrice\":" + round(trade.exitPrice) + ","
+			+ "\"pnl\":" + round(trade.pnl) + ","
+			+ "\"mfe\":" + round(trade.mfe) + ","
+			+ "\"mae\":" + round(trade.mae) + ","
+			+ "\"exitReason\":" + jsonString(trade.exitReason)
+			+ ",\"tradeReason\":" + tradeReasonJson
+			+ brokerPayload
+			+ "}";
+	}
+
+	private static boolean updateLiveExitDecision(int sessionId, int snapshotId, FuturesTrade trade, String status, String reason, String brokerCloseJson) {
+		if (trade == null) {
+			return false;
+		}
+		String findSql = "SELECT decisionID FROM FuturesLiveSignalDecisions "
+			+ "WHERE sessionID = ? AND snapshotID = ? AND symbol = ? AND strategyCode = ? AND signalTime = ? "
+			+ "AND (status LIKE '%EXIT%' OR status LIKE '%CLOSED%' OR status LIKE '%FLAT%') "
+			+ "ORDER BY decisionID DESC LIMIT 1";
+		String updateSql = "UPDATE FuturesLiveSignalDecisions SET entryTime = ?, contracts = ?, entryPrice = ?, stopPrice = ?, targetPrice = ?, "
+			+ "fundedMiniUnits = ?, status = ?, reason = ?, payloadJson = ?, createdAt = ? WHERE decisionID = ?";
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement find = conn.prepareStatement(findSql)) {
+			find.setInt(1, sessionId);
+			find.setInt(2, snapshotId);
+			find.setString(3, normalizeSymbol(trade.symbol));
+			find.setString(4, cleanOrDefault(trade.strategyCode, ""));
+			find.setString(5, cleanOrDefault(trade.openedAt, ""));
+			try (ResultSet rs = find.executeQuery()) {
+				if (!rs.next()) {
+					return false;
+				}
+				int decisionId = rs.getInt("decisionID");
+				try (PreparedStatement update = conn.prepareStatement(updateSql)) {
+					update.setString(1, cleanOrDefault(trade.closedAt, ""));
+					update.setInt(2, trade.contracts);
+					update.setDouble(3, trade.entryPrice);
+					update.setDouble(4, trade.stopPrice);
+					update.setDouble(5, trade.targetPrice);
+					update.setDouble(6, round(fundedMiniUnitsPerContract(trade.symbol) * trade.contracts));
+					update.setString(7, cleanOrDefault(status, ""));
+					update.setString(8, cleanOrDefault(reason, ""));
+					update.setString(9, jsonObjectOrDefault(liveExitPayloadJson(trade, status, reason, brokerCloseJson), "{}"));
+					update.setString(10, LocalDateTime.now().format(DISPLAY_TIME_FORMAT));
+					update.setInt(11, decisionId);
+					return update.executeUpdate() > 0;
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+			return false;
+		}
 	}
 
 	private static String liveEntryTradeReasoningJson(
@@ -15288,6 +15409,21 @@ public class FuturesManager {
 			if (closed) {
 				if (alreadyFlat) {
 					trade.exitReason = "Broker flat sync; close fill reconciles from Topstep trades.";
+					if (!brokerCloseHasAuthoritativeFill(closeJson)) {
+						String pendingReason = "TopstepX already reported no open position for " + trade.symbol
+							+ "; waiting for broker trade metrics before writing the final exit price and PnL.";
+						String pendingJson = "{"
+							+ "\"status\":\"PENDING_BROKER_RECONCILE\","
+							+ "\"source\":\"TOPSTEPX_CLOSE_ADAPTER\","
+							+ "\"symbol\":" + jsonString(trade.symbol) + ","
+							+ "\"strategyCode\":" + jsonString(cleanOrDefault(trade.strategyCode, "")) + ","
+							+ "\"entryTime\":" + jsonString(cleanOrDefault(trade.openedAt, "")) + ","
+							+ "\"adapterClose\":" + jsonObjectOrDefault(closeJson, "{}") + ","
+							+ "\"reason\":" + jsonString(pendingReason)
+							+ "}";
+						recordLiveAudit("PENDING_BROKER_RECONCILE", "WARN", pendingReason, pendingJson);
+						continue;
+					}
 				}
 				insertLiveExitDecision(session.sessionId, snapshot.snapshotId, trade, closeStatus, reason, closeJson);
 				String exitReasonJson = liveExitTradeReasoningJson(trade, closeStatus, reason, closeJson);
@@ -15379,7 +15515,7 @@ public class FuturesManager {
 				continue;
 			}
 			FuturesTrade trade = liveFlatSyncTrade(position, closeFill);
-			if (liveExitDecisionExists(sessionId, snapshotId, trade)) {
+			if (liveAuthoritativeBrokerExitDecisionExists(sessionId, snapshotId, trade)) {
 				continue;
 			}
 			String reason = "TopstepX matched broker close fill " + cleanOrDefault(closeFill.orderId, "unknown")
@@ -15403,7 +15539,9 @@ public class FuturesManager {
 				+ "\"pnl\":" + round(trade.pnl) + ","
 				+ "\"fees\":" + round(closeFill.fees)
 				+ "}";
-			insertLiveExitDecision(sessionId, snapshotId, trade, "FLAT_SYNC_TOPSTEPX", reason, brokerCloseJson);
+			if (!updateLiveExitDecision(sessionId, snapshotId, trade, "FLAT_SYNC_TOPSTEPX", reason, brokerCloseJson)) {
+				insertLiveExitDecision(sessionId, snapshotId, trade, "FLAT_SYNC_TOPSTEPX", reason, brokerCloseJson);
+			}
 			recordLiveAudit("FLAT_SYNC_TOPSTEPX", "WARN", reason, brokerCloseJson);
 			String exitReasonJson = liveExitTradeReasoningJson(trade, "FLAT_SYNC_TOPSTEPX", reason, brokerCloseJson);
 			String exitReasonDetailsJson = jsonObjectForKey(exitReasonJson, "exit");
@@ -15451,6 +15589,16 @@ public class FuturesManager {
 		return false;
 	}
 
+	private static boolean brokerCloseHasAuthoritativeFill(String brokerCloseJson) {
+		String broker = jsonObjectOrDefault(brokerCloseJson, "{}");
+		if (jsonBoolean(broker, "authoritative") || broker.contains("\"source\":\"TOPSTEPX_METRICS_RECONCILE\"")) {
+			return true;
+		}
+		double exitPrice = jsonNumber(broker, "exitPrice", jsonNumber(broker, "fillPrice", 0.0));
+		String fillTime = firstNonBlank(jsonText(broker, "fillTime", ""), jsonText(broker, "closedAt", ""));
+		return exitPrice > 0.0 && fillTime.length() > 0;
+	}
+
 	private static FuturesTrade liveFlatSyncTrade(PortfolioPosition position, BrokerCloseFill closeFill) {
 		FuturesTrade trade = new FuturesTrade();
 		trade.symbol = normalizeSymbol(position.symbol);
@@ -15467,13 +15615,21 @@ public class FuturesManager {
 		trade.pnl = closeFill == null ? 0.0 : closeFill.pnl;
 		trade.mfe = 0.0;
 		trade.mae = 0.0;
-		trade.exitReason = closeFill != null && closeFill.orderId.length() > 0
-			? "Broker TP/SL fill; Topstep order " + closeFill.orderId + "."
-			: "Broker flat sync; no open Topstep position.";
+		trade.exitReason = brokerFlatSyncExitReason(position, closeFill, trade.exitPrice);
 		trade.openedMarketTime = position.openedMarketTime;
 		LocalDateTime closedAt = parseDisplayLocalDateTime(trade.closedAt);
 		trade.closedMarketTime = closedAt == null ? null : closedAt.toLocalTime();
 		return trade;
+	}
+
+	private static String brokerFlatSyncExitReason(PortfolioPosition position, BrokerCloseFill closeFill, double exitPrice) {
+		if (closeFill == null || cleanOrDefault(closeFill.orderId, "").length() == 0) {
+			return "Broker flat sync; no open Topstep position.";
+		}
+		double targetDistance = Math.abs(exitPrice - position.targetPrice);
+		double stopDistance = Math.abs(exitPrice - position.stopPrice);
+		String fillType = targetDistance <= stopDistance ? "target" : "stop-loss";
+		return "Broker " + fillType + " fill; Topstep order " + closeFill.orderId + ".";
 	}
 
 	private static BrokerCloseFill matchingBrokerCloseFill(PortfolioPosition position, List<String> brokerTrades) {
@@ -16801,6 +16957,12 @@ public class FuturesManager {
 			boolean confirmingShort = shortSide && (flow.depthImbalance5 <= -0.15 || flow.tapeDelta < 0.0 || "ASK_ABSORPTION".equals(flow.absorption));
 			boolean weakAgainstLong = longSide && (flow.depthImbalance5 <= -0.10 || flow.tapeDelta < 0.0 || "ASK_FLIP".equals(flow.bookFlip));
 			boolean weakAgainstShort = shortSide && (flow.depthImbalance5 >= 0.10 || flow.tapeDelta > 0.0 || "BID_FLIP".equals(flow.bookFlip));
+			if (fragileOpeningMomentumOpposed(candidate, flow, weakAgainstLong, weakAgainstShort) && !(confirmingLong || confirmingShort)) {
+				decision.passed = false;
+				decision.actionCode = "ORDER_FLOW_BLOCK_FRAGILE_OMOM_UNCONFIRMED";
+				decision.reason = "Entry optimizer blocked OMOM because the stop geometry was tight and fresh tape/CVD leaned against the live entry.";
+				return decision;
+			}
 			if (entryOptimizerRequiresFreshConfirmation(signal.strategyCode) && !(confirmingLong || confirmingShort) && (weakAgainstLong || weakAgainstShort)) {
 				decision.passed = false;
 				decision.actionCode = "ORDER_FLOW_BLOCK_WEAK_CONFIRMATION";
@@ -16813,6 +16975,33 @@ public class FuturesManager {
 			? "Entry optimizer passed because Level 2/tape did not fight the setup and at least one order-flow confirmation aligned."
 			: "Entry optimizer passed because order flow was neutral and showed no hard adverse condition.";
 		return decision;
+	}
+
+	private static boolean fragileOpeningMomentumOpposed(LivePortfolioSignalCandidate candidate, LiveRuntimeState.OrderFlowSnapshot flow, boolean weakAgainstLong, boolean weakAgainstShort) {
+		if (candidate == null || candidate.event == null || candidate.event.signal == null || flow == null) {
+			return false;
+		}
+		Signal signal = candidate.event.signal;
+		String code = cleanOrDefault(signal.strategyCode, "").toUpperCase(Locale.US);
+		if (!"OMOM".equals(code)) {
+			return false;
+		}
+		InstrumentSpec spec = candidate.context != null && candidate.context.spec != null
+			? candidate.context.spec
+			: instrumentFor(candidate.symbol);
+		double tick = spec == null ? 0.0 : spec.tickSize;
+		if (tick <= 0.0) {
+			return false;
+		}
+		double riskTicks = Math.abs(signal.entryPrice - signal.stopPrice) / tick;
+		if (riskTicks > 32.0) {
+			return false;
+		}
+		String side = cleanOrDefault(signal.side, "").toUpperCase(Locale.US);
+		boolean cvdAgainstLong = "LONG".equals(side) && flow.cvd < 0.0;
+		boolean cvdAgainstShort = "SHORT".equals(side) && flow.cvd > 0.0;
+		return ("LONG".equals(side) && (weakAgainstLong || cvdAgainstLong))
+			|| ("SHORT".equals(side) && (weakAgainstShort || cvdAgainstShort));
 	}
 
 	private static boolean entryOptimizerRequiresFreshConfirmation(String strategyCode) {
@@ -17481,6 +17670,30 @@ public class FuturesManager {
 		}
 	}
 
+	private static boolean liveAuthoritativeBrokerExitDecisionExists(int sessionId, int snapshotId, FuturesTrade trade) {
+		if (trade == null) {
+			return true;
+		}
+		String sql = "SELECT 1 FROM FuturesLiveSignalDecisions "
+			+ "WHERE sessionID = ? AND snapshotID = ? AND symbol = ? AND strategyCode = ? AND signalTime = ? "
+			+ "AND (status LIKE '%EXIT%' OR status LIKE '%CLOSED%' OR status LIKE '%FLAT%') "
+			+ "AND (payloadJson LIKE '%\"authoritative\":true%' OR payloadJson LIKE '%\"source\":\"TOPSTEPX_METRICS_RECONCILE\"%') LIMIT 1";
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
+			pstmt.setInt(1, sessionId);
+			pstmt.setInt(2, snapshotId);
+			pstmt.setString(3, normalizeSymbol(trade.symbol));
+			pstmt.setString(4, cleanOrDefault(trade.strategyCode, ""));
+			pstmt.setString(5, cleanOrDefault(trade.openedAt, ""));
+			try (ResultSet rs = pstmt.executeQuery()) {
+				return rs.next();
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+			return true;
+		}
+	}
+
 	private static boolean pendingBrokerReconcileExists(int sessionId, int snapshotId, PortfolioPosition position) {
 		if (position == null) {
 			return true;
@@ -17541,7 +17754,10 @@ public class FuturesManager {
 
 	private static List<PortfolioPosition> livePositionsForSession(int sessionId, int snapshotId, boolean includePendingReconcile) {
 		List<PortfolioPosition> positions = new ArrayList<PortfolioPosition>();
-		String pendingPredicate = "";
+		String exitPredicate = includePendingReconcile
+			? "AND (exit.status LIKE '%EXIT%' OR exit.status LIKE '%CLOSED%' OR exit.status LIKE '%FLAT%') "
+				+ "AND (exit.payloadJson LIKE '%\"authoritative\":true%' OR exit.payloadJson LIKE '%\"source\":\"TOPSTEPX_METRICS_RECONCILE\"%')"
+			: "AND (exit.status LIKE '%EXIT%' OR exit.status LIKE '%CLOSED%' OR exit.status LIKE '%FLAT%')";
 		String sql = "SELECT entry.symbol, entry.side, entry.contracts, entry.entryPrice, entry.stopPrice, entry.targetPrice, entry.entryTime, entry.signalTime, entry.strategyCode, entry.strategyName, entry.status, entry.payloadJson, "
 			+ "COALESCE(snapshot.practiceAccountId, '') AS accountId, "
 			+ "COALESCE(("
@@ -17574,7 +17790,7 @@ public class FuturesManager {
 				+ "WHERE exit.sessionID = entry.sessionID AND exit.snapshotID = entry.snapshotID "
 				+ "AND exit.symbol = entry.symbol AND exit.strategyCode = entry.strategyCode "
 				+ "AND exit.signalTime = entry.entryTime "
-				+ "AND (exit.status LIKE '%EXIT%' OR exit.status LIKE '%CLOSED%' OR exit.status LIKE '%FLAT%'" + pendingPredicate + ")"
+				+ exitPredicate
 			+ ") "
 			+ "ORDER BY entry.decisionID";
 		try (Connection conn = DatabaseManager.getConnection();
