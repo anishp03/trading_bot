@@ -109,12 +109,12 @@ public class FuturesManager {
 	private static final int ALL_DAY_LIQUIDITY_RECLAIM_SOURCE_RUN_ID = 2268;
 	private static final String DEFAULT_STRATEGY_PRESET = WINDOWED_94K_STRATEGY_PRESET;
 	private static final String WIP_STRATEGY_PRESET = "wip";
-	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-05-31-bestbiasfree-v14-live-liquidity-overlay";
+	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-05-31-bestbiasfree-v15-live-liquidity-reclaim-strategy";
 	private static final String[] VISIBLE_STRATEGY_PRESETS = new String[] { WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET };
 	private static final String[] SEEDED_STRATEGY_PRESETS = new String[] { LEGACY_94K_STRATEGY_PRESET, WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET, WIP_STRATEGY_PRESET };
 	private static final String RESEARCH_RELAXED_WINDOWS_PROPERTY = "tradingbot.research.relaxedWindows";
 	private static final String[] TIME_NATIVE_STRATEGY_CODES = new String[] { "ORB", "ORB2", "LORB", "OMOM", "CMOM", "AFT", "MIM", "IPB" };
-	private static final String[] PATTERN_LEVEL_STRATEGY_CODES = new String[] { "FVG", "IFVG", "VWAP", "VRCL", "KREV", "PDB", "VPB", "SWEEP", "MSCALP", "SHDW", "ECHO", "WFT", "MRVWAP", "KELT", "TLAD", "RCB" };
+	private static final String[] PATTERN_LEVEL_STRATEGY_CODES = new String[] { "FVG", "IFVG", "VWAP", "VRCL", "KREV", "PDB", "VPB", "SWEEP", "MSCALP", "SHDW", "ECHO", "WFT", "MRVWAP", "KELT", "TLAD", "RCB", "LIQREC" };
 	private static final String[] DISABLED_RESEARCH_STRATEGY_CODES = new String[] { "MSCALP", "VPB", "SHDW", "ECHO", "WFT", "MRVWAP", "KELT", "TLAD", "RCB", "EIA", "COPEN", "IDXCONF", "MYMORB2", "MYMBR", "MCLTC" };
 	private static final double PORTFOLIO_BACKTEST_MAE_RULE_BUFFER = 100.0;
 	private static final String DEFAULT_LIVE_SYMBOLS = "MES,MNQ,NQ,MGC,ES,M2K,MYM,MCL";
@@ -458,6 +458,7 @@ public class FuturesManager {
 		private double profitTarget;
 		private String trailingDrawdownMode = "INTRADAY";
 		private FuturesStrategySettings strategySettings = defaultFuturesStrategySettings();
+		private boolean includeLiveOnlyStrategyOverlays;
 	}
 
 	private static class PortfolioBacktestConfig {
@@ -635,6 +636,7 @@ public class FuturesManager {
 		public StrategyToggle mymOrbRetest = new StrategyToggle(false, 2);
 		public StrategyToggle mymBreadthConfirmation = new StrategyToggle(false, 6);
 		public StrategyToggle mclTrendContinuation = new StrategyToggle(false, 6);
+		public StrategyToggle liquidityReclaim = new StrategyToggle(false, 50);
 		public boolean enableEarlySweep = true;
 		public boolean enableLateSweep = true;
 		public boolean enableSweepSecondChance = true;
@@ -1548,7 +1550,7 @@ public class FuturesManager {
 			"microScalp", "microShadow", "microEcho", "winnerFollowThrough", "trendLadder",
 			"rangeCompressionBreakout", "valueAreaReclaim", "mclEiaContinuation",
 			"mclCrudeSessionOpen", "mymIndexConfirmation", "mymOrbRetest",
-			"mymBreadthConfirmation", "mclTrendContinuation"
+			"mymBreadthConfirmation", "mclTrendContinuation", "liquidityReclaim"
 		};
 		for (String symbol : supportedInstrumentSymbols()) {
 			for (int index = 0; index < modules.length; index++) {
@@ -1571,6 +1573,7 @@ public class FuturesManager {
 
 	private static void applyBestBiasFreeLiveOnlyLiquidityOverlayPolicy(Connection conn, String slot) throws SQLException {
 		overlaySourceSettings(conn, slot, "MES", new String[] { "microShadow", "allowMicroShadow" });
+		overlaySourceSettings(conn, slot, "NQ", new String[] { "fvg", "allowFvg", "keltner", "allowKeltner" });
 		overlaySourceSettings(conn, slot, "MNQ", new String[] { "fvg", "allowFvg", "keltner", "allowKeltner" });
 		overlaySourceSettings(conn, slot, "MGC", new String[] { "keltner", "allowKeltner" });
 		overlaySourceSettings(conn, slot, "ES", new String[] { "vwap", "allowVwap", "sweep", "earlySweep", "lateSweep", "enableEarlySweep", "enableLateSweep", "enableSweepSecondChance" });
@@ -1578,13 +1581,24 @@ public class FuturesManager {
 		overlaySourceSettings(conn, slot, "MYM", new String[] { "microShadow", "allowMicroShadow", "sweep", "earlySweep", "lateSweep", "enableEarlySweep", "enableLateSweep", "enableSweepSecondChance" });
 		overlaySourceSettings(conn, slot, "MCL", new String[] { "priorDayBreakout", "allowPriorDayBreakout" });
 
-		enableBestBiasFreeModules(conn, slot, "MES", new String[] { "microShadow" });
-		enableBestBiasFreeModules(conn, slot, "MNQ", new String[] { "fvg", "keltnerReversion" });
-		enableBestBiasFreeModules(conn, slot, "MGC", new String[] { "keltnerReversion" });
-		enableBestBiasFreeModules(conn, slot, "ES", new String[] { "vwapPullback", "sweep" });
-		enableBestBiasFreeModules(conn, slot, "M2K", new String[] { "valueAreaReclaim" });
-		enableBestBiasFreeModules(conn, slot, "MYM", new String[] { "microShadow", "sweep" });
-		enableBestBiasFreeModules(conn, slot, "MCL", new String[] { "priorDayBreakout" });
+		for (String symbol : supportedInstrumentSymbols()) {
+			setSlotSymbolSetting(conn, slot, symbol, "liquidityReclaim.enabled", isLiquidityReclaimSourceSymbol(symbol) ? "true" : "false");
+			setSlotSymbolSetting(conn, slot, symbol, "liquidityReclaim.maxTradesPerDay", "50");
+		}
+		disableBestBiasFreeLiveOnlyComponentModules(conn, slot);
+	}
+
+	private static void disableBestBiasFreeLiveOnlyComponentModules(Connection conn, String slot) throws SQLException {
+		setSlotSymbolSetting(conn, slot, "MES", "microShadow.enabled", "false");
+		setSlotSymbolSetting(conn, slot, "MNQ", "fvg.enabled", "false");
+		setSlotSymbolSetting(conn, slot, "MNQ", "keltnerReversion.enabled", "false");
+		setSlotSymbolSetting(conn, slot, "MGC", "keltnerReversion.enabled", "false");
+		setSlotSymbolSetting(conn, slot, "ES", "vwapPullback.enabled", "false");
+		setSlotSymbolSetting(conn, slot, "ES", "sweep.enabled", "false");
+		setSlotSymbolSetting(conn, slot, "M2K", "valueAreaReclaim.enabled", "false");
+		setSlotSymbolSetting(conn, slot, "MYM", "microShadow.enabled", "false");
+		setSlotSymbolSetting(conn, slot, "MYM", "sweep.enabled", "false");
+		setSlotSymbolSetting(conn, slot, "MCL", "priorDayBreakout.enabled", "false");
 	}
 
 	private static void overlaySourceSettings(Connection conn, String slot, String symbol, String[] suffixPrefixes) throws SQLException {
@@ -2177,6 +2191,63 @@ public class FuturesManager {
 		return savePortfolioBacktest(result, config);
 	}
 
+	public static int generateSyntheticLiveOnlyLiquidityReclaimBacktest(
+		String symbols,
+		String startDate,
+		String endDate,
+		double accountSize,
+		double maxTrailingDrawdown,
+		double dailyLossLimit,
+		double maxRiskPerTrade,
+		int maxContracts,
+		double commissionPerContract,
+		double slippageTicks,
+		int maxOpenPositions,
+		int maxAggregateContracts,
+		double maxAggregateMiniUnits,
+		boolean useSavedRisk,
+		double profitTarget,
+		String fundedProfile,
+		String strategyPreset,
+		int sourcePortfolioBacktestId,
+		boolean continueAfterRuleViolation
+	) {
+		initializeStore();
+		String normalizedStrategyPreset = normalizeStrategyPresetName(strategyPreset);
+		String presetValidationMessage = validateStrategyPresetForSymbols(normalizedStrategyPreset, symbols);
+		if (presetValidationMessage.length() > 0) {
+			return -1;
+		}
+		PortfolioBacktestConfig config = buildPortfolioBacktestConfig(
+			symbols,
+			startDate,
+			endDate,
+			accountSize,
+			maxTrailingDrawdown,
+			dailyLossLimit,
+			maxRiskPerTrade,
+			maxContracts,
+			commissionPerContract,
+			slippageTicks,
+			maxOpenPositions,
+			maxAggregateContracts,
+			maxAggregateMiniUnits,
+			useSavedRisk,
+			profitTarget,
+			fundedProfile
+		);
+		config.strategyPreset = normalizedStrategyPreset;
+		config.strategySlot = strategyPresetSlot(config.strategyPreset);
+		config.sourcePortfolioBacktestId = Math.max(0, sourcePortfolioBacktestId);
+		config.continueAfterRuleViolation = continueAfterRuleViolation;
+		config.includeLiveOnlyStrategyOverlays = true;
+		PortfolioBacktestResult result = runPortfolioBacktest(config);
+		if (result == null) {
+			return -1;
+		}
+		return savePortfolioBacktest(result, config);
+	}
+
 	public static FuturesStrategySettings loadFuturesStrategySettings() {
 		return loadFuturesStrategySettings("MNQ");
 	}
@@ -2311,6 +2382,8 @@ public class FuturesManager {
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "mymBreadthConfirmation.maxTradesPerDay"), safeSettings.mymBreadthConfirmation.maxTradesPerDay);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "mclTrendContinuation.enabled"), safeSettings.mclTrendContinuation.enabled);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "mclTrendContinuation.maxTradesPerDay"), safeSettings.mclTrendContinuation.maxTradesPerDay);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaim.enabled"), safeSettings.liquidityReclaim.enabled);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaim.maxTradesPerDay"), safeSettings.liquidityReclaim.maxTradesPerDay);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "enableEarlySweep"), safeSettings.enableEarlySweep);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "enableLateSweep"), safeSettings.enableLateSweep);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "enableSweepSecondChance"), safeSettings.enableSweepSecondChance);
@@ -2804,6 +2877,7 @@ public class FuturesManager {
 			+ "\"mymOrbRetest\":" + toggleJson(settings.mymOrbRetest) + ","
 			+ "\"mymBreadthConfirmation\":" + toggleJson(settings.mymBreadthConfirmation) + ","
 			+ "\"mclTrendContinuation\":" + toggleJson(settings.mclTrendContinuation) + ","
+			+ "\"liquidityReclaim\":" + toggleJson(settings.liquidityReclaim) + ","
 			+ "\"enableEarlySweep\":" + settings.enableEarlySweep + ","
 			+ "\"enableLateSweep\":" + settings.enableLateSweep + ","
 			+ "\"enableSweepSecondChance\":" + settings.enableSweepSecondChance + ","
@@ -3693,6 +3767,8 @@ public class FuturesManager {
 		else if ("mymBreadthConfirmation.maxTradesPerDay".equals(key)) settings.mymBreadthConfirmation.maxTradesPerDay = parseInt(value, settings.mymBreadthConfirmation.maxTradesPerDay);
 		else if ("mclTrendContinuation.enabled".equals(key)) settings.mclTrendContinuation.enabled = parseBoolean(value, settings.mclTrendContinuation.enabled);
 		else if ("mclTrendContinuation.maxTradesPerDay".equals(key)) settings.mclTrendContinuation.maxTradesPerDay = parseInt(value, settings.mclTrendContinuation.maxTradesPerDay);
+		else if ("liquidityReclaim.enabled".equals(key)) settings.liquidityReclaim.enabled = parseBoolean(value, settings.liquidityReclaim.enabled);
+		else if ("liquidityReclaim.maxTradesPerDay".equals(key)) settings.liquidityReclaim.maxTradesPerDay = parseInt(value, settings.liquidityReclaim.maxTradesPerDay);
 		else if ("enableEarlySweep".equals(key)) settings.enableEarlySweep = parseBoolean(value, settings.enableEarlySweep);
 		else if ("enableLateSweep".equals(key)) settings.enableLateSweep = parseBoolean(value, settings.enableLateSweep);
 		else if ("enableSweepSecondChance".equals(key)) settings.enableSweepSecondChance = parseBoolean(value, settings.enableSweepSecondChance);
@@ -4167,6 +4243,7 @@ public class FuturesManager {
 		settings.mymOrbRetest.maxTradesPerDay = boundedInt(settings.mymOrbRetest.maxTradesPerDay, 2, 0, 8);
 		settings.mymBreadthConfirmation.maxTradesPerDay = boundedInt(settings.mymBreadthConfirmation.maxTradesPerDay, 6, 0, 20);
 		settings.mclTrendContinuation.maxTradesPerDay = boundedInt(settings.mclTrendContinuation.maxTradesPerDay, 6, 0, 20);
+		settings.liquidityReclaim.maxTradesPerDay = boundedInt(settings.liquidityReclaim.maxTradesPerDay, 50, 0, 100);
 		settings.orbRetestStartMinutes = boundedInt(settings.orbRetestStartMinutes, 0, 0, 150);
 		settings.orbRetestEndMinutes = boundedInt(settings.orbRetestEndMinutes, 135, 0, 150);
 		if (settings.orbRetestEndMinutes < settings.orbRetestStartMinutes) {
@@ -6203,6 +6280,7 @@ public class FuturesManager {
 		copy.mymOrbRetest = new StrategyToggle(safe.mymOrbRetest.enabled, safe.mymOrbRetest.maxTradesPerDay);
 		copy.mymBreadthConfirmation = new StrategyToggle(safe.mymBreadthConfirmation.enabled, safe.mymBreadthConfirmation.maxTradesPerDay);
 		copy.mclTrendContinuation = new StrategyToggle(safe.mclTrendContinuation.enabled, safe.mclTrendContinuation.maxTradesPerDay);
+		copy.liquidityReclaim = new StrategyToggle(safe.liquidityReclaim.enabled, safe.liquidityReclaim.maxTradesPerDay);
 		copy.enableEarlySweep = safe.enableEarlySweep;
 		copy.enableLateSweep = safe.enableLateSweep;
 		copy.enableSweepSecondChance = safe.enableSweepSecondChance;
@@ -9447,6 +9525,7 @@ public class FuturesManager {
 		settings.trendLadder = new StrategyToggle(true, 4);
 		settings.rangeCompressionBreakout = new StrategyToggle(true, 4);
 		settings.valueAreaReclaim = new StrategyToggle(true, 4);
+		settings.liquidityReclaim = new StrategyToggle(true, 4);
 		settings.maxInitialRiskTicks = 220.0;
 		settings.openMaeRiskMultiplier = 1.0;
 		settings.openingMomentumPortfolioRiskMultiplier = 1.0;
@@ -10002,6 +10081,7 @@ public class FuturesManager {
 		addDiagnosticTarget(targets, "MYMORB2", "MYM ORB Retest", safe.mymOrbRetest, false);
 		addDiagnosticTarget(targets, "MYMBR", "MYM Breadth Fade", safe.mymBreadthConfirmation, false);
 		addDiagnosticTarget(targets, "MCLTC", "MCL Trend Fade", safe.mclTrendContinuation, false);
+		addDiagnosticTarget(targets, "LIQREC", "Liquidity Reclaim", safe.liquidityReclaim, true);
 		return targets;
 	}
 
@@ -12425,6 +12505,7 @@ public class FuturesManager {
 		count += safe.mclCrudeSessionOpen.enabled ? 1 : 0;
 		count += safe.mymIndexConfirmation.enabled ? 1 : 0;
 		count += safe.mymOrbRetest.enabled ? 1 : 0;
+		count += safe.liquidityReclaim.enabled ? 1 : 0;
 		return count;
 	}
 
@@ -12459,6 +12540,7 @@ public class FuturesManager {
 		appendStrategyWatch(json, 24, "MYMORB2", "MYM ORB Retest", safe.mymOrbRetest, signals, bars);
 		appendStrategyWatch(json, 25, "MYMBR", "MYM Breadth Fade", safe.mymBreadthConfirmation, signals, bars);
 		appendStrategyWatch(json, 26, "MCLTC", "MCL Trend Fade", safe.mclTrendContinuation, signals, bars);
+		appendStrategyWatch(json, 27, "LIQREC", "Liquidity Reclaim", safe.liquidityReclaim, signals, bars);
 		json.append("]");
 		return json.toString();
 	}
@@ -13144,6 +13226,7 @@ public class FuturesManager {
 		if ("MYMORB2".equals(code)) return "ENTRY_MYM_ORB_RETEST";
 		if ("MYMBR".equals(code)) return "ENTRY_MYM_BREADTH_CONFIRMATION";
 		if ("MCLTC".equals(code)) return "ENTRY_MCL_TREND_CONTINUATION";
+		if ("LIQREC".equals(code)) return "ENTRY_LIQUIDITY_RECLAIM";
 		if ("OFLOW_EQ".equals(code)) return "ENTRY_ORDER_FLOW_EQUILIBRIUM";
 		if (code.contains("OFLOW")) return "ENTRY_ORDER_FLOW_CONTINUATION";
 		return "ENTRY_CONFIGURED_STRATEGY";
@@ -13179,6 +13262,7 @@ public class FuturesManager {
 		if ("MYMORB2".equals(code)) return "MYM retested the opening range after a confirmed break and resumed.";
 		if ("MYMBR".equals(code)) return "MYM faded an index-breadth stretch after the Dow contract reached a structured breakout/breakdown zone.";
 		if ("MCLTC".equals(code)) return "MCL faded an extended crude trend push after price stretched away from the session open with bounded reversal risk.";
+		if ("LIQREC".equals(code)) return "live Level 2 depth/tape confirmed a liquidity-reclaim setup from the approved best bias-free component stack.";
 		if ("OFLOW_EQ".equals(code)) return "order-flow equilibrium logic confirmed a dislocation reversion setup.";
 		return "the configured strategy filters passed for " + dir + " expectancy.";
 	}
@@ -14414,6 +14498,25 @@ public class FuturesManager {
 		synchronized (FuturesManager.class) {
 			return copyLiveSession(liveSession);
 		}
+	}
+
+	private static boolean liveOnlyLiquidityReclaimEnabled(String symbolsCsv, String strategySlot) {
+		String clean = cleanSymbolsCsv(cleanOrDefault(symbolsCsv, DEFAULT_LIVE_SYMBOLS));
+		if (clean.trim().isEmpty()) {
+			return false;
+		}
+		String[] symbols = clean.split(",");
+		for (int index = 0; index < symbols.length; index++) {
+			String symbol = normalizeSymbol(symbols[index]);
+			if (!isLiquidityReclaimSourceSymbol(symbol)) {
+				continue;
+			}
+			FuturesStrategySettings settings = loadFuturesStrategySettings(symbol, strategySlot);
+			if (settings != null && settings.liquidityReclaim != null && settings.liquidityReclaim.enabled) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static boolean liveSessionStillRunning(int sessionId) {
@@ -16876,6 +16979,9 @@ public class FuturesManager {
 
 	private static double liveEntryDecayMinimumRewardRisk(String strategyCode) {
 		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
+		if ("LIQREC".equals(code)) {
+			return 0.65;
+		}
 		if ("KREV".equals(code) || "MRVWAP".equals(code)) {
 			return 0.70;
 		}
@@ -16887,10 +16993,6 @@ public class FuturesManager {
 
 	private static OrderFlowEntryDecision evaluateLiveEntryOrderFlow(FuturesLiveSession session, LivePortfolioSignalCandidate candidate) {
 		OrderFlowEntryDecision decision = new OrderFlowEntryDecision();
-		decision.enabled = session != null && session.entryOptimizerEnabled;
-		if (!decision.enabled) {
-			return decision;
-		}
 		if (candidate == null || candidate.event == null || candidate.event.signal == null) {
 			decision.passed = false;
 			decision.actionCode = "ORDER_FLOW_BLOCK_INCOMPLETE";
@@ -16898,10 +17000,21 @@ public class FuturesManager {
 			return decision;
 		}
 		Signal signal = candidate.event.signal;
+		boolean liquidityReclaim = "LIQREC".equals(cleanOrDefault(signal.strategyCode, "").toUpperCase(Locale.US));
+		decision.enabled = (session != null && session.entryOptimizerEnabled) || liquidityReclaim;
+		if (!decision.enabled) {
+			return decision;
+		}
 		String side = cleanOrDefault(signal.side, "").toUpperCase(Locale.US);
 		LiveRuntimeState.OrderFlowSnapshot flow = LiveRuntimeState.orderFlowSnapshot(candidate.symbol);
 		decision.metricsJson = flow.toJson();
 		if (!flow.available || !flow.fresh) {
+			if (liquidityReclaim) {
+				decision.passed = false;
+				decision.actionCode = "ORDER_FLOW_BLOCK_LIQREC_DEPTH_MISSING";
+				decision.reason = "Liquidity Reclaim is live-only and requires fresh Level 2 depth/tape confirmation; no fallback pass was allowed.";
+				return decision;
+			}
 			decision.passed = true;
 			decision.actionCode = "ORDER_FLOW_PASS_FALLBACK";
 			decision.reason = "Entry optimizer passed in fallback mode because fresh Level 2 depth was not available; base strategy and Risk Config remain in control.";
@@ -16968,6 +17081,12 @@ public class FuturesManager {
 				decision.reason = "Entry optimizer blocked because fresh order flow was not confirming a fragile pattern entry and showed weak opposing evidence.";
 				return decision;
 			}
+			if (liquidityReclaim && !(confirmingLong || confirmingShort)) {
+				decision.passed = false;
+				decision.actionCode = "ORDER_FLOW_BLOCK_LIQREC_UNCONFIRMED";
+				decision.reason = "Liquidity Reclaim blocked because the live book/tape was neutral instead of confirming the reclaim direction.";
+				return decision;
+			}
 		decision.passed = true;
 		decision.actionCode = (confirmingLong || confirmingShort) ? "ORDER_FLOW_PASS_CONFIRMED" : "ORDER_FLOW_PASS_NEUTRAL";
 		decision.reason = (confirmingLong || confirmingShort)
@@ -17010,6 +17129,7 @@ public class FuturesManager {
 			|| "VWAP".equals(code)
 			|| "VRCL".equals(code)
 			|| "KREV".equals(code)
+			|| "LIQREC".equals(code)
 			|| "MRVWAP".equals(code)
 			|| "SWEEP".equals(code)
 			|| "PDB".equals(code);
@@ -17430,6 +17550,7 @@ public class FuturesManager {
 			0.0
 		);
 		config.strategySettings = loadFuturesStrategySettings(symbol, activeLiveStrategySlot(session, snapshot));
+		config.includeLiveOnlyStrategyOverlays = true;
 		config.fundedProfile = activeLiveFundedProfileCode(session, snapshot);
 		FundedRuleProfile profile = fundedRuleProfileFor(config.fundedProfile);
 		if (riskProfileUsesSavedRisk(profile.code)) {
@@ -18221,7 +18342,9 @@ public class FuturesManager {
 		String cleanLiveSymbols = cleanSymbolsCsv(cleanOrDefault(symbols, DEFAULT_LIVE_SYMBOLS));
 		String strategyPresetName = normalizeStrategyPresetName(strategyPreset);
 		String strategySlot = strategyPresetSlot(strategyPresetName);
-		boolean orderFlowFeaturesEnabled = entryOptimizerEnabled || dtmEnabled;
+		boolean liquidityReclaimEnabled = liveOnlyLiquidityReclaimEnabled(cleanLiveSymbols, strategySlot);
+		boolean effectiveEntryOptimizerEnabled = entryOptimizerEnabled || liquidityReclaimEnabled;
+		boolean orderFlowFeaturesEnabled = effectiveEntryOptimizerEnabled || dtmEnabled;
 		String configuredAccountId = FuturesConnectionManager.getTopstepxConfiguredAccountId();
 		String requestedAccountId = cleanOrDefault(topstepAccountId, "");
 		String executionAccountId = requestedAccountId.length() > 0
@@ -18295,7 +18418,7 @@ public class FuturesManager {
 				liveSession.maxOpenPositions = sessionMaxOpenPositions;
 				liveSession.maxAggregateContracts = sessionMaxAggregateContracts;
 				liveSession.maxAggregateMiniUnits = sessionMaxAggregateMiniUnits;
-				liveSession.entryOptimizerEnabled = entryOptimizerEnabled;
+				liveSession.entryOptimizerEnabled = effectiveEntryOptimizerEnabled;
 				liveSession.dtmEnabled = dtmEnabled;
 				liveSession.startedAt = startedAt;
 				liveSession.lastUpdatedAt = liveSession.startedAt;
@@ -18383,7 +18506,8 @@ public class FuturesManager {
 							+ "\"strategyConfig\":" + jsonString(strategyPresetName) + ","
 							+ "\"strategyPreset\":" + jsonString(strategyPresetName) + ","
 						+ "\"riskConfig\":" + jsonString(profile.name) + ","
-						+ "\"entryOptimizerEnabled\":" + entryOptimizerEnabled + ","
+						+ "\"entryOptimizerEnabled\":" + effectiveEntryOptimizerEnabled + ","
+						+ "\"liquidityReclaimEnabled\":" + liquidityReclaimEnabled + ","
 						+ "\"dtmEnabled\":" + dtmEnabled + ","
 						+ "\"includeDepth\":" + orderFlowFeaturesEnabled + ","
 						+ "\"mode\":" + jsonString(normalizedMode) + ","
@@ -18435,7 +18559,7 @@ public class FuturesManager {
 			liveSession.maxOpenPositions = sessionMaxOpenPositions;
 			liveSession.maxAggregateContracts = sessionMaxAggregateContracts;
 			liveSession.maxAggregateMiniUnits = sessionMaxAggregateMiniUnits;
-			liveSession.entryOptimizerEnabled = entryOptimizerEnabled;
+			liveSession.entryOptimizerEnabled = effectiveEntryOptimizerEnabled;
 			liveSession.dtmEnabled = dtmEnabled;
 			liveSession.startedAt = startedAt;
 			liveSession.lastUpdatedAt = liveSession.startedAt;
@@ -18472,6 +18596,9 @@ public class FuturesManager {
 						+ "\"strategyConfig\":" + jsonString(strategyPresetName) + ","
 						+ "\"strategyPreset\":" + jsonString(strategyPresetName) + ","
 					+ "\"riskConfig\":" + jsonString(profile.name) + ","
+					+ "\"entryOptimizerEnabled\":" + effectiveEntryOptimizerEnabled + ","
+					+ "\"liquidityReclaimEnabled\":" + liquidityReclaimEnabled + ","
+					+ "\"includeDepth\":" + orderFlowFeaturesEnabled + ","
 					+ "\"mode\":" + jsonString(normalizedMode) + ","
 					+ "\"profile\":" + jsonString(profile.name) + ","
 					+ "\"marketData\":" + jsonString(ProjectXRealtimeManager.currentDataMode())
@@ -19472,6 +19599,7 @@ public class FuturesManager {
 			context.config.strategySettings = sourceStrategySettings == null
 				? loadFuturesStrategySettings(symbol, config.strategySlot)
 				: sourceStrategySettings;
+			context.config.includeLiveOnlyStrategyOverlays = config.includeLiveOnlyStrategyOverlays;
 			if (!config.includeLiveOnlyStrategyOverlays && BEST_BIAS_FREE_STRATEGY_PRESET.equals(normalizeStrategyPresetName(config.strategyPreset))) {
 				disableBestBiasFreeLiveOnlyLiquidityOverlay(context.config.strategySettings, symbol);
 			}
@@ -19575,6 +19703,7 @@ public class FuturesManager {
 		if (settings == null) {
 			return;
 		}
+		settings.liquidityReclaim.enabled = false;
 		String normalized = normalizeSymbol(symbol);
 		if ("MES".equals(normalized)) {
 			settings.microShadow.enabled = false;
@@ -19594,6 +19723,125 @@ public class FuturesManager {
 		} else if ("MCL".equals(normalized)) {
 			settings.priorDayBreakout.enabled = false;
 		}
+	}
+
+	private static boolean isLiquidityReclaimSourceSymbol(String symbol) {
+		String normalized = normalizeSymbol(symbol);
+		return "MES".equals(normalized)
+			|| "MNQ".equals(normalized)
+			|| "NQ".equals(normalized)
+			|| "MGC".equals(normalized)
+			|| "ES".equals(normalized)
+			|| "M2K".equals(normalized)
+			|| "MYM".equals(normalized)
+			|| "MCL".equals(normalized);
+	}
+
+	private static boolean liquidityReclaimEnabledFor(BacktestConfig config, InstrumentSpec spec, FuturesStrategySettings settings) {
+		if (config == null || !config.includeLiveOnlyStrategyOverlays || settings == null || settings.liquidityReclaim == null || !settings.liquidityReclaim.enabled) {
+			return false;
+		}
+		return isLiquidityReclaimSourceSymbol(spec == null ? config.symbol : spec.symbol);
+	}
+
+	private static boolean liquidityReclaimOwnsComponent(String symbol, String strategyCode) {
+		String normalized = normalizeSymbol(symbol);
+		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
+		if ("MES".equals(normalized)) {
+			return "SHDW".equals(code);
+		}
+		if ("MNQ".equals(normalized) || "NQ".equals(normalized)) {
+			return "FVG".equals(code) || "KREV".equals(code);
+		}
+		if ("MGC".equals(normalized)) {
+			return "KREV".equals(code);
+		}
+		if ("ES".equals(normalized)) {
+			return "VWAP".equals(code) || "SWEEP".equals(code) || "SWEEP2".equals(code);
+		}
+		if ("M2K".equals(normalized)) {
+			return "VPB".equals(code);
+		}
+		if ("MYM".equals(normalized)) {
+			return "SHDW".equals(code) || "SWEEP".equals(code) || "SWEEP2".equals(code);
+		}
+		if ("MCL".equals(normalized)) {
+			return "PDB".equals(code);
+		}
+		return false;
+	}
+
+	private static void relabelLiquidityReclaimSignal(Signal signal) {
+		if (signal == null) {
+			return;
+		}
+		String sourceCode = cleanOrDefault(signal.strategyCode, "");
+		String sourceName = cleanOrDefault(signal.strategyName, "");
+		withSourceStrategy(signal, sourceCode, sourceName);
+		signal.strategyCode = "LIQREC";
+		signal.strategyName = "Liquidity Reclaim";
+		signal.notes = "Live-only Liquidity Reclaim: " + sourceName + " structure passed, with fresh Level 2/tape confirmation required before order submission. " + cleanOrDefault(signal.notes, "");
+	}
+
+	private static List<Signal> findLiquidityReclaimSignals(
+		InstrumentSpec spec,
+		List<Bar> bars,
+		List<Bar> previousBars,
+		List<Bar> fifteenMinuteBars,
+		List<Bar> oneHourBars,
+		BacktestConfig config,
+		List<Signal> existingSignals
+	) {
+		List<Signal> signals = new ArrayList<Signal>();
+		FuturesStrategySettings settings = config == null || config.strategySettings == null ? defaultFuturesStrategySettings() : config.strategySettings;
+		if (!liquidityReclaimEnabledFor(config, spec, settings)) {
+			return signals;
+		}
+		String symbol = spec == null ? "" : normalizeSymbol(spec.symbol);
+		List<Signal> candidates = new ArrayList<Signal>();
+		if ("MNQ".equals(symbol) || "NQ".equals(symbol)) {
+			candidates.addAll(findFvgSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings));
+			candidates.addAll(findKeltnerReversionSignals(spec, bars, fifteenMinuteBars, oneHourBars, settings));
+		} else if ("MGC".equals(symbol)) {
+			candidates.addAll(findKeltnerReversionSignals(spec, bars, fifteenMinuteBars, oneHourBars, settings));
+		} else if ("ES".equals(symbol)) {
+			candidates.addAll(findVwapPullbackSignals(spec, bars, fifteenMinuteBars, oneHourBars, settings));
+			candidates.addAll(findSweepSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings));
+		} else if ("M2K".equals(symbol)) {
+			candidates.addAll(findValueAreaReclaimSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings));
+		} else if ("MYM".equals(symbol)) {
+			candidates.addAll(findSweepSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings));
+		} else if ("MCL".equals(symbol)) {
+			candidates.addAll(findPriorDayBreakoutSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings));
+		}
+		for (int index = 0; index < candidates.size(); index++) {
+			Signal candidate = candidates.get(index);
+			if (candidate == null || !liquidityReclaimOwnsComponent(symbol, candidate.strategyCode) || sameSignalGeometryExists(existingSignals, candidate)) {
+				continue;
+			}
+			relabelLiquidityReclaimSignal(candidate);
+			signals.add(candidate);
+		}
+		return signals;
+	}
+
+	private static boolean sameSignalGeometryExists(List<Signal> existingSignals, Signal candidate) {
+		if (existingSignals == null || candidate == null) {
+			return false;
+		}
+		for (int index = 0; index < existingSignals.size(); index++) {
+			Signal existing = existingSignals.get(index);
+			if (existing == null) {
+				continue;
+			}
+			if (existing.entryIndex == candidate.entryIndex
+				&& cleanOrDefault(existing.side, "").equals(cleanOrDefault(candidate.side, ""))
+				&& Math.abs(existing.entryPrice - candidate.entryPrice) < 0.000001
+				&& Math.abs(existing.stopPrice - candidate.stopPrice) < 0.000001) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static void addMymBreadthConfirmationSignalEvents(Map<String, PortfolioSymbolContext> contexts) {
@@ -19818,7 +20066,9 @@ public class FuturesManager {
 			return;
 		}
 		FuturesStrategySettings settings = target.config.strategySettings == null ? defaultFuturesStrategySettings() : target.config.strategySettings;
-		if (settings.microShadow == null || !settings.microShadow.enabled) {
+		boolean liquidityShadow = liquidityReclaimEnabledFor(target.config, target.spec, settings)
+			&& liquidityReclaimOwnsComponent(targetSymbol, "SHDW");
+		if ((settings.microShadow == null || !settings.microShadow.enabled) && !liquidityShadow) {
 			return;
 		}
 		List<LocalDate> days = new ArrayList<LocalDate>(source.eventsByDay.keySet());
@@ -19892,6 +20142,9 @@ public class FuturesManager {
 						"Micro futures shadow entry when " + sourceSymbol + " prints a high-quality " + sourceEvent.signal.strategyCode + " signal and " + targetSymbol + " confirms VWAP/EMA direction with compressed risk."
 					);
 					withSourceStrategy(shadowSignal, sourceEvent.signal.strategyCode, sourceEvent.signal.strategyName);
+					if (liquidityShadow) {
+						relabelLiquidityReclaimSignal(shadowSignal);
+					}
 				SignalEvent shadowEvent = new SignalEvent();
 				shadowEvent.symbol = targetSymbol;
 				shadowEvent.signal = shadowSignal;
@@ -21344,6 +21597,9 @@ public class FuturesManager {
 		}
 		if (settings.mclTrendContinuation.enabled) {
 			signals.addAll(findMclTrendContinuationSignals(spec, bars, settings));
+		}
+		if (liquidityReclaimEnabledFor(config, spec, settings)) {
+			signals.addAll(findLiquidityReclaimSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, config, signals));
 		}
 		return signals;
 	}
@@ -24671,6 +24927,9 @@ public class FuturesManager {
 		}
 		if ("MCLTC".equals(strategyCode)) {
 			return safeSettings.mclTrendContinuation.maxTradesPerDay;
+		}
+		if ("LIQREC".equals(strategyCode)) {
+			return safeSettings.liquidityReclaim.maxTradesPerDay;
 		}
 		return 1;
 	}

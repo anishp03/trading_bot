@@ -357,6 +357,12 @@ public class MainServer {
             settings.mymIndexConfirmation.maxTradesPerDay = parseIntOrDefault(ctx.queryParam("mymIndexConfirmationMaxTradesPerDay"), settings.mymIndexConfirmation.maxTradesPerDay);
             settings.mymOrbRetest.enabled = parseBooleanOrDefault(ctx.queryParam("mymOrbRetestEnabled"), settings.mymOrbRetest.enabled);
             settings.mymOrbRetest.maxTradesPerDay = parseIntOrDefault(ctx.queryParam("mymOrbRetestMaxTradesPerDay"), settings.mymOrbRetest.maxTradesPerDay);
+            settings.mymBreadthConfirmation.enabled = parseBooleanOrDefault(ctx.queryParam("mymBreadthConfirmationEnabled"), settings.mymBreadthConfirmation.enabled);
+            settings.mymBreadthConfirmation.maxTradesPerDay = parseIntOrDefault(ctx.queryParam("mymBreadthConfirmationMaxTradesPerDay"), settings.mymBreadthConfirmation.maxTradesPerDay);
+            settings.mclTrendContinuation.enabled = parseBooleanOrDefault(ctx.queryParam("mclTrendContinuationEnabled"), settings.mclTrendContinuation.enabled);
+            settings.mclTrendContinuation.maxTradesPerDay = parseIntOrDefault(ctx.queryParam("mclTrendContinuationMaxTradesPerDay"), settings.mclTrendContinuation.maxTradesPerDay);
+            settings.liquidityReclaim.enabled = parseBooleanOrDefault(ctx.queryParam("liquidityReclaimEnabled"), settings.liquidityReclaim.enabled);
+            settings.liquidityReclaim.maxTradesPerDay = parseIntOrDefault(ctx.queryParam("liquidityReclaimMaxTradesPerDay"), settings.liquidityReclaim.maxTradesPerDay);
             settings.enableEarlySweep = parseBooleanOrDefault(ctx.queryParam("enableEarlySweep"), settings.enableEarlySweep);
             settings.enableLateSweep = parseBooleanOrDefault(ctx.queryParam("enableLateSweep"), settings.enableLateSweep);
             settings.enableSweepSecondChance = parseBooleanOrDefault(ctx.queryParam("enableSweepSecondChance"), settings.enableSweepSecondChance);

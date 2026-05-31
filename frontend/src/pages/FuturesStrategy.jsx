@@ -21,6 +21,7 @@ const DEFAULT_SETTINGS = {
   mymOrbRetest: { enabled: false, maxTradesPerDay: 2 },
   mymBreadthConfirmation: { enabled: false, maxTradesPerDay: 6 },
   mclTrendContinuation: { enabled: false, maxTradesPerDay: 6 },
+  liquidityReclaim: { enabled: false, maxTradesPerDay: 50 },
   enableEarlySweep: true,
   enableLateSweep: true,
   enableSweepSecondChance: true,
@@ -197,14 +198,8 @@ const MODULES = [
   ["mclTrendContinuation", "MCL Trend Fade"],
 ];
 
-const BEST_BIAS_FREE_LIVE_MODULES = [
-  ["vwapPullback", "VWAP Pullback", new Set(["ES"])],
-  ["sweep", "Prior-Day Sweep", new Set(["ES", "MYM"])],
-  ["valueAreaReclaim", "Value Area Reclaim", new Set(["M2K"])],
-  ["priorDayBreakout", "Prior-Day Breakout", new Set(["MCL"])],
-  ["microShadow", "Mini Shadow", new Set(["MES", "MYM"])],
-  ["keltnerReversion", "Keltner Reversion", new Set(["MGC", "MNQ"])],
-  ["fvg", "Fair Value Gap", new Set(["MNQ"])],
+const BEST_BIAS_FREE_LIVE_STRATEGIES = [
+  ["liquidityReclaim", "Liquidity Reclaim", new Set(["MES", "MNQ", "NQ", "MGC", "ES", "M2K", "MYM", "MCL"])],
 ];
 
 const HIGH_CAP_MODULES = new Set(["keltnerScalp", "keltnerReversion", "microScalp"]);
@@ -215,6 +210,7 @@ const CUSTOM_MODULE_CAPS = {
   mymOrbRetest: 8,
   mymBreadthConfirmation: 20,
   mclTrendContinuation: 20,
+  liquidityReclaim: 100,
 };
 
 export default function FuturesStrategy() {
@@ -354,6 +350,8 @@ export default function FuturesStrategy() {
       mymBreadthConfirmationMaxTradesPerDay: String(settings.mymBreadthConfirmation.maxTradesPerDay),
       mclTrendContinuationEnabled: String(settings.mclTrendContinuation.enabled),
       mclTrendContinuationMaxTradesPerDay: String(settings.mclTrendContinuation.maxTradesPerDay),
+      liquidityReclaimEnabled: String(settings.liquidityReclaim.enabled),
+      liquidityReclaimMaxTradesPerDay: String(settings.liquidityReclaim.maxTradesPerDay),
       enableEarlySweep: String(settings.enableEarlySweep),
       enableLateSweep: String(settings.enableLateSweep),
       enableSweepSecondChance: String(settings.enableSweepSecondChance),
@@ -517,7 +515,7 @@ export default function FuturesStrategy() {
   const selectedInstrument = instrumentOptions.find((instrument) => instrument.symbol === selectedSymbol) || null;
   const presetOptions = mergeStrategyPresets(strategyPresets);
   const selectedPresetReadOnly = READ_ONLY_STRATEGY_PRESETS.has(selectedPreset);
-  const liveStrategyRows = BEST_BIAS_FREE_LIVE_MODULES.filter(([, , symbols]) =>
+  const liveStrategyRows = BEST_BIAS_FREE_LIVE_STRATEGIES.filter(([, , symbols]) =>
     selectedPreset === BEST_BIAS_FREE_STRATEGY_PRESET && symbols.has(selectedSymbol)
   );
   const liveStrategyKeys = new Set(liveStrategyRows.map(([key]) => key));
@@ -838,6 +836,7 @@ function normalizeSettings(data) {
     mymOrbRetest: { ...DEFAULT_SETTINGS.mymOrbRetest, ...(data?.mymOrbRetest || {}) },
     mymBreadthConfirmation: { ...DEFAULT_SETTINGS.mymBreadthConfirmation, ...(data?.mymBreadthConfirmation || {}) },
     mclTrendContinuation: { ...DEFAULT_SETTINGS.mclTrendContinuation, ...(data?.mclTrendContinuation || {}) },
+    liquidityReclaim: { ...DEFAULT_SETTINGS.liquidityReclaim, ...(data?.liquidityReclaim || {}) },
   };
 }
 
