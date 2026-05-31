@@ -8,12 +8,10 @@ const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MYM", "MGC", "MCL"]);
 const DEFAULT_STRATEGY_PRESET = "backtestbias92k";
 const BIAS_FREE_STRATEGY_PRESET = "biasfree92k";
 const BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
-const LIQUIDITY_RECLAIM_STRATEGY_PRESET = "liquidityreclaim";
 const CANONICAL_STRATEGY_PRESETS = [
   { name: DEFAULT_STRATEGY_PRESET, label: "Backtest Bias 92k" },
   { name: BIAS_FREE_STRATEGY_PRESET, label: "Bias-Free 92k" },
-  { name: BEST_BIAS_FREE_STRATEGY_PRESET, label: "Best Bias-Free" },
-  { name: LIQUIDITY_RECLAIM_STRATEGY_PRESET, label: "Liquidity Reclaim" },
+  { name: BEST_BIAS_FREE_STRATEGY_PRESET, label: "Best Bias-Free + Live Only" },
 ];
 const INSTRUMENT_FALLBACKS = [
   { symbol: "MES", name: "Micro E-mini S&P 500", exchange: "CME", tickSize: 0.25, tickValue: 1.25 },

@@ -106,13 +106,12 @@ public class FuturesManager {
 	private static final String WINDOWED_94K_STRATEGY_PRESET = "backtestbias92k";
 	private static final String BIAS_FREE_94K_STRATEGY_PRESET = "biasfree92k";
 	private static final String BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
-	private static final String ALL_DAY_LIQUIDITY_RECLAIM_STRATEGY_PRESET = "liquidityreclaim";
 	private static final int ALL_DAY_LIQUIDITY_RECLAIM_SOURCE_RUN_ID = 2268;
 	private static final String DEFAULT_STRATEGY_PRESET = WINDOWED_94K_STRATEGY_PRESET;
 	private static final String WIP_STRATEGY_PRESET = "wip";
-	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-05-31-liquidityreclaim-v1-all-day-source2268";
-	private static final String[] VISIBLE_STRATEGY_PRESETS = new String[] { WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET, ALL_DAY_LIQUIDITY_RECLAIM_STRATEGY_PRESET };
-	private static final String[] SEEDED_STRATEGY_PRESETS = new String[] { LEGACY_94K_STRATEGY_PRESET, WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET, ALL_DAY_LIQUIDITY_RECLAIM_STRATEGY_PRESET, WIP_STRATEGY_PRESET };
+	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-05-31-bestbiasfree-v14-live-liquidity-overlay";
+	private static final String[] VISIBLE_STRATEGY_PRESETS = new String[] { WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET };
+	private static final String[] SEEDED_STRATEGY_PRESETS = new String[] { LEGACY_94K_STRATEGY_PRESET, WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET, WIP_STRATEGY_PRESET };
 	private static final String RESEARCH_RELAXED_WINDOWS_PROPERTY = "tradingbot.research.relaxedWindows";
 	private static final String[] TIME_NATIVE_STRATEGY_CODES = new String[] { "ORB", "ORB2", "LORB", "OMOM", "CMOM", "AFT", "MIM", "IPB" };
 	private static final String[] PATTERN_LEVEL_STRATEGY_CODES = new String[] { "FVG", "IFVG", "VWAP", "VRCL", "KREV", "PDB", "VPB", "SWEEP", "MSCALP", "SHDW", "ECHO", "WFT", "MRVWAP", "KELT", "TLAD", "RCB" };
@@ -483,6 +482,7 @@ public class FuturesManager {
 		private String trailingDrawdownMode = "INTRADAY";
 		private boolean useSavedRisk;
 		private boolean continueAfterRuleViolation;
+		private boolean includeLiveOnlyStrategyOverlays;
 	}
 
 	private static class PortfolioBacktestResult {
@@ -1401,13 +1401,13 @@ public class FuturesManager {
 			applyBiasFreeWindowPolicy(conn, strategyPresetSlot(BIAS_FREE_94K_STRATEGY_PRESET));
 			for (String symbol : supportedInstrumentSymbols()) {
 				copyStrategySlotRows(conn, symbol, strategyPresetSlot(BIAS_FREE_94K_STRATEGY_PRESET), strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET));
-				copyStrategySlotRows(conn, symbol, strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET), strategyPresetSlot(ALL_DAY_LIQUIDITY_RECLAIM_STRATEGY_PRESET));
 			}
 			applyBestBiasFreePresetPolicy(conn, strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET));
-			applyAllDayLiquidityReclaimPresetPolicy(conn, strategyPresetSlot(ALL_DAY_LIQUIDITY_RECLAIM_STRATEGY_PRESET));
+			applyBestBiasFreeLiveOnlyLiquidityOverlayPolicy(conn, strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET));
 			normalizeLiveSnapshotStrategyPresetNames(conn);
 			deleteLegacyVisiblePresetRows(conn);
 			deleteDeprecatedAllEnabledPresetRows(conn);
+			deleteDeprecatedLiquidityReclaimPresetRows(conn);
 			try (PreparedStatement stmt = conn.prepareStatement("INSERT OR REPLACE INTO FuturesStrategySettings (settingKey, settingValue) VALUES (?, ?)")) {
 				stmt.setString(1, versionKey);
 				stmt.setString(2, APPROVED_STRATEGY_PRESET_POLICY_VERSION);
@@ -1465,6 +1465,13 @@ public class FuturesManager {
 	private static void deleteDeprecatedAllEnabledPresetRows(Connection conn) throws SQLException {
 		try (PreparedStatement stmt = conn.prepareStatement("DELETE FROM FuturesStrategySettings WHERE settingKey LIKE ?")) {
 			stmt.setString(1, "PRESET_ALLENABLEDBIASFREE.%");
+			stmt.executeUpdate();
+		}
+	}
+
+	private static void deleteDeprecatedLiquidityReclaimPresetRows(Connection conn) throws SQLException {
+		try (PreparedStatement stmt = conn.prepareStatement("DELETE FROM FuturesStrategySettings WHERE settingKey LIKE ?")) {
+			stmt.setString(1, "PRESET_LIQUIDITYRECLAIM.%");
 			stmt.executeUpdate();
 		}
 	}
@@ -1532,75 +1539,6 @@ public class FuturesManager {
 		insertSlotSuffixForSymbols(conn, slot, "relaxPatternHardWindows", "true");
 	}
 
-	private static void applyAllDayLiquidityReclaimPresetPolicy(Connection conn, String slot) throws SQLException {
-		boolean copiedSource = copyPortfolioBacktestSettingsToStrategySlot(conn, ALL_DAY_LIQUIDITY_RECLAIM_SOURCE_RUN_ID, slot, supportedInstrumentSymbols());
-		if (!copiedSource) {
-			applyBiasFreeWindowPolicy(conn, slot);
-		}
-		String[] modules = new String[] {
-			"orb", "lateOrbContinuation", "openingMomentum", "sweep", "priorDayBreakout",
-			"vwapPullback", "vwapReclaim", "vwapMeanReversion", "fvg", "ifvg", "closeMomentum",
-			"afternoonContinuation", "marketIntradayMomentum", "keltnerScalp", "keltnerReversion",
-			"microScalp", "microShadow", "microEcho", "winnerFollowThrough", "trendLadder",
-			"rangeCompressionBreakout", "valueAreaReclaim", "mclEiaContinuation",
-			"mclCrudeSessionOpen", "mymIndexConfirmation", "mymOrbRetest",
-			"mymBreadthConfirmation", "mclTrendContinuation"
-		};
-		for (String symbol : supportedInstrumentSymbols()) {
-			for (int index = 0; index < modules.length; index++) {
-				setSlotSymbolSetting(conn, slot, symbol, modules[index] + ".enabled", "false");
-			}
-			setSlotSymbolSetting(conn, slot, symbol, "enableOrbRetest", "false");
-		}
-
-		enableBestBiasFreeModules(conn, slot, "ES", new String[] { "vwapPullback", "sweep" });
-		enableBestBiasFreeModules(conn, slot, "M2K", new String[] { "valueAreaReclaim" });
-		enableBestBiasFreeModules(conn, slot, "MCL", new String[] { "afternoonContinuation", "priorDayBreakout" });
-		enableBestBiasFreeModules(conn, slot, "MES", new String[] { "afternoonContinuation", "microShadow" });
-		enableBestBiasFreeModules(conn, slot, "MGC", new String[] { "priorDayBreakout", "vwapPullback", "sweep", "keltnerReversion" });
-		enableBestBiasFreeModules(conn, slot, "MNQ", new String[] { "fvg", "vwapPullback", "afternoonContinuation", "sweep", "priorDayBreakout", "keltnerReversion" });
-		enableBestBiasFreeModules(conn, slot, "MYM", new String[] { "microShadow", "sweep" });
-		enableBestBiasFreeModules(conn, slot, "NQ", new String[] { "fvg", "priorDayBreakout", "vwapPullback", "keltnerReversion", "sweep" });
-
-		if (!copiedSource) {
-			setSlotSuffix(conn, slot, "fvgStartMinute", "570");
-			setSlotSuffix(conn, slot, "fvgEndMinute", "930");
-			setSlotSuffix(conn, slot, "priorDayBreakoutStartMinute", "570");
-			setSlotSuffix(conn, slot, "priorDayBreakoutEndMinute", "930");
-			setSlotSuffix(conn, slot, "valueAreaStartMinute", "570");
-			setSlotSuffix(conn, slot, "valueAreaEndMinute", "920");
-			setSlotSuffix(conn, slot, "microShadowStartMinute", "570");
-			setSlotSuffix(conn, slot, "microShadowEndMinute", "920");
-		}
-	}
-
-	private static boolean copyPortfolioBacktestSettingsToStrategySlot(Connection conn, int portfolioBacktestId, String slot, List<String> symbols) throws SQLException {
-		if (portfolioBacktestId <= 0 || symbols == null || symbols.isEmpty()) {
-			return false;
-		}
-		Map<String, String> rows = loadPortfolioBacktestSettingRows(conn, portfolioBacktestId, symbols);
-		if (rows.isEmpty()) {
-			return false;
-		}
-		String normalizedSlot = normalizeStrategySlot(slot);
-		for (int index = 0; index < symbols.size(); index++) {
-			String symbol = normalizeSymbol(symbols.get(index));
-			try (PreparedStatement delete = conn.prepareStatement("DELETE FROM FuturesStrategySettings WHERE settingKey LIKE ?")) {
-				delete.setString(1, normalizedSlot + "." + symbol + ".%");
-				delete.executeUpdate();
-			}
-		}
-		try (PreparedStatement insert = conn.prepareStatement("INSERT OR REPLACE INTO FuturesStrategySettings (settingKey, settingValue) VALUES (?, ?)")) {
-			for (Map.Entry<String, String> entry : rows.entrySet()) {
-				insert.setString(1, normalizedSlot + "." + entry.getKey());
-				insert.setString(2, entry.getValue());
-				insert.addBatch();
-			}
-			insert.executeBatch();
-		}
-		return true;
-	}
-
 	private static void applyBestBiasFreePresetPolicy(Connection conn, String slot) throws SQLException {
 		applyBiasFreeWindowPolicy(conn, slot);
 		String[] modules = new String[] {
@@ -1629,6 +1567,51 @@ public class FuturesManager {
 		enableBestBiasFreeModules(conn, slot, "MCL", new String[] { "orb", "ifvg", "afternoonContinuation", "marketIntradayMomentum", "closeMomentum" });
 
 		applyBestBiasFreeSidePolicy(conn, slot);
+	}
+
+	private static void applyBestBiasFreeLiveOnlyLiquidityOverlayPolicy(Connection conn, String slot) throws SQLException {
+		overlaySourceSettings(conn, slot, "MES", new String[] { "microShadow", "allowMicroShadow" });
+		overlaySourceSettings(conn, slot, "MNQ", new String[] { "fvg", "allowFvg", "keltner", "allowKeltner" });
+		overlaySourceSettings(conn, slot, "MGC", new String[] { "keltner", "allowKeltner" });
+		overlaySourceSettings(conn, slot, "ES", new String[] { "vwap", "allowVwap", "sweep", "earlySweep", "lateSweep", "enableEarlySweep", "enableLateSweep", "enableSweepSecondChance" });
+		overlaySourceSettings(conn, slot, "M2K", new String[] { "valueArea", "allowValueArea" });
+		overlaySourceSettings(conn, slot, "MYM", new String[] { "microShadow", "allowMicroShadow", "sweep", "earlySweep", "lateSweep", "enableEarlySweep", "enableLateSweep", "enableSweepSecondChance" });
+		overlaySourceSettings(conn, slot, "MCL", new String[] { "priorDayBreakout", "allowPriorDayBreakout" });
+
+		enableBestBiasFreeModules(conn, slot, "MES", new String[] { "microShadow" });
+		enableBestBiasFreeModules(conn, slot, "MNQ", new String[] { "fvg", "keltnerReversion" });
+		enableBestBiasFreeModules(conn, slot, "MGC", new String[] { "keltnerReversion" });
+		enableBestBiasFreeModules(conn, slot, "ES", new String[] { "vwapPullback", "sweep" });
+		enableBestBiasFreeModules(conn, slot, "M2K", new String[] { "valueAreaReclaim" });
+		enableBestBiasFreeModules(conn, slot, "MYM", new String[] { "microShadow", "sweep" });
+		enableBestBiasFreeModules(conn, slot, "MCL", new String[] { "priorDayBreakout" });
+	}
+
+	private static void overlaySourceSettings(Connection conn, String slot, String symbol, String[] suffixPrefixes) throws SQLException {
+		Map<String, String> rows = loadPortfolioBacktestSettingRows(conn, ALL_DAY_LIQUIDITY_RECLAIM_SOURCE_RUN_ID, java.util.Arrays.asList(normalizeSymbol(symbol)));
+		String symbolPrefix = normalizeSymbol(symbol) + ".";
+		for (Map.Entry<String, String> entry : rows.entrySet()) {
+			String key = entry.getKey();
+			if (!key.startsWith(symbolPrefix)) {
+				continue;
+			}
+			String suffix = key.substring(symbolPrefix.length());
+			if (startsWithAny(suffix, suffixPrefixes)) {
+				setSlotSymbolSetting(conn, slot, symbol, suffix, entry.getValue());
+			}
+		}
+	}
+
+	private static boolean startsWithAny(String value, String[] prefixes) {
+		if (value == null || prefixes == null) {
+			return false;
+		}
+		for (int index = 0; index < prefixes.length; index++) {
+			if (value.startsWith(prefixes[index])) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static void enableBestBiasFreeModules(Connection conn, String slot, String symbol, String[] modules) throws SQLException {
@@ -3243,7 +3226,7 @@ public class FuturesManager {
 			String name = normalizeStrategyPresetName(presetNames.get(index));
 			json.append("{")
 				.append("\"name\":").append(jsonString(name)).append(",")
-				.append("\"label\":").append(jsonString(name)).append(",")
+				.append("\"label\":").append(jsonString(strategyPresetLabel(name))).append(",")
 				.append("\"slot\":").append(jsonString(strategyPresetSlot(name))).append(",")
 				.append("\"default\":").append(WINDOWED_94K_STRATEGY_PRESET.equals(name))
 				.append("}");
@@ -3258,14 +3241,23 @@ public class FuturesManager {
 			+ "\"windowedPreset\":" + jsonString(WINDOWED_94K_STRATEGY_PRESET) + ","
 			+ "\"biasFreePreset\":" + jsonString(BIAS_FREE_94K_STRATEGY_PRESET) + ","
 			+ "\"bestBiasFreePreset\":" + jsonString(BEST_BIAS_FREE_STRATEGY_PRESET) + ","
-			+ "\"allDayLiquidityReclaimPreset\":" + jsonString(ALL_DAY_LIQUIDITY_RECLAIM_STRATEGY_PRESET) + ","
+			+ "\"liveOnlyLiquidityOverlayPreset\":" + jsonString(BEST_BIAS_FREE_STRATEGY_PRESET) + ","
+			+ "\"liveOnlyLiquidityOverlayCodes\":" + jsonStringArray(Arrays.asList(new String[] { "FVG", "VWAP", "AFT", "SWEEP", "PDB", "KREV", "SHDW", "VPB" })) + ","
 			+ "\"editablePreset\":" + jsonString(BEST_BIAS_FREE_STRATEGY_PRESET) + ","
 			+ "\"visiblePresets\":" + jsonStringArray(Arrays.asList(VISIBLE_STRATEGY_PRESETS)) + ","
 			+ "\"timeNativeStrategies\":" + jsonStringArray(Arrays.asList(TIME_NATIVE_STRATEGY_CODES)) + ","
 			+ "\"patternLevelStrategies\":" + jsonStringArray(Arrays.asList(PATTERN_LEVEL_STRATEGY_CODES)) + ","
 			+ "\"disabledResearchStrategies\":" + jsonStringArray(Arrays.asList(DISABLED_RESEARCH_STRATEGY_CODES)) + ","
-				+ "\"rule\":" + jsonString("backtestbias92k is the frozen windowed control. biasfree92k is the broad comparison preset with fitted windows removed. bestbiasfree is the highest-quality bias-free contract map. liquidityreclaim is the all-day FVG/VWAP/AFT/SWEEP/PDB/KREV/SHDW/VPB liquidity-reclaim map sourced from run 2268.")
+				+ "\"rule\":" + jsonString("backtestbias92k is the frozen windowed control. biasfree92k is the broad comparison preset with fitted windows removed. bestbiasfree is the main best strategy config; it includes a live-only liquidity reclaim overlay from run 2268. Normal backtests strip the live-only overlay, while live snapshots and live parity replays keep it.")
 				+ "}";
+	}
+
+	private static String strategyPresetLabel(String presetName) {
+		String normalized = normalizeStrategyPresetName(presetName);
+		if (WINDOWED_94K_STRATEGY_PRESET.equals(normalized)) return "Backtest Bias 92k";
+		if (BIAS_FREE_94K_STRATEGY_PRESET.equals(normalized)) return "Bias-Free 92k";
+		if (BEST_BIAS_FREE_STRATEGY_PRESET.equals(normalized)) return "Best Bias-Free + Live Only";
+		return normalized;
 	}
 
 	private static List<String> savedStrategyPresetNames() {
@@ -3286,7 +3278,7 @@ public class FuturesManager {
 			return "{\"success\":false,\"message\":\"Preset name is required.\"}";
 		}
 		if (!isSeededStrategyPresetName(targetName)) {
-			return "{\"success\":false,\"message\":\"Strategy Configs are locked to the approved dev presets: backtestbias92k, biasfree92k, bestbiasfree, and liquidityreclaim.\"}";
+			return "{\"success\":false,\"message\":\"Strategy Configs are locked to the approved dev presets: backtestbias92k, biasfree92k, and bestbiasfree.\"}";
 		}
 		if (WIP_STRATEGY_PRESET.equals(sourceName)) {
 			sourceName = DEFAULT_STRATEGY_PRESET;
@@ -3568,6 +3560,9 @@ public class FuturesManager {
 
 	private static String normalizeStrategyPresetName(String presetName) {
 		String cleaned = cleanOrDefault(presetName, DEFAULT_STRATEGY_PRESET).trim().toLowerCase(Locale.US).replaceAll("[^a-z0-9_\\-]", "");
+		if ("liquidityreclaim".equals(cleaned)) {
+			return BEST_BIAS_FREE_STRATEGY_PRESET;
+		}
 		return cleaned.length() == 0 ? DEFAULT_STRATEGY_PRESET : cleaned;
 	}
 
@@ -3582,6 +3577,9 @@ public class FuturesManager {
 			return DEFAULT_STRATEGY_PRESET;
 		}
 		String raw = normalizedSlot.substring(STRATEGY_PRESET_PREFIX.length()).toLowerCase(Locale.US);
+		if ("liquidityreclaim".equals(raw)) {
+			return BEST_BIAS_FREE_STRATEGY_PRESET;
+		}
 		return raw.length() == 0 ? DEFAULT_STRATEGY_PRESET : raw;
 	}
 
@@ -4804,7 +4802,7 @@ public class FuturesManager {
 		if (portfolioBacktestExists(3154) && portfolioBacktestUsesVisibleStrategyPreset(3154)) {
 			return 3154;
 		}
-		String sql = "SELECT portfolioBacktestID FROM FuturesPortfolioBacktests WHERE ruleViolation = 0 AND json_extract(portfolioSettingsJson, '$.strategyPreset') IN ('backtestbias92k', 'biasfree92k', 'bestbiasfree', 'liquidityreclaim') ORDER BY totalProfit DESC, portfolioBacktestID DESC LIMIT 1";
+		String sql = "SELECT portfolioBacktestID FROM FuturesPortfolioBacktests WHERE ruleViolation = 0 AND json_extract(portfolioSettingsJson, '$.strategyPreset') IN ('backtestbias92k', 'biasfree92k', 'bestbiasfree') ORDER BY totalProfit DESC, portfolioBacktestID DESC LIMIT 1";
 		try (Connection conn = DatabaseManager.getConnection();
 			 Statement stmt = conn.createStatement();
 			 ResultSet rs = stmt.executeQuery(sql)) {
@@ -12768,6 +12766,7 @@ public class FuturesManager {
 		config.strategySlot = activeLiveStrategySlot(session, snapshot);
 		config.strategyPreset = activeLiveStrategyPreset(session, snapshot);
 		config.sourcePortfolioBacktestId = snapshot == null ? 0 : snapshot.sourcePortfolioBacktestId;
+		config.includeLiveOnlyStrategyOverlays = true;
 		if (useSessionRisk) {
 			FundedRuleProfile profile = fundedRuleProfileFor(profileCode);
 			config.accountSize = positiveOrDefault(accountSize, config.accountSize);
@@ -19473,6 +19472,9 @@ public class FuturesManager {
 			context.config.strategySettings = sourceStrategySettings == null
 				? loadFuturesStrategySettings(symbol, config.strategySlot)
 				: sourceStrategySettings;
+			if (!config.includeLiveOnlyStrategyOverlays && BEST_BIAS_FREE_STRATEGY_PRESET.equals(normalizeStrategyPresetName(config.strategyPreset))) {
+				disableBestBiasFreeLiveOnlyLiquidityOverlay(context.config.strategySettings, symbol);
+			}
 			FuturesRiskSettings savedRisk = null;
 			if (config.useSavedRisk) {
 				FuturesRiskSettings sourceRisk = loadPortfolioBacktestRiskSettings(config.sourcePortfolioBacktestId, symbol);
@@ -19566,6 +19568,31 @@ public class FuturesManager {
 				}
 			});
 			context.eventsByDay.put(day, events);
+		}
+	}
+
+	private static void disableBestBiasFreeLiveOnlyLiquidityOverlay(FuturesStrategySettings settings, String symbol) {
+		if (settings == null) {
+			return;
+		}
+		String normalized = normalizeSymbol(symbol);
+		if ("MES".equals(normalized)) {
+			settings.microShadow.enabled = false;
+		} else if ("MNQ".equals(normalized)) {
+			settings.fvg.enabled = false;
+			settings.keltnerReversion.enabled = false;
+		} else if ("MGC".equals(normalized)) {
+			settings.keltnerReversion.enabled = false;
+		} else if ("ES".equals(normalized)) {
+			settings.vwapPullback.enabled = false;
+			settings.sweep.enabled = false;
+		} else if ("M2K".equals(normalized)) {
+			settings.valueAreaReclaim.enabled = false;
+		} else if ("MYM".equals(normalized)) {
+			settings.microShadow.enabled = false;
+			settings.sweep.enabled = false;
+		} else if ("MCL".equals(normalized)) {
+			settings.priorDayBreakout.enabled = false;
 		}
 	}
 

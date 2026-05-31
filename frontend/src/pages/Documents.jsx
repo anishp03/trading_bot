@@ -222,7 +222,7 @@ export default function Documents() {
           <h2 className="app-title">Candlestick Entry Paths And Exit Requirements</h2>
         </div>
         <p>
-          These diagrams map the bot's actual strategy branches and requirements using synthetic example candles. Live runs now choose a Strategy Config directly: `backtestbias92k` is the preserved read-only windowed control, `biasfree92k` is the broad bias-free comparison, `bestbiasfree` is the contract-specific optimized bias-free preset, and `liquidityreclaim` is the all-day FVG/VWAP/AFT/SWEEP/PDB/KREV/SHDW/VPB liquidity-reclaim preset.
+          These diagrams map the bot's actual strategy branches and requirements using synthetic example candles. Live runs now choose a Strategy Config directly: `backtestbias92k` is the preserved read-only windowed control, `biasfree92k` is the broad bias-free comparison, and `bestbiasfree` is the main best preset with a live-only liquidity-reclaim overlay that normal backtests exclude.
         </p>
       </section>
 
