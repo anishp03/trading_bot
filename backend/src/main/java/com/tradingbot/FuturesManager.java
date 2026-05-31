@@ -3256,7 +3256,7 @@ public class FuturesManager {
 		String normalized = normalizeStrategyPresetName(presetName);
 		if (WINDOWED_94K_STRATEGY_PRESET.equals(normalized)) return "Backtest Bias 92k";
 		if (BIAS_FREE_94K_STRATEGY_PRESET.equals(normalized)) return "Bias-Free 92k";
-		if (BEST_BIAS_FREE_STRATEGY_PRESET.equals(normalized)) return "Best Bias-Free + Live Only";
+		if (BEST_BIAS_FREE_STRATEGY_PRESET.equals(normalized)) return "Best Bias-Free";
 		return normalized;
 	}
 

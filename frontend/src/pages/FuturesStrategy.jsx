@@ -161,7 +161,7 @@ const READ_ONLY_STRATEGY_PRESETS = new Set([DEFAULT_STRATEGY_PRESET]);
 const CANONICAL_STRATEGY_PRESETS = [
   { name: DEFAULT_STRATEGY_PRESET, label: "Backtest Bias 92k" },
   { name: BIAS_FREE_STRATEGY_PRESET, label: "Bias-Free 92k" },
-  { name: BEST_BIAS_FREE_STRATEGY_PRESET, label: "Best Bias-Free + Live Only" },
+  { name: BEST_BIAS_FREE_STRATEGY_PRESET, label: "Best Bias-Free" },
 ];
 const INSTRUMENT_FALLBACKS = [
   { symbol: "MES", name: "Micro E-mini S&P 500", exchange: "CME", tickSize: 0.25, tickValue: 1.25 },
@@ -195,6 +195,16 @@ const MODULES = [
   ["mymOrbRetest", "MYM ORB Retest"],
   ["mymBreadthConfirmation", "MYM Breadth Fade"],
   ["mclTrendContinuation", "MCL Trend Fade"],
+];
+
+const BEST_BIAS_FREE_LIVE_MODULES = [
+  ["vwapPullback", "VWAP Pullback", new Set(["ES"])],
+  ["sweep", "Prior-Day Sweep", new Set(["ES", "MYM"])],
+  ["valueAreaReclaim", "Value Area Reclaim", new Set(["M2K"])],
+  ["priorDayBreakout", "Prior-Day Breakout", new Set(["MCL"])],
+  ["microShadow", "Mini Shadow", new Set(["MES", "MYM"])],
+  ["keltnerReversion", "Keltner Reversion", new Set(["MGC", "MNQ"])],
+  ["fvg", "Fair Value Gap", new Set(["MNQ"])],
 ];
 
 const HIGH_CAP_MODULES = new Set(["keltnerScalp", "keltnerReversion", "microScalp"]);
@@ -505,9 +515,14 @@ export default function FuturesStrategy() {
 
   const instrumentOptions = useMemo(() => instruments.length ? instruments : INSTRUMENT_FALLBACKS, [instruments]);
   const selectedInstrument = instrumentOptions.find((instrument) => instrument.symbol === selectedSymbol) || null;
-  const enabledCount = MODULES.filter(([key]) => settings[key]?.enabled).length;
   const presetOptions = mergeStrategyPresets(strategyPresets);
   const selectedPresetReadOnly = READ_ONLY_STRATEGY_PRESETS.has(selectedPreset);
+  const liveStrategyRows = BEST_BIAS_FREE_LIVE_MODULES.filter(([, , symbols]) =>
+    selectedPreset === BEST_BIAS_FREE_STRATEGY_PRESET && symbols.has(selectedSymbol)
+  );
+  const liveStrategyKeys = new Set(liveStrategyRows.map(([key]) => key));
+  const baseModuleRows = MODULES.filter(([key]) => !liveStrategyKeys.has(key));
+  const enabledCount = baseModuleRows.filter(([key]) => settings[key]?.enabled).length;
 
   return (
     <div className="app-page futures-config-page">
@@ -558,7 +573,7 @@ export default function FuturesStrategy() {
             </select>
           </Field>
 
-          <Readout label="Enabled" value={`${enabledCount} / ${MODULES.length}`} />
+          <Readout label="Enabled" value={`${enabledCount} / ${baseModuleRows.length}`} />
           <Readout label="Tick Value" value={selectedInstrument ? `$${selectedInstrument.tickValue}` : "--"} />
           <Readout label="Status" value={saveStatus || "Ready"} />
         </div>
@@ -572,31 +587,67 @@ export default function FuturesStrategy() {
             <span>Enabled</span>
             <span>Max / Day</span>
           </div>
-          {MODULES.map(([key, name]) => (
+          {baseModuleRows.map(([key, name]) => (
             <div className="app-grid-row futures-settings-grid" key={key}>
               <span className="fw-bold">{name}</span>
               <label className="app-toggle-row">
-	                <input
-	                  type="checkbox"
-	                  checked={Boolean(settings[key]?.enabled)}
-	                  onChange={(event) => updateModule(key, "enabled", event.target.checked)}
-	                  disabled={isLoading || selectedPresetReadOnly}
-	                />
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings[key]?.enabled)}
+                  onChange={(event) => updateModule(key, "enabled", event.target.checked)}
+                  disabled={isLoading || selectedPresetReadOnly}
+                />
                 {settings[key]?.enabled ? "On" : "Off"}
               </label>
               <input
                 type="number"
                 min="0"
                 max={moduleMaxTrades(key)}
-	                value={settings[key]?.maxTradesPerDay ?? 1}
-	                onChange={(event) => updateModule(key, "maxTradesPerDay", event.target.value)}
-	                className="form-control app-input"
-	                disabled={isLoading || selectedPresetReadOnly}
-	              />
+                value={settings[key]?.maxTradesPerDay ?? 1}
+                onChange={(event) => updateModule(key, "maxTradesPerDay", event.target.value)}
+                className="form-control app-input"
+                disabled={isLoading || selectedPresetReadOnly}
+              />
             </div>
           ))}
         </div>
       </div>
+
+      {liveStrategyRows.length > 0 && (
+        <div className="app-panel">
+          <div className="fw-bold app-kicker mb-3">Live Strategies</div>
+          <div className="app-table-wrap">
+            <div className="app-grid-head futures-settings-grid">
+              <span>Strategy</span>
+              <span>Enabled</span>
+              <span>Max / Day</span>
+            </div>
+            {liveStrategyRows.map(([key, name]) => (
+              <div className="app-grid-row futures-settings-grid" key={`live-${key}`}>
+                <span className="fw-bold">{name}</span>
+                <label className="app-toggle-row">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(settings[key]?.enabled)}
+                    onChange={(event) => updateModule(key, "enabled", event.target.checked)}
+                    disabled={isLoading || selectedPresetReadOnly}
+                  />
+                  {settings[key]?.enabled ? "On" : "Off"}
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max={moduleMaxTrades(key)}
+                  value={settings[key]?.maxTradesPerDay ?? 1}
+                  onChange={(event) => updateModule(key, "maxTradesPerDay", event.target.value)}
+                  className="form-control app-input"
+                  disabled={isLoading || selectedPresetReadOnly}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <details className="app-panel">
         <summary className="fw-bold app-kicker">Advanced Rules</summary>
@@ -830,7 +881,7 @@ function mergeStrategyPresets(apiPresets = []) {
   presets.forEach((preset) => {
     const name = String(preset?.name || "").trim();
     if (!canonical.has(name)) return;
-    byName.set(name, { ...preset, name, label: preset.label || name });
+    byName.set(name, { ...preset, name, label: byName.get(name)?.label || preset.label || name });
   });
   return Array.from(byName.values());
 }

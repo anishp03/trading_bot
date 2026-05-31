@@ -11,7 +11,7 @@ const BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
 const CANONICAL_STRATEGY_PRESETS = [
   { name: DEFAULT_STRATEGY_PRESET, label: "Backtest Bias 92k" },
   { name: BIAS_FREE_STRATEGY_PRESET, label: "Bias-Free 92k" },
-  { name: BEST_BIAS_FREE_STRATEGY_PRESET, label: "Best Bias-Free + Live Only" },
+  { name: BEST_BIAS_FREE_STRATEGY_PRESET, label: "Best Bias-Free" },
 ];
 const INSTRUMENT_FALLBACKS = [
   { symbol: "MES", name: "Micro E-mini S&P 500", exchange: "CME", tickSize: 0.25, tickValue: 1.25 },
@@ -745,7 +745,7 @@ function mergeStrategyPresets(apiPresets = []) {
   presets.forEach((preset) => {
     const name = String(preset?.name || "").trim();
     if (!canonical.has(name)) return;
-    byName.set(name, { ...preset, name, label: preset.label || name });
+    byName.set(name, { ...preset, name, label: byName.get(name)?.label || preset.label || name });
   });
   return Array.from(byName.values());
 }
