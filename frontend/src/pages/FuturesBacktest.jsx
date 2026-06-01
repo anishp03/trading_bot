@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_BASE_URL, apiFetch } from "../utils/api.js";
 
-const TOPSTEP_RESEARCH_PROFILE = "TOPSTEP_150K_RESEARCH";
+const DEFAULT_RISK_PROFILE = "TOPSTEP_150K";
 const MAIN_PORTFOLIO_SYMBOLS = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K", "MYM", "MCL"];
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MYM", "MGC", "MCL"]);
 const DEFAULT_STRATEGY_PRESET = "backtestbias92k";
@@ -26,21 +26,7 @@ const INSTRUMENT_FALLBACKS = [
 ];
 const RISK_PROFILE_FALLBACKS = [
   {
-    code: "CUSTOM",
-    name: "Custom",
-    accountSize: 50000,
-    maxTrailingDrawdown: 2000,
-    dailyLossLimit: 1000,
-    maxRiskPerTrade: 400,
-    maxContracts: 5,
-    maxMicroContracts: 50,
-    maxOpenPositions: 1,
-    maxAggregateContracts: 50,
-    maxAggregateMiniUnits: 0,
-    profitTarget: 0,
-  },
-  {
-    code: "TOPSTEP_50K_RESEARCH",
+    code: "TOPSTEP_50K",
     name: "50K",
     accountSize: 50000,
     maxTrailingDrawdown: 2000,
@@ -54,7 +40,7 @@ const RISK_PROFILE_FALLBACKS = [
     profitTarget: 0,
   },
   {
-    code: "TOPSTEP_100K_RESEARCH",
+    code: "TOPSTEP_100K",
     name: "100K",
     accountSize: 100000,
     maxTrailingDrawdown: 3000,
@@ -68,7 +54,7 @@ const RISK_PROFILE_FALLBACKS = [
     profitTarget: 0,
   },
   {
-    code: "TOPSTEP_150K_RESEARCH",
+    code: "TOPSTEP_150K",
     name: "150K",
     accountSize: 150000,
     maxTrailingDrawdown: 4500,
@@ -86,7 +72,7 @@ const RISK_PROFILE_FALLBACKS = [
 const DEFAULT_CONFIG = {
   strategyPreset: DEFAULT_STRATEGY_PRESET,
   referenceSymbol: "MNQ",
-  fundedProfile: TOPSTEP_RESEARCH_PROFILE,
+  fundedProfile: DEFAULT_RISK_PROFILE,
   startDate: "2025-05-01",
   endDate: "2026-05-04",
   accountSize: "150000",
@@ -102,6 +88,7 @@ const DEFAULT_CONFIG = {
   maxAggregateMiniUnits: "15",
   useSavedRisk: "true",
   continueAfterRuleViolation: "true",
+  qualitativeRiskEnabled: "true",
 };
 
 const DEFAULT_DATA_CONFIG = {
@@ -264,6 +251,7 @@ export default function FuturesBacktest() {
       maxAggregateMiniUnits: String(payload?.maxAggregateMiniUnits ?? DEFAULT_CONFIG.maxAggregateMiniUnits),
       useSavedRisk: String(payload?.useSavedRisk ?? DEFAULT_CONFIG.useSavedRisk),
       continueAfterRuleViolation: String(payload?.continueAfterRuleViolation ?? DEFAULT_CONFIG.continueAfterRuleViolation),
+      qualitativeRiskEnabled: String(payload?.qualitativeRiskEnabled ?? DEFAULT_CONFIG.qualitativeRiskEnabled),
     };
     setConfig(nextConfig);
     setBatchSymbols(nextSymbols);
@@ -367,6 +355,7 @@ export default function FuturesBacktest() {
       maxAggregateMiniUnits: config.maxAggregateMiniUnits,
       useSavedRisk: savedRiskSizingEnabled ? "true" : "false",
       continueAfterRuleViolation: config.continueAfterRuleViolation === "true" ? "true" : "false",
+      qualitativeRiskEnabled: config.qualitativeRiskEnabled === "true" ? "true" : "false",
     });
 
     try {
@@ -577,6 +566,17 @@ export default function FuturesBacktest() {
             </label>
           </div>
 
+          <div className="col-12 col-md-4 col-xl-3">
+            <label className="app-toggle-row h-100">
+              <input
+                type="checkbox"
+                checked={config.qualitativeRiskEnabled === "true"}
+                onChange={(event) => updateConfig("qualitativeRiskEnabled", event.target.checked ? "true" : "false")}
+              />
+              Qualitative Risk
+            </label>
+          </div>
+
           <Field label="Reference Contract" className="col-12 col-md-4 col-xl-3">
             <select
               value={config.referenceSymbol}
@@ -769,11 +769,11 @@ function buildRiskProfileOptions(fundedProfiles = []) {
 
 function normalizeRiskProfileCode(code) {
   const normalized = String(code || "").trim().toUpperCase();
-  if (normalized === "TOPSTEP_50K_COMBINE") return "TOPSTEP_50K_RESEARCH";
-  if (normalized === "TOPSTEP_100K_COMBINE") return "TOPSTEP_100K_RESEARCH";
-  if (normalized === "TOPSTEP_150K_PRACTICE") return "TOPSTEP_150K_RESEARCH";
+  if (normalized === "TOPSTEP_50K_COMBINE" || normalized === "TOPSTEP_50K_RESEARCH") return "TOPSTEP_50K";
+  if (normalized === "TOPSTEP_100K_COMBINE" || normalized === "TOPSTEP_100K_RESEARCH") return "TOPSTEP_100K";
+  if (normalized === "TOPSTEP_150K_PRACTICE" || normalized === "TOPSTEP_150K_RESEARCH") return "TOPSTEP_150K";
   if (RISK_PROFILE_FALLBACKS.some((profile) => profile.code === normalized)) return normalized;
-  return TOPSTEP_RESEARCH_PROFILE;
+  return DEFAULT_RISK_PROFILE;
 }
 
 function applyFundedProfile(config, profile) {

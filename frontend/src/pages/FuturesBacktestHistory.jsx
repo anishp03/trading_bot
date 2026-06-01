@@ -207,8 +207,8 @@ export default function FuturesBacktestHistory() {
         <div className="app-table-wrap desktop-run-table">
           <div className="app-grid-head futures-portfolio-run-grid">
             <div>Run</div>
-            <div>Contracts</div>
-            <div>Range</div>
+            <div>Strategy</div>
+            <div>Risk</div>
             <div>Win</div>
             <div>Profit</div>
             <div>Return</div>
@@ -227,8 +227,8 @@ export default function FuturesBacktestHistory() {
             return (
               <div key={run.id} className={selected ? "app-grid-row futures-portfolio-run-grid selected" : "app-grid-row futures-portfolio-run-grid"}>
                 <div>#{run.visibleRunNumber}</div>
-                <div>{run.symbols}</div>
-                <div>{formatEstTime(run.startDate)} to {formatEstTime(run.endDate)}</div>
+                <div>{formatStrategyConfig(run)}</div>
+                <div>{formatRiskConfig(run)}</div>
                 <div>{formatPercent(run.winRate)}</div>
                 <div className={run.totalProfit >= 0 ? "app-pnl-pos" : "app-pnl-neg"}>{formatCurrency(run.totalProfit)}</div>
                 <div>{formatPercent(run.returnPct)}</div>
@@ -461,6 +461,26 @@ function formatPercent(value) {
 
 function formatNumber(value, decimals = 0) {
   return Number(value || 0).toFixed(decimals);
+}
+
+function formatStrategyConfig(run) {
+  const label = String(run?.strategyConfig || "").trim();
+  if (label) return label;
+  const preset = String(run?.strategyPreset || "").trim();
+  if (preset === "backtestbias92k") return "Backtest Bias 92k";
+  if (preset === "biasfree92k") return "Bias-Free 92k";
+  if (preset === "bestbiasfree") return "Best Bias-Free";
+  return preset || "--";
+}
+
+function formatRiskConfig(run) {
+  const label = String(run?.riskConfig || "").trim();
+  if (label) return label;
+  const code = String(run?.riskConfigCode || run?.fundedProfile || "").trim();
+  if (code === "TOPSTEP_50K") return "50K";
+  if (code === "TOPSTEP_100K") return "100K";
+  if (code === "TOPSTEP_150K") return "150K";
+  return code || "--";
 }
 
 function formatSegmentPeriod(value) {

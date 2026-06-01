@@ -20,10 +20,11 @@ const BROKER_SOURCE_TOPSTEPX = "TOPSTEPX";
 const LIVE_TRADE_CACHE_VERSION = 1;
 const LIVE_TRADE_CACHE_MAX_ROWS = 10000;
 const LIVE_HISTORY_REQUEST_LIMIT = 10000;
+const LIVE_ALL_TRADES_PAGE_SIZE = 500;
 const NEAR_MISS_VISIBLE_LIMIT = 18;
 const NEAR_MISS_REVEAL_MS = 260;
-const DEFAULT_PROFILE = "TOPSTEP_150K_RESEARCH";
-const DEFAULT_ACCOUNT_PROFILE = "TOPSTEP_150K_PRACTICE";
+const DEFAULT_PROFILE = "TOPSTEP_150K";
+const DEFAULT_ACCOUNT_PROFILE = "TOPSTEP_150K";
 const DEFAULT_STRATEGY_PRESET = "backtestbias92k";
 const BIAS_FREE_STRATEGY_PRESET = "biasfree92k";
 const BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
@@ -33,30 +34,15 @@ const CANONICAL_STRATEGY_PRESETS = [
   { name: BEST_BIAS_FREE_STRATEGY_PRESET, label: "Best Bias-Free" },
 ];
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MGC", "MYM", "MCL"]);
-const LIVE_ACCOUNT_PROFILE_CODES = new Set(["TOPSTEP_150K_PRACTICE", "TOPSTEP_50K_COMBINE"]);
+const LIVE_ACCOUNT_PROFILE_CODES = new Set(["TOPSTEP_150K", "TOPSTEP_50K", "TOPSTEP_100K"]);
 const PROFILE_ACCOUNTS = {
-  TOPSTEP_150K_RESEARCH: { label: "150K Research", accountId: "22539378" },
-  TOPSTEP_150K_PRACTICE: { label: "150K Combine", accountId: "22539378" },
-  TOPSTEP_50K_RESEARCH: { label: "50K Research", accountId: "22529998" },
-  TOPSTEP_50K_COMBINE: { label: "50K Combine", accountId: "22529998" },
+  TOPSTEP_150K: { label: "150K", accountId: "22539378" },
+  TOPSTEP_50K: { label: "50K", accountId: "22529998" },
+  TOPSTEP_100K: { label: "100K", accountId: "" },
 };
 const RISK_PROFILE_FALLBACKS = [
   {
-    code: "CUSTOM",
-    name: "Custom",
-    accountSize: 50000,
-    maxTrailingDrawdown: 2000,
-    dailyLossLimit: 1000,
-    maxRiskPerTrade: 400,
-    maxContracts: 5,
-    maxMicroContracts: 50,
-    maxOpenPositions: 1,
-    maxAggregateContracts: 50,
-    maxAggregateMiniUnits: 0,
-    profitTarget: 0,
-  },
-  {
-    code: "TOPSTEP_50K_RESEARCH",
+    code: "TOPSTEP_50K",
     name: "50K",
     accountSize: 50000,
     maxTrailingDrawdown: 2000,
@@ -70,7 +56,7 @@ const RISK_PROFILE_FALLBACKS = [
     profitTarget: 0,
   },
   {
-    code: "TOPSTEP_100K_RESEARCH",
+    code: "TOPSTEP_100K",
     name: "100K",
     accountSize: 100000,
     maxTrailingDrawdown: 3000,
@@ -84,7 +70,7 @@ const RISK_PROFILE_FALLBACKS = [
     profitTarget: 0,
   },
   {
-    code: "TOPSTEP_150K_RESEARCH",
+    code: "TOPSTEP_150K",
     name: "150K",
     accountSize: 150000,
     maxTrailingDrawdown: 4500,
@@ -107,9 +93,20 @@ const DEFAULT_TRADE_FILTERS = {
   startDate: "",
   endDate: "",
 };
+const EMPTY_TRADE_METRICS = {
+  totalPnl: 0,
+  returnPct: 0,
+  trades: 0,
+  winRate: 0,
+  avgWin: 0,
+  avgLoss: 0,
+  avgDay: 0,
+  avgWeek: 0,
+  avgMonth: 0,
+};
 const FALLBACK_PROFILE = {
-  code: "TOPSTEP_150K_RESEARCH",
-  name: "Topstep 150K Research",
+  code: "TOPSTEP_150K",
+  name: "150K",
   accountSize: 150000,
   maxTrailingDrawdown: 4500,
   dailyLossLimit: 3000,
@@ -169,6 +166,7 @@ export default function FuturesLive() {
   const [backendOnline, setBackendOnline] = useState(true);
   const [liveTradeFilters, setLiveTradeFilters] = useState(DEFAULT_TRADE_FILTERS);
   const [allTradeFilters, setAllTradeFilters] = useState(DEFAULT_TRADE_FILTERS);
+  const [allTradePage, setAllTradePage] = useState(1);
   const [cachedAllTradeRows, setCachedAllTradeRows] = useState([]);
   const [tradeCacheReady, setTradeCacheReady] = useState(false);
   const chartTransitionTimer = useRef(null);
@@ -191,10 +189,10 @@ export default function FuturesLive() {
 
   const topstepAccountProfiles = useMemo(() => {
     const profileSource = fundedProfiles.length ? fundedProfiles : [
-      { ...FALLBACK_PROFILE, code: DEFAULT_ACCOUNT_PROFILE, name: "Topstep 150K Combine" },
+      { ...FALLBACK_PROFILE, code: DEFAULT_ACCOUNT_PROFILE, name: "150K" },
     ];
     const profiles = profileSource.filter((profile) => LIVE_ACCOUNT_PROFILE_CODES.has(profile.code) && PROFILE_ACCOUNTS[profile.code]?.accountId);
-    return profiles.length ? profiles : [{ ...FALLBACK_PROFILE, code: DEFAULT_ACCOUNT_PROFILE, name: "Topstep 150K Combine" }];
+    return profiles.length ? profiles : [{ ...FALLBACK_PROFILE, code: DEFAULT_ACCOUNT_PROFILE, name: "150K" }];
   }, [fundedProfiles]);
 
   const selectedProfile = useMemo(() => {
@@ -305,6 +303,20 @@ export default function FuturesLive() {
   const filteredAllTradeRows = useMemo(
     () => filterTradeRows(allTradeRows, allTradeFilters),
     [allTradeFilters, allTradeRows]
+  );
+  const allTradeMetrics = useMemo(
+    () => calculateTradeMetrics(allTradeRows, liveRiskAccountSize),
+    [allTradeRows, liveRiskAccountSize]
+  );
+  const filteredAllTradeMetrics = useMemo(
+    () => calculateTradeMetrics(filteredAllTradeRows, liveRiskAccountSize),
+    [filteredAllTradeRows, liveRiskAccountSize]
+  );
+  const allTradeTotalPages = Math.max(1, Math.ceil(filteredAllTradeRows.length / LIVE_ALL_TRADES_PAGE_SIZE));
+  const boundedAllTradePage = Math.min(allTradePage, allTradeTotalPages);
+  const pagedAllTradeRows = useMemo(
+    () => filteredAllTradeRows.slice((boundedAllTradePage - 1) * LIVE_ALL_TRADES_PAGE_SIZE, boundedAllTradePage * LIVE_ALL_TRADES_PAGE_SIZE),
+    [boundedAllTradePage, filteredAllTradeRows]
   );
   const tradeMetricCount = allTradeRows.length;
   const displayMonitor = useMemo(
@@ -457,8 +469,13 @@ export default function FuturesLive() {
   useEffect(() => {
     setLiveTradeFilters(DEFAULT_TRADE_FILTERS);
     setAllTradeFilters(DEFAULT_TRADE_FILTERS);
+    setAllTradePage(1);
     loadLiveTradeCache(accountScopeId);
   }, [accountScopeId]);
+
+  useEffect(() => {
+    setAllTradePage(1);
+  }, [allTradeFilters]);
 
   useEffect(() => {
     if (!tradeCacheReady || tradeCacheAccount.current !== accountScopeId) return;
@@ -1138,6 +1155,12 @@ export default function FuturesLive() {
         <MetricCard label="Current PnL" value={formatCurrency(metrics?.currentPnl)} accent={Number(metrics?.currentPnl || 0)} />
         <MetricCard label="Return %" value={formatPct(metrics?.returnPct)} accent={Number(metrics?.returnPct || 0)} />
         <MetricCard label="Trades" value={String(tradeMetricCount)} />
+        <MetricCard label="Win Rate" value={formatRate(allTradeMetrics.winRate)} />
+        <MetricCard label="Avg Win" value={formatCurrency(allTradeMetrics.avgWin)} accent={allTradeMetrics.avgWin} />
+        <MetricCard label="Avg Loss" value={formatCurrency(allTradeMetrics.avgLoss)} accent={allTradeMetrics.avgLoss} />
+        <MetricCard label="Avg Day" value={formatCurrency(allTradeMetrics.avgDay)} accent={allTradeMetrics.avgDay} />
+        <MetricCard label="Avg Week" value={formatCurrency(allTradeMetrics.avgWeek)} accent={allTradeMetrics.avgWeek} />
+        <MetricCard label="Avg Month" value={formatCurrency(allTradeMetrics.avgMonth)} accent={allTradeMetrics.avgMonth} />
       </section>
 
       <section className="app-panel">
@@ -1198,15 +1221,35 @@ export default function FuturesLive() {
           <div>
             <div className="fw-bold app-kicker">All Trades</div>
           </div>
-          <span className="app-badge app-neutral-badge">{filteredAllTradeRows.length} / {allTradeRows.length} rows</span>
+          <span className="app-badge app-neutral-badge">{formatInteger(filteredAllTradeRows.length)} / {formatInteger(allTradeRows.length)} rows</span>
         </div>
         <TradeFilters
           trades={allTradeRows}
           filteredTrades={filteredAllTradeRows}
           filters={allTradeFilters}
           onChange={setAllTradeFilters}
+          summaryText={pagedTradeSummary({
+            page: boundedAllTradePage,
+            totalPages: allTradeTotalPages,
+            pageCount: pagedAllTradeRows.length,
+            filteredCount: filteredAllTradeRows.length,
+            totalCount: allTradeRows.length,
+          })}
         />
-        <TradesTable trades={filteredAllTradeRows} mode="all" />
+        <TradeMetricsGrid
+          metrics={filteredAllTradeMetrics}
+          pnlLabel="Filtered P/L"
+          tradeLabel="Filtered Trades"
+          returnLabel="Filtered Return"
+        />
+        <TradePagination
+          page={boundedAllTradePage}
+          totalPages={allTradeTotalPages}
+          pageSize={LIVE_ALL_TRADES_PAGE_SIZE}
+          onPrev={() => setAllTradePage((current) => Math.max(1, current - 1))}
+          onNext={() => setAllTradePage((current) => Math.min(allTradeTotalPages, current + 1))}
+        />
+        <TradesTable trades={pagedAllTradeRows} mode="all" />
       </section>
 
       <FuturesLiveLogDrawer
@@ -4682,6 +4725,62 @@ function filterTradeRows(trades, filters = DEFAULT_TRADE_FILTERS) {
   return nextRows;
 }
 
+function calculateTradeMetrics(trades, accountSize = 0) {
+  const rows = Array.isArray(trades) ? trades : [];
+  const totalPnl = rows.reduce((total, trade) => total + Number(trade?.pnl || 0), 0);
+  const wins = rows.filter((trade) => Number(trade?.pnl || 0) > 0);
+  const losses = rows.filter((trade) => Number(trade?.pnl || 0) < 0);
+  const winPnl = wins.reduce((total, trade) => total + Number(trade?.pnl || 0), 0);
+  const lossPnl = losses.reduce((total, trade) => total + Number(trade?.pnl || 0), 0);
+  const baseAccountSize = Number(accountSize || 0);
+  return {
+    totalPnl,
+    returnPct: baseAccountSize > 0 ? (totalPnl / baseAccountSize) * 100 : 0,
+    trades: rows.length,
+    winRate: rows.length > 0 ? (wins.length / rows.length) * 100 : 0,
+    avgWin: wins.length > 0 ? winPnl / wins.length : 0,
+    avgLoss: losses.length > 0 ? lossPnl / losses.length : 0,
+    avgDay: averageTradePeriodPnl(rows, "day"),
+    avgWeek: averageTradePeriodPnl(rows, "week"),
+    avgMonth: averageTradePeriodPnl(rows, "month"),
+  };
+}
+
+function averageTradePeriodPnl(trades, period) {
+  const totals = new Map();
+  (Array.isArray(trades) ? trades : []).forEach((trade) => {
+    const key = tradePeriodKey(trade, period);
+    if (!key) return;
+    totals.set(key, (totals.get(key) || 0) + Number(trade?.pnl || 0));
+  });
+  if (totals.size === 0) return 0;
+  return Array.from(totals.values()).reduce((total, value) => total + value, 0) / totals.size;
+}
+
+function tradePeriodKey(trade, period) {
+  const timestamp = tradeSortTimestamp(trade);
+  if (!timestamp) return "";
+  const dayKey = localDateKey(timestamp);
+  if (period === "day") return dayKey;
+  if (period === "month") return dayKey.slice(0, 7);
+  if (period === "week") return weekStartKey(dayKey);
+  return dayKey;
+}
+
+function weekStartKey(dayKey) {
+  const parts = String(dayKey || "").split("-").map((value) => Number(value));
+  if (parts.length !== 3 || parts.some((value) => !Number.isFinite(value))) return "";
+  const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  const day = date.getUTCDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  date.setUTCDate(date.getUTCDate() + mondayOffset);
+  return date.toISOString().slice(0, 10);
+}
+
+function pagedTradeSummary({ page, totalPages, pageCount, filteredCount, totalCount }) {
+  return `Showing ${formatInteger(pageCount)} trades on page ${formatInteger(page)} of ${formatInteger(totalPages)}. Filtered ${formatInteger(filteredCount)} of ${formatInteger(totalCount)} total trades.`;
+}
+
 function uniqueTradeValues(trades, selector) {
   const values = new Set();
   (Array.isArray(trades) ? trades : []).forEach((trade) => {
@@ -4734,9 +4833,42 @@ function localDateKey(timestamp) {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
-function TradeFilters({ trades, filteredTrades, filters, onChange }) {
-  const rows = Array.isArray(trades) ? trades : [];
-  const visibleRows = Array.isArray(filteredTrades) ? filteredTrades : [];
+function TradeMetricsGrid({ metrics, pnlLabel = "P/L", tradeLabel = "Trades", returnLabel = "Return %" }) {
+  const safeMetrics = metrics || EMPTY_TRADE_METRICS;
+  return (
+    <div className="app-live-grid futures-live-filtered-metrics-grid">
+      <MetricCard label={pnlLabel} value={formatCurrency(safeMetrics.totalPnl)} accent={safeMetrics.totalPnl} />
+      <MetricCard label={returnLabel} value={formatPct(safeMetrics.returnPct)} accent={safeMetrics.returnPct} />
+      <MetricCard label={tradeLabel} value={formatInteger(safeMetrics.trades)} />
+      <MetricCard label="Win Rate" value={formatRate(safeMetrics.winRate)} />
+      <MetricCard label="Avg Win" value={formatCurrency(safeMetrics.avgWin)} accent={safeMetrics.avgWin} />
+      <MetricCard label="Avg Loss" value={formatCurrency(safeMetrics.avgLoss)} accent={safeMetrics.avgLoss} />
+      <MetricCard label="Avg Day" value={formatCurrency(safeMetrics.avgDay)} accent={safeMetrics.avgDay} />
+      <MetricCard label="Avg Week" value={formatCurrency(safeMetrics.avgWeek)} accent={safeMetrics.avgWeek} />
+      <MetricCard label="Avg Month" value={formatCurrency(safeMetrics.avgMonth)} accent={safeMetrics.avgMonth} />
+    </div>
+  );
+}
+
+function TradePagination({ page, totalPages, pageSize, onPrev, onNext }) {
+  return (
+    <div className="d-flex align-items-center justify-content-between gap-2 mt-3 flex-wrap">
+      <button type="button" className="app-btn px-3" disabled={page <= 1} onClick={onPrev}>
+        Prev Trades
+      </button>
+      <div className="app-muted app-kicker">
+        Trade Page <b>{formatInteger(page)}</b> of <b>{formatInteger(totalPages)}</b> · {formatInteger(pageSize)} rows/page
+      </div>
+      <button type="button" className="app-btn px-3" disabled={page >= totalPages} onClick={onNext}>
+        Next Trades
+      </button>
+    </div>
+  );
+}
+
+function TradeFilters({ trades, filteredTrades, filters, onChange, summaryText = "" }) {
+  const rows = useMemo(() => Array.isArray(trades) ? trades : [], [trades]);
+  const visibleRows = useMemo(() => Array.isArray(filteredTrades) ? filteredTrades : [], [filteredTrades]);
   const symbols = useMemo(() => uniqueTradeValues(rows, (trade) => String(trade?.symbol || "").toUpperCase()), [rows]);
   const strategies = useMemo(() => uniqueTradeValues(rows, tradeStrategyFilterValue), [rows]);
   const activeFilterCount = [
@@ -4755,7 +4887,7 @@ function TradeFilters({ trades, filteredTrades, filters, onChange }) {
     <>
       <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mt-2">
         <div className="app-muted app-kicker">
-          Showing {visibleRows.length} of {rows.length} trades.
+          {summaryText || `Showing ${formatInteger(visibleRows.length)} of ${formatInteger(rows.length)} trades.`}
         </div>
         {activeFilterCount > 0 && (
           <button type="button" className="app-btn app-btn-small px-3" onClick={clearFilters}>
@@ -5449,6 +5581,11 @@ function formatPct(value) {
   const numeric = Number(value || 0);
   const sign = numeric > 0 ? "+" : "";
   return `${sign}${numeric.toFixed(2)}%`;
+}
+
+function formatRate(value) {
+  const numeric = Number(value || 0);
+  return `${numeric.toFixed(2)}%`;
 }
 
 function formatDuration(seconds) {

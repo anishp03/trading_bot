@@ -96,8 +96,8 @@ public class FuturesManager {
 	private static final String FVG_SOURCE_HTF_BREAKOUT = "HTF_BREAKOUT";
 	private static final String FVG_SOURCE_ANY_CONTEXT = "ANY_CONTEXT";
 	private static final String TOPSTEPX_100K_COMBINE_ACCOUNT_ID = "";
-	private static final String TOPSTEPX_PRACTICE_ACCOUNT_MODE = "PRACTICE_COMBINE";
-	private static final String TOPSTEPX_DEFAULT_LIVE_PROFILE = "TOPSTEP_150K_PRACTICE";
+	private static final String TOPSTEPX_DEFAULT_ACCOUNT_MODE = "TOPSTEP_150K";
+	private static final String TOPSTEPX_DEFAULT_LIVE_PROFILE = "TOPSTEP_150K";
 	private static final String DEFAULT_LIVE_SNAPSHOT_SOURCE_ID = "242";
 	private static final String STRATEGY_SLOT_BACKTEST = "BACKTEST";
 	private static final String STRATEGY_SLOT_LIVE = "LIVE";
@@ -106,10 +106,9 @@ public class FuturesManager {
 	private static final String WINDOWED_94K_STRATEGY_PRESET = "backtestbias92k";
 	private static final String BIAS_FREE_94K_STRATEGY_PRESET = "biasfree92k";
 	private static final String BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
-	private static final int ALL_DAY_LIQUIDITY_RECLAIM_SOURCE_RUN_ID = 2268;
 	private static final String DEFAULT_STRATEGY_PRESET = WINDOWED_94K_STRATEGY_PRESET;
 	private static final String WIP_STRATEGY_PRESET = "wip";
-	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-05-31-bestbiasfree-v15-live-liquidity-reclaim-strategy";
+	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-06-01-bestbiasfree-v16-clean";
 	private static final String[] VISIBLE_STRATEGY_PRESETS = new String[] { WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET };
 	private static final String[] SEEDED_STRATEGY_PRESETS = new String[] { LEGACY_94K_STRATEGY_PRESET, WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET, WIP_STRATEGY_PRESET };
 	private static final String RESEARCH_RELAXED_WINDOWS_PROPERTY = "tradingbot.research.relaxedWindows";
@@ -165,7 +164,6 @@ public class FuturesManager {
 	private static final double DTM_TRAIL_TRIGGER_R = 1.15;
 	private static final double DTM_EARLY_CUT_ADVERSE_R = 0.45;
 	private static final double DTM_EMERGENCY_CUT_ADVERSE_R = 0.95;
-	private static final double DTM_RUNNER_GIVEBACK_R = 0.35;
 	private static final Map<String, LiveWarmupBars> LIVE_WARMUP_CACHE = new HashMap<String, LiveWarmupBars>();
 	private static final Set<String> LIVE_GRAPH_WARMUP_LOADING = new HashSet<String>();
 	private static final Map<String, DynamicTradeState> LIVE_DTM_STATES = new HashMap<String, DynamicTradeState>();
@@ -458,7 +456,7 @@ public class FuturesManager {
 		private double profitTarget;
 		private String trailingDrawdownMode = "INTRADAY";
 		private FuturesStrategySettings strategySettings = defaultFuturesStrategySettings();
-		private boolean includeLiveOnlyStrategyOverlays;
+		private boolean qualitativeRiskEnabled = true;
 	}
 
 	private static class PortfolioBacktestConfig {
@@ -483,7 +481,7 @@ public class FuturesManager {
 		private String trailingDrawdownMode = "INTRADAY";
 		private boolean useSavedRisk;
 		private boolean continueAfterRuleViolation;
-		private boolean includeLiveOnlyStrategyOverlays;
+		private boolean qualitativeRiskEnabled = true;
 	}
 
 	private static class PortfolioBacktestResult {
@@ -637,6 +635,10 @@ public class FuturesManager {
 		public StrategyToggle mymBreadthConfirmation = new StrategyToggle(false, 6);
 		public StrategyToggle mclTrendContinuation = new StrategyToggle(false, 6);
 		public StrategyToggle liquidityReclaim = new StrategyToggle(false, 50);
+		public String liquidityReclaimSourceCodes = "FVG,VWAP,AFT,SWEEP,PDB,KREV,SHDW,VPB";
+		public int liquidityReclaimStartMinute = 570;
+		public int liquidityReclaimEndMinute = 930;
+		public boolean liquidityReclaimAllowDuplicates = false;
 		public boolean enableEarlySweep = true;
 		public boolean enableLateSweep = true;
 		public boolean enableSweepSecondChance = true;
@@ -1095,7 +1097,7 @@ public class FuturesManager {
 		private int sessionId;
 		private String symbol = "MES";
 		private String executionMode = "SIMULATED";
-		private String fundedProfile = "TOPSTEP_150K_PRACTICE";
+		private String fundedProfile = TOPSTEPX_DEFAULT_LIVE_PROFILE;
 		private String strategyPreset = WINDOWED_94K_STRATEGY_PRESET;
 		private String strategySlot = strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET);
 		private String symbols = DEFAULT_LIVE_SYMBOLS;
@@ -1405,11 +1407,9 @@ public class FuturesManager {
 				copyStrategySlotRows(conn, symbol, strategyPresetSlot(BIAS_FREE_94K_STRATEGY_PRESET), strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET));
 			}
 			applyBestBiasFreePresetPolicy(conn, strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET));
-			applyBestBiasFreeLiveOnlyLiquidityOverlayPolicy(conn, strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET));
 			normalizeLiveSnapshotStrategyPresetNames(conn);
 			deleteLegacyVisiblePresetRows(conn);
 			deleteDeprecatedAllEnabledPresetRows(conn);
-			deleteDeprecatedLiquidityReclaimPresetRows(conn);
 			try (PreparedStatement stmt = conn.prepareStatement("INSERT OR REPLACE INTO FuturesStrategySettings (settingKey, settingValue) VALUES (?, ?)")) {
 				stmt.setString(1, versionKey);
 				stmt.setString(2, APPROVED_STRATEGY_PRESET_POLICY_VERSION);
@@ -1467,13 +1467,6 @@ public class FuturesManager {
 	private static void deleteDeprecatedAllEnabledPresetRows(Connection conn) throws SQLException {
 		try (PreparedStatement stmt = conn.prepareStatement("DELETE FROM FuturesStrategySettings WHERE settingKey LIKE ?")) {
 			stmt.setString(1, "PRESET_ALLENABLEDBIASFREE.%");
-			stmt.executeUpdate();
-		}
-	}
-
-	private static void deleteDeprecatedLiquidityReclaimPresetRows(Connection conn) throws SQLException {
-		try (PreparedStatement stmt = conn.prepareStatement("DELETE FROM FuturesStrategySettings WHERE settingKey LIKE ?")) {
-			stmt.setString(1, "PRESET_LIQUIDITYRECLAIM.%");
 			stmt.executeUpdate();
 		}
 	}
@@ -1569,63 +1562,6 @@ public class FuturesManager {
 		enableBestBiasFreeModules(conn, slot, "MCL", new String[] { "orb", "ifvg", "afternoonContinuation", "marketIntradayMomentum", "closeMomentum" });
 
 		applyBestBiasFreeSidePolicy(conn, slot);
-	}
-
-	private static void applyBestBiasFreeLiveOnlyLiquidityOverlayPolicy(Connection conn, String slot) throws SQLException {
-		overlaySourceSettings(conn, slot, "MES", new String[] { "microShadow", "allowMicroShadow" });
-		overlaySourceSettings(conn, slot, "NQ", new String[] { "fvg", "allowFvg", "keltner", "allowKeltner" });
-		overlaySourceSettings(conn, slot, "MNQ", new String[] { "fvg", "allowFvg", "keltner", "allowKeltner" });
-		overlaySourceSettings(conn, slot, "MGC", new String[] { "keltner", "allowKeltner" });
-		overlaySourceSettings(conn, slot, "ES", new String[] { "vwap", "allowVwap", "sweep", "earlySweep", "lateSweep", "enableEarlySweep", "enableLateSweep", "enableSweepSecondChance" });
-		overlaySourceSettings(conn, slot, "M2K", new String[] { "valueArea", "allowValueArea" });
-		overlaySourceSettings(conn, slot, "MYM", new String[] { "microShadow", "allowMicroShadow", "sweep", "earlySweep", "lateSweep", "enableEarlySweep", "enableLateSweep", "enableSweepSecondChance" });
-		overlaySourceSettings(conn, slot, "MCL", new String[] { "priorDayBreakout", "allowPriorDayBreakout" });
-
-		for (String symbol : supportedInstrumentSymbols()) {
-			setSlotSymbolSetting(conn, slot, symbol, "liquidityReclaim.enabled", isLiquidityReclaimSourceSymbol(symbol) ? "true" : "false");
-			setSlotSymbolSetting(conn, slot, symbol, "liquidityReclaim.maxTradesPerDay", "50");
-		}
-		disableBestBiasFreeLiveOnlyComponentModules(conn, slot);
-	}
-
-	private static void disableBestBiasFreeLiveOnlyComponentModules(Connection conn, String slot) throws SQLException {
-		setSlotSymbolSetting(conn, slot, "MES", "microShadow.enabled", "false");
-		setSlotSymbolSetting(conn, slot, "MNQ", "fvg.enabled", "false");
-		setSlotSymbolSetting(conn, slot, "MNQ", "keltnerReversion.enabled", "false");
-		setSlotSymbolSetting(conn, slot, "MGC", "keltnerReversion.enabled", "false");
-		setSlotSymbolSetting(conn, slot, "ES", "vwapPullback.enabled", "false");
-		setSlotSymbolSetting(conn, slot, "ES", "sweep.enabled", "false");
-		setSlotSymbolSetting(conn, slot, "M2K", "valueAreaReclaim.enabled", "false");
-		setSlotSymbolSetting(conn, slot, "MYM", "microShadow.enabled", "false");
-		setSlotSymbolSetting(conn, slot, "MYM", "sweep.enabled", "false");
-		setSlotSymbolSetting(conn, slot, "MCL", "priorDayBreakout.enabled", "false");
-	}
-
-	private static void overlaySourceSettings(Connection conn, String slot, String symbol, String[] suffixPrefixes) throws SQLException {
-		Map<String, String> rows = loadPortfolioBacktestSettingRows(conn, ALL_DAY_LIQUIDITY_RECLAIM_SOURCE_RUN_ID, java.util.Arrays.asList(normalizeSymbol(symbol)));
-		String symbolPrefix = normalizeSymbol(symbol) + ".";
-		for (Map.Entry<String, String> entry : rows.entrySet()) {
-			String key = entry.getKey();
-			if (!key.startsWith(symbolPrefix)) {
-				continue;
-			}
-			String suffix = key.substring(symbolPrefix.length());
-			if (startsWithAny(suffix, suffixPrefixes)) {
-				setSlotSymbolSetting(conn, slot, symbol, suffix, entry.getValue());
-			}
-		}
-	}
-
-	private static boolean startsWithAny(String value, String[] prefixes) {
-		if (value == null || prefixes == null) {
-			return false;
-		}
-		for (int index = 0; index < prefixes.length; index++) {
-			if (value.startsWith(prefixes[index])) {
-				return true;
-			}
-		}
-		return false;
 	}
 
 	private static void enableBestBiasFreeModules(Connection conn, String slot, String symbol, String[] modules) throws SQLException {
@@ -2131,7 +2067,8 @@ public class FuturesManager {
 			fundedProfile,
 			strategyPreset,
 			sourcePortfolioBacktestId,
-			false
+			false,
+			true
 		);
 	}
 
@@ -2156,13 +2093,7 @@ public class FuturesManager {
 		int sourcePortfolioBacktestId,
 		boolean continueAfterRuleViolation
 	) {
-		initializeStore();
-		String normalizedStrategyPreset = normalizeStrategyPresetName(strategyPreset);
-		String presetValidationMessage = validateStrategyPresetForSymbols(normalizedStrategyPreset, symbols);
-		if (presetValidationMessage.length() > 0) {
-			return -1;
-		}
-		PortfolioBacktestConfig config = buildPortfolioBacktestConfig(
+		return generatePortfolioBacktest(
 			symbols,
 			startDate,
 			endDate,
@@ -2178,20 +2109,15 @@ public class FuturesManager {
 			maxAggregateMiniUnits,
 			useSavedRisk,
 			profitTarget,
-			fundedProfile
+			fundedProfile,
+			strategyPreset,
+			sourcePortfolioBacktestId,
+			continueAfterRuleViolation,
+			true
 		);
-		config.strategyPreset = normalizedStrategyPreset;
-		config.strategySlot = strategyPresetSlot(config.strategyPreset);
-		config.sourcePortfolioBacktestId = Math.max(0, sourcePortfolioBacktestId);
-		config.continueAfterRuleViolation = continueAfterRuleViolation;
-		PortfolioBacktestResult result = runPortfolioBacktest(config);
-		if (result == null) {
-			return -1;
-		}
-		return savePortfolioBacktest(result, config);
 	}
 
-	public static int generateSyntheticLiveOnlyLiquidityReclaimBacktest(
+	public static int generatePortfolioBacktest(
 		String symbols,
 		String startDate,
 		String endDate,
@@ -2210,7 +2136,8 @@ public class FuturesManager {
 		String fundedProfile,
 		String strategyPreset,
 		int sourcePortfolioBacktestId,
-		boolean continueAfterRuleViolation
+		boolean continueAfterRuleViolation,
+		boolean qualitativeRiskEnabled
 	) {
 		initializeStore();
 		String normalizedStrategyPreset = normalizeStrategyPresetName(strategyPreset);
@@ -2240,7 +2167,7 @@ public class FuturesManager {
 		config.strategySlot = strategyPresetSlot(config.strategyPreset);
 		config.sourcePortfolioBacktestId = Math.max(0, sourcePortfolioBacktestId);
 		config.continueAfterRuleViolation = continueAfterRuleViolation;
-		config.includeLiveOnlyStrategyOverlays = true;
+		config.qualitativeRiskEnabled = qualitativeRiskEnabled;
 		PortfolioBacktestResult result = runPortfolioBacktest(config);
 		if (result == null) {
 			return -1;
@@ -2384,6 +2311,10 @@ public class FuturesManager {
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "mclTrendContinuation.maxTradesPerDay"), safeSettings.mclTrendContinuation.maxTradesPerDay);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaim.enabled"), safeSettings.liquidityReclaim.enabled);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaim.maxTradesPerDay"), safeSettings.liquidityReclaim.maxTradesPerDay);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaimSourceCodes"), safeSettings.liquidityReclaimSourceCodes == null ? "" : safeSettings.liquidityReclaimSourceCodes);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaimStartMinute"), safeSettings.liquidityReclaimStartMinute);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaimEndMinute"), safeSettings.liquidityReclaimEndMinute);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaimAllowDuplicates"), safeSettings.liquidityReclaimAllowDuplicates);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "enableEarlySweep"), safeSettings.enableEarlySweep);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "enableLateSweep"), safeSettings.enableLateSweep);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "enableSweepSecondChance"), safeSettings.enableSweepSecondChance);
@@ -2878,6 +2809,10 @@ public class FuturesManager {
 			+ "\"mymBreadthConfirmation\":" + toggleJson(settings.mymBreadthConfirmation) + ","
 			+ "\"mclTrendContinuation\":" + toggleJson(settings.mclTrendContinuation) + ","
 			+ "\"liquidityReclaim\":" + toggleJson(settings.liquidityReclaim) + ","
+			+ "\"liquidityReclaimSourceCodes\":" + jsonString(settings.liquidityReclaimSourceCodes) + ","
+			+ "\"liquidityReclaimStartMinute\":" + settings.liquidityReclaimStartMinute + ","
+			+ "\"liquidityReclaimEndMinute\":" + settings.liquidityReclaimEndMinute + ","
+			+ "\"liquidityReclaimAllowDuplicates\":" + settings.liquidityReclaimAllowDuplicates + ","
 			+ "\"enableEarlySweep\":" + settings.enableEarlySweep + ","
 			+ "\"enableLateSweep\":" + settings.enableLateSweep + ","
 			+ "\"enableSweepSecondChance\":" + settings.enableSweepSecondChance + ","
@@ -3315,14 +3250,12 @@ public class FuturesManager {
 			+ "\"windowedPreset\":" + jsonString(WINDOWED_94K_STRATEGY_PRESET) + ","
 			+ "\"biasFreePreset\":" + jsonString(BIAS_FREE_94K_STRATEGY_PRESET) + ","
 			+ "\"bestBiasFreePreset\":" + jsonString(BEST_BIAS_FREE_STRATEGY_PRESET) + ","
-			+ "\"liveOnlyLiquidityOverlayPreset\":" + jsonString(BEST_BIAS_FREE_STRATEGY_PRESET) + ","
-			+ "\"liveOnlyLiquidityOverlayCodes\":" + jsonStringArray(Arrays.asList(new String[] { "FVG", "VWAP", "AFT", "SWEEP", "PDB", "KREV", "SHDW", "VPB" })) + ","
 			+ "\"editablePreset\":" + jsonString(BEST_BIAS_FREE_STRATEGY_PRESET) + ","
 			+ "\"visiblePresets\":" + jsonStringArray(Arrays.asList(VISIBLE_STRATEGY_PRESETS)) + ","
 			+ "\"timeNativeStrategies\":" + jsonStringArray(Arrays.asList(TIME_NATIVE_STRATEGY_CODES)) + ","
 			+ "\"patternLevelStrategies\":" + jsonStringArray(Arrays.asList(PATTERN_LEVEL_STRATEGY_CODES)) + ","
 			+ "\"disabledResearchStrategies\":" + jsonStringArray(Arrays.asList(DISABLED_RESEARCH_STRATEGY_CODES)) + ","
-				+ "\"rule\":" + jsonString("backtestbias92k is the frozen windowed control. biasfree92k is the broad comparison preset with fitted windows removed. bestbiasfree is the main best strategy config; it includes a live-only liquidity reclaim overlay from run 2268. Normal backtests strip the live-only overlay, while live snapshots and live parity replays keep it.")
+				+ "\"rule\":" + jsonString("backtestbias92k is the frozen windowed control. biasfree92k is the broad comparison preset with fitted windows removed. bestbiasfree is the main best strategy config. Level 2 infrastructure remains available for Entry Optimizer, DTM, and synthetic research.")
 				+ "}";
 	}
 
@@ -3634,9 +3567,6 @@ public class FuturesManager {
 
 	private static String normalizeStrategyPresetName(String presetName) {
 		String cleaned = cleanOrDefault(presetName, DEFAULT_STRATEGY_PRESET).trim().toLowerCase(Locale.US).replaceAll("[^a-z0-9_\\-]", "");
-		if ("liquidityreclaim".equals(cleaned)) {
-			return BEST_BIAS_FREE_STRATEGY_PRESET;
-		}
 		return cleaned.length() == 0 ? DEFAULT_STRATEGY_PRESET : cleaned;
 	}
 
@@ -3651,9 +3581,6 @@ public class FuturesManager {
 			return DEFAULT_STRATEGY_PRESET;
 		}
 		String raw = normalizedSlot.substring(STRATEGY_PRESET_PREFIX.length()).toLowerCase(Locale.US);
-		if ("liquidityreclaim".equals(raw)) {
-			return BEST_BIAS_FREE_STRATEGY_PRESET;
-		}
 		return raw.length() == 0 ? DEFAULT_STRATEGY_PRESET : raw;
 	}
 
@@ -3769,6 +3696,10 @@ public class FuturesManager {
 		else if ("mclTrendContinuation.maxTradesPerDay".equals(key)) settings.mclTrendContinuation.maxTradesPerDay = parseInt(value, settings.mclTrendContinuation.maxTradesPerDay);
 		else if ("liquidityReclaim.enabled".equals(key)) settings.liquidityReclaim.enabled = parseBoolean(value, settings.liquidityReclaim.enabled);
 		else if ("liquidityReclaim.maxTradesPerDay".equals(key)) settings.liquidityReclaim.maxTradesPerDay = parseInt(value, settings.liquidityReclaim.maxTradesPerDay);
+		else if ("liquidityReclaimSourceCodes".equals(key)) settings.liquidityReclaimSourceCodes = value == null ? "" : value.trim();
+		else if ("liquidityReclaimStartMinute".equals(key)) settings.liquidityReclaimStartMinute = parseInt(value, settings.liquidityReclaimStartMinute);
+		else if ("liquidityReclaimEndMinute".equals(key)) settings.liquidityReclaimEndMinute = parseInt(value, settings.liquidityReclaimEndMinute);
+		else if ("liquidityReclaimAllowDuplicates".equals(key)) settings.liquidityReclaimAllowDuplicates = parseBoolean(value, settings.liquidityReclaimAllowDuplicates);
 		else if ("enableEarlySweep".equals(key)) settings.enableEarlySweep = parseBoolean(value, settings.enableEarlySweep);
 		else if ("enableLateSweep".equals(key)) settings.enableLateSweep = parseBoolean(value, settings.enableLateSweep);
 		else if ("enableSweepSecondChance".equals(key)) settings.enableSweepSecondChance = parseBoolean(value, settings.enableSweepSecondChance);
@@ -4244,6 +4175,11 @@ public class FuturesManager {
 		settings.mymBreadthConfirmation.maxTradesPerDay = boundedInt(settings.mymBreadthConfirmation.maxTradesPerDay, 6, 0, 20);
 		settings.mclTrendContinuation.maxTradesPerDay = boundedInt(settings.mclTrendContinuation.maxTradesPerDay, 6, 0, 20);
 		settings.liquidityReclaim.maxTradesPerDay = boundedInt(settings.liquidityReclaim.maxTradesPerDay, 50, 0, 100);
+		settings.liquidityReclaimStartMinute = boundedInt(settings.liquidityReclaimStartMinute, 570, 0, 930);
+		settings.liquidityReclaimEndMinute = boundedInt(settings.liquidityReclaimEndMinute, 930, 0, 930);
+		if (settings.liquidityReclaimEndMinute < settings.liquidityReclaimStartMinute) {
+			settings.liquidityReclaimEndMinute = settings.liquidityReclaimStartMinute;
+		}
 		settings.orbRetestStartMinutes = boundedInt(settings.orbRetestStartMinutes, 0, 0, 150);
 		settings.orbRetestEndMinutes = boundedInt(settings.orbRetestEndMinutes, 135, 0, 150);
 		if (settings.orbRetestEndMinutes < settings.orbRetestStartMinutes) {
@@ -4770,9 +4706,21 @@ public class FuturesManager {
 				if (json.length() > 1) {
 					json.append(",");
 				}
+				String portfolioSettingsJson = rs.getString("portfolioSettingsJson");
+				String storedStrategyPreset = jsonText(portfolioSettingsJson, "strategyPreset", "");
+				if (storedStrategyPreset.trim().isEmpty()) {
+					storedStrategyPreset = strategyPresetNameFromSlot(jsonText(portfolioSettingsJson, "strategySlot", ""));
+				}
+				String strategyPreset = normalizeStrategyPresetName(storedStrategyPreset);
+				String fundedProfile = cleanOrDefault(rs.getString("fundedProfile"), jsonText(portfolioSettingsJson, "fundedProfile", "CUSTOM"));
+				FundedRuleProfile riskProfile = fundedRuleProfileFor(fundedProfile);
 				json.append("{")
 					.append("\"id\":").append(rs.getInt("portfolioBacktestID")).append(",")
 					.append("\"fundedProfile\":").append(jsonString(rs.getString("fundedProfile"))).append(",")
+					.append("\"strategyPreset\":").append(jsonString(strategyPreset)).append(",")
+					.append("\"strategyConfig\":").append(jsonString(strategyPresetLabel(strategyPreset))).append(",")
+					.append("\"riskConfigCode\":").append(jsonString(riskProfile.code)).append(",")
+					.append("\"riskConfig\":").append(jsonString(riskProfile.name)).append(",")
 					.append("\"symbols\":").append(jsonString(rs.getString("symbols"))).append(",")
 					.append("\"startDate\":").append(jsonString(rs.getString("startDate"))).append(",")
 					.append("\"endDate\":").append(jsonString(rs.getString("endDate"))).append(",")
@@ -4962,7 +4910,7 @@ public class FuturesManager {
 			+ "\"symbolList\":" + jsonStringArray(parseSymbols(DEFAULT_LIVE_SYMBOLS)) + ","
 			+ "\"startDate\":" + jsonString(startDate.toString()) + ","
 			+ "\"endDate\":" + jsonString(endDate.toString()) + ","
-			+ "\"fundedProfile\":\"TOPSTEP_150K_RESEARCH\","
+			+ "\"fundedProfile\":\"TOPSTEP_150K\","
 			+ "\"accountSize\":150000,"
 			+ "\"maxTrailingDrawdown\":4500,"
 			+ "\"dailyLossLimit\":3000,"
@@ -5873,10 +5821,19 @@ public class FuturesManager {
 			|| safe.keltnerScalp.enabled
 			|| safe.keltnerReversion.enabled
 			|| safe.microScalp.enabled
+			|| safe.microShadow.enabled
+			|| safe.microEcho.enabled
+			|| safe.winnerFollowThrough.enabled
+			|| safe.trendLadder.enabled
+			|| safe.rangeCompressionBreakout.enabled
+			|| safe.valueAreaReclaim.enabled
 			|| safe.mclEiaContinuation.enabled
 			|| safe.mclCrudeSessionOpen.enabled
 			|| safe.mymIndexConfirmation.enabled
-			|| safe.mymOrbRetest.enabled;
+			|| safe.mymOrbRetest.enabled
+			|| safe.mymBreadthConfirmation.enabled
+			|| safe.mclTrendContinuation.enabled
+			|| safe.liquidityReclaim.enabled;
 	}
 
 	private static String jsonStringArray(List<String> values) {
@@ -6281,6 +6238,10 @@ public class FuturesManager {
 		copy.mymBreadthConfirmation = new StrategyToggle(safe.mymBreadthConfirmation.enabled, safe.mymBreadthConfirmation.maxTradesPerDay);
 		copy.mclTrendContinuation = new StrategyToggle(safe.mclTrendContinuation.enabled, safe.mclTrendContinuation.maxTradesPerDay);
 		copy.liquidityReclaim = new StrategyToggle(safe.liquidityReclaim.enabled, safe.liquidityReclaim.maxTradesPerDay);
+		copy.liquidityReclaimSourceCodes = safe.liquidityReclaimSourceCodes;
+		copy.liquidityReclaimStartMinute = safe.liquidityReclaimStartMinute;
+		copy.liquidityReclaimEndMinute = safe.liquidityReclaimEndMinute;
+		copy.liquidityReclaimAllowDuplicates = safe.liquidityReclaimAllowDuplicates;
 		copy.enableEarlySweep = safe.enableEarlySweep;
 		copy.enableLateSweep = safe.enableLateSweep;
 		copy.enableSweepSecondChance = safe.enableSweepSecondChance;
@@ -7509,13 +7470,13 @@ public class FuturesManager {
 					double dailyRiskBudget = Math.abs(config.dailyLossLimit) + (equityAtOpen - dayStartBalance) - reservedOpenRisk;
 					double trailingRiskBudget = equityAtOpen - trailingThreshold - reservedOpenRisk;
 					double aggregateGuardBudget = Math.min(dailyRiskBudget, trailingRiskBudget);
-					double riskBudgetMultiplier = portfolioRiskBudgetMultiplier(
+					double riskBudgetMultiplier = context.config.qualitativeRiskEnabled ? portfolioRiskBudgetMultiplier(
 						context,
 						event,
 						balance - dayStartBalance,
 						aggregateGuardBudget,
 						openPositions.size()
-					);
+					) : 1.0;
 					double symbolRiskBudget = context.config.maxRiskPerTrade * riskBudgetMultiplier;
 					double availableRiskBudget = Math.min(symbolRiskBudget, aggregateGuardBudget);
 					int aggregateRoom = config.maxAggregateContracts - openContracts;
@@ -8534,7 +8495,7 @@ public class FuturesManager {
 		session.executionMode = "SIMULATED";
 		session.entryOptimizerEnabled = true;
 		session.dtmEnabled = true;
-		session.fundedProfile = "TOPSTEP_50K_RESEARCH";
+		session.fundedProfile = "TOPSTEP_50K";
 		session.strategyPreset = "synthetic-lifecycle";
 		session.strategySlot = "PRESET_SYNTHETIC_LIFECYCLE";
 		session.maxOpenPositions = 3;
@@ -8553,7 +8514,7 @@ public class FuturesManager {
 		int acceptedEntries = 0;
 		int completedTrades = 0;
 		int orderFlowRejected = 0;
-		int noExtensionManagedTrades = 0;
+		int standardTargetManagedTrades = 0;
 
 		LivePortfolioSignalCandidate managedCandidate = selfTestLifecycleCandidate("MYM", "ORB", "LONG", 1.20);
 		contexts.put(managedCandidate.symbol, managedCandidate.context);
@@ -8625,77 +8586,77 @@ public class FuturesManager {
 			}
 		}
 
-		LivePortfolioSignalCandidate noExtensionCandidate = selfTestLifecycleCandidate("MCL", "PDB", "LONG");
-		contexts.put(noExtensionCandidate.symbol, noExtensionCandidate.context);
-		seedSyntheticOrderFlow(noExtensionCandidate.symbol, true);
-		OrderFlowEntryDecision noExtensionFlow = evaluateLiveEntryOrderFlow(session, noExtensionCandidate);
-		if (!noExtensionFlow.enabled || !noExtensionFlow.passed || !"ORDER_FLOW_PASS_CONFIRMED".equals(noExtensionFlow.actionCode)) {
-			failures.add("No-extension lifecycle entry optimizer did not produce ORDER_FLOW_PASS_CONFIRMED.");
+		LivePortfolioSignalCandidate standardTargetCandidate = selfTestLifecycleCandidate("MCL", "PDB", "LONG");
+		contexts.put(standardTargetCandidate.symbol, standardTargetCandidate.context);
+		seedSyntheticOrderFlow(standardTargetCandidate.symbol, true);
+		OrderFlowEntryDecision standardTargetFlow = evaluateLiveEntryOrderFlow(session, standardTargetCandidate);
+		if (!standardTargetFlow.enabled || !standardTargetFlow.passed || !"ORDER_FLOW_PASS_CONFIRMED".equals(standardTargetFlow.actionCode)) {
+			failures.add("Standard-target lifecycle entry optimizer did not produce ORDER_FLOW_PASS_CONFIRMED.");
 		}
-		pushSyntheticCandidateAndOrderFlowEvents(session.sessionId, noExtensionCandidate, noExtensionFlow);
-		LiveSignalOrder noExtensionOrder = validateLivePortfolioSignal(
+		pushSyntheticCandidateAndOrderFlowEvents(session.sessionId, standardTargetCandidate, standardTargetFlow);
+		LiveSignalOrder standardTargetOrder = validateLivePortfolioSignal(
 			session,
 			portfolioConfig,
 			contexts,
-			noExtensionCandidate,
+			standardTargetCandidate,
 			new ArrayList<PortfolioPosition>(),
 			new HashMap<String, Integer>(),
 			new LiveBrokerExposure()
 		);
-		if (!noExtensionOrder.accepted || noExtensionOrder.position == null) {
-			failures.add("No-extension lifecycle candidate failed live sizing: " + noExtensionOrder.reason);
+		if (!standardTargetOrder.accepted || standardTargetOrder.position == null) {
+			failures.add("Standard-target lifecycle candidate failed live sizing: " + standardTargetOrder.reason);
 		} else {
-			noExtensionOrder.diagnosticsJson = mergeSimpleJson(
-				noExtensionOrder.diagnosticsJson,
-				"\"orderFlowAction\":" + jsonString(noExtensionFlow.actionCode)
-					+ ",\"orderFlowReason\":" + jsonString(noExtensionFlow.reason)
-					+ ",\"orderFlow\":" + jsonObjectOrDefault(noExtensionFlow.metricsJson, "{}")
+			standardTargetOrder.diagnosticsJson = mergeSimpleJson(
+				standardTargetOrder.diagnosticsJson,
+				"\"orderFlowAction\":" + jsonString(standardTargetFlow.actionCode)
+					+ ",\"orderFlowReason\":" + jsonString(standardTargetFlow.reason)
+					+ ",\"orderFlow\":" + jsonObjectOrDefault(standardTargetFlow.metricsJson, "{}")
 			);
 			insertLiveSignalDecisionFromSignal(
 				session.sessionId,
 				snapshot.snapshotId,
-				noExtensionCandidate.symbol,
-				noExtensionCandidate.event.signal,
-				noExtensionCandidate.signalTime,
-				noExtensionCandidate.entryTime,
-				noExtensionOrder.contracts,
-				noExtensionOrder.entryPrice,
-				noExtensionOrder.stopPrice,
-				noExtensionOrder.targetPrice,
-				noExtensionOrder.fundedMiniUnits,
+				standardTargetCandidate.symbol,
+				standardTargetCandidate.event.signal,
+				standardTargetCandidate.signalTime,
+				standardTargetCandidate.entryTime,
+				standardTargetOrder.contracts,
+				standardTargetOrder.entryPrice,
+				standardTargetOrder.stopPrice,
+				standardTargetOrder.targetPrice,
+				standardTargetOrder.fundedMiniUnits,
 				"ACCEPTED_SIMULATED_LIVE",
 				"Synthetic lifecycle signal accepted in simulated mode.",
 				"",
-				noExtensionOrder.diagnosticsJson
+				standardTargetOrder.diagnosticsJson
 			);
-			pushSyntheticOrderSubmittedEvent(session.sessionId, noExtensionCandidate, noExtensionOrder);
+			pushSyntheticOrderSubmittedEvent(session.sessionId, standardTargetCandidate, standardTargetOrder);
 			acceptedEntries++;
 
 			List<PortfolioPosition> standardTargetPositions = new ArrayList<PortfolioPosition>();
-			standardTargetPositions.add(noExtensionOrder.position);
+			standardTargetPositions.add(standardTargetOrder.position);
 			closeTriggeredLivePositions(session, snapshot, standardTargetPositions, contexts, singleBarMap(
-				noExtensionCandidate.symbol,
-				selfTestDtmBar(noExtensionCandidate.context, noExtensionOrder.position, 6, 0.80, false, false)
-			));
-			closeTriggeredLivePositions(session, snapshot, standardTargetPositions, contexts, singleBarMap(
-				noExtensionCandidate.symbol,
-				selfTestDtmBar(noExtensionCandidate.context, noExtensionOrder.position, 7, 1.05, false, false)
+				standardTargetCandidate.symbol,
+				selfTestDtmBar(standardTargetCandidate.context, standardTargetOrder.position, 6, 0.80, false, false)
 			));
 			closeTriggeredLivePositions(session, snapshot, standardTargetPositions, contexts, singleBarMap(
-				noExtensionCandidate.symbol,
-				selfTestDtmBar(noExtensionCandidate.context, noExtensionOrder.position, 8, 1.30, false, false)
+				standardTargetCandidate.symbol,
+				selfTestDtmBar(standardTargetCandidate.context, standardTargetOrder.position, 7, 1.05, false, false)
 			));
-			List<FuturesTrade> noExtensionTrades = closeTriggeredLivePositions(session, snapshot, standardTargetPositions, contexts, singleBarMap(
-				noExtensionCandidate.symbol,
-				selfTestDtmBar(noExtensionCandidate.context, noExtensionOrder.position, 9, 4.00, true, false)
+			closeTriggeredLivePositions(session, snapshot, standardTargetPositions, contexts, singleBarMap(
+				standardTargetCandidate.symbol,
+				selfTestDtmBar(standardTargetCandidate.context, standardTargetOrder.position, 8, 1.30, false, false)
 			));
-			if (noExtensionTrades.isEmpty()) {
-				failures.add("No-extension lifecycle position did not complete through the exit engine.");
+			List<FuturesTrade> standardTargetTrades = closeTriggeredLivePositions(session, snapshot, standardTargetPositions, contexts, singleBarMap(
+				standardTargetCandidate.symbol,
+				selfTestDtmBar(standardTargetCandidate.context, standardTargetOrder.position, 9, 4.00, true, false)
+			));
+			if (standardTargetTrades.isEmpty()) {
+				failures.add("Standard-target lifecycle position did not complete through the exit engine.");
 			} else {
-				FuturesTrade trade = noExtensionTrades.get(0);
+				FuturesTrade trade = standardTargetTrades.get(0);
 				insertLiveExitDecision(session.sessionId, snapshot.snapshotId, trade, "SIMULATED_TARGET_EXIT", trade.exitReason);
 				pushSyntheticPositionExitedEvent(session.sessionId, trade, "SIMULATED_TARGET_EXIT", trade.exitReason);
-				noExtensionManagedTrades++;
+				standardTargetManagedTrades++;
 				completedTrades++;
 			}
 		}
@@ -8813,13 +8774,12 @@ public class FuturesManager {
 		boolean exitReasonOk = decisionsJson.contains("\"exitReasonText\"")
 			&& decisionsJson.contains("\"exitReasoning\"")
 			&& decisionsJson.contains("\"DTM_CUT_EARLY_THESIS_FAILED\"")
-			&& decisionsJson.contains("\"DTM_EXTEND_TARGET_CONTINUATION\"")
 			&& decisionsJson.contains("\"DTM_TRAIL_STOP\"");
 		boolean thinkingOk = dtmEvents >= 3 && submittedEvents == acceptedEntries && exitedEvents == completedTrades && orderFlowBlockedEvents == orderFlowRejected;
 		boolean success = failures.isEmpty()
 			&& acceptedEntries == 3
 			&& completedTrades == 3
-			&& noExtensionManagedTrades == 1
+			&& standardTargetManagedTrades == 1
 			&& orderFlowRejected == 1
 			&& decisionRows == 7
 			&& entryReasonOk
@@ -8842,7 +8802,7 @@ public class FuturesManager {
 			+ "\"snapshotId\":" + snapshot.snapshotId + ","
 			+ "\"acceptedEntries\":" + acceptedEntries + ","
 			+ "\"completedTrades\":" + completedTrades + ","
-			+ "\"noExtensionManagedTrades\":" + noExtensionManagedTrades + ","
+			+ "\"standardTargetManagedTrades\":" + standardTargetManagedTrades + ","
 			+ "\"orderFlowRejected\":" + orderFlowRejected + ","
 			+ "\"decisionRows\":" + decisionRows + ","
 			+ "\"thinkingEvents\":{"
@@ -9072,7 +9032,7 @@ public class FuturesManager {
 	private static PortfolioBacktestConfig selfTestPortfolioConfig(List<String> symbols) {
 		PortfolioBacktestConfig config = new PortfolioBacktestConfig();
 		config.symbols = new ArrayList<String>(symbols);
-		config.fundedProfile = "TOPSTEP_50K_RESEARCH";
+		config.fundedProfile = "TOPSTEP_50K";
 		config.accountSize = 50000.0;
 		config.maxTrailingDrawdown = 2000.0;
 		config.dailyLossLimit = 5000.0;
@@ -9106,8 +9066,8 @@ public class FuturesManager {
 		LiveStrategySnapshotRow snapshot = new LiveStrategySnapshotRow();
 		snapshot.sourcePortfolioBacktestId = 0;
 		snapshot.symbols = cleanSymbolsCsv(String.join(",", symbols));
-		snapshot.fundedProfile = "TOPSTEP_50K_RESEARCH";
-		snapshot.accountMode = "PRACTICE";
+		snapshot.fundedProfile = "TOPSTEP_50K";
+		snapshot.accountMode = "TOPSTEP_50K";
 		snapshot.practiceAccountId = "SELF_TEST";
 		snapshot.maxOpenPositions = 3;
 		snapshot.maxAggregateContracts = 50;
@@ -9525,7 +9485,6 @@ public class FuturesManager {
 		settings.trendLadder = new StrategyToggle(true, 4);
 		settings.rangeCompressionBreakout = new StrategyToggle(true, 4);
 		settings.valueAreaReclaim = new StrategyToggle(true, 4);
-		settings.liquidityReclaim = new StrategyToggle(true, 4);
 		settings.maxInitialRiskTicks = 220.0;
 		settings.openMaeRiskMultiplier = 1.0;
 		settings.openingMomentumPortfolioRiskMultiplier = 1.0;
@@ -12505,6 +12464,8 @@ public class FuturesManager {
 		count += safe.mclCrudeSessionOpen.enabled ? 1 : 0;
 		count += safe.mymIndexConfirmation.enabled ? 1 : 0;
 		count += safe.mymOrbRetest.enabled ? 1 : 0;
+		count += safe.mymBreadthConfirmation.enabled ? 1 : 0;
+		count += safe.mclTrendContinuation.enabled ? 1 : 0;
 		count += safe.liquidityReclaim.enabled ? 1 : 0;
 		return count;
 	}
@@ -12848,7 +12809,6 @@ public class FuturesManager {
 		config.strategySlot = activeLiveStrategySlot(session, snapshot);
 		config.strategyPreset = activeLiveStrategyPreset(session, snapshot);
 		config.sourcePortfolioBacktestId = snapshot == null ? 0 : snapshot.sourcePortfolioBacktestId;
-		config.includeLiveOnlyStrategyOverlays = true;
 		if (useSessionRisk) {
 			FundedRuleProfile profile = fundedRuleProfileFor(profileCode);
 			config.accountSize = positiveOrDefault(accountSize, config.accountSize);
@@ -13262,7 +13222,7 @@ public class FuturesManager {
 		if ("MYMORB2".equals(code)) return "MYM retested the opening range after a confirmed break and resumed.";
 		if ("MYMBR".equals(code)) return "MYM faded an index-breadth stretch after the Dow contract reached a structured breakout/breakdown zone.";
 		if ("MCLTC".equals(code)) return "MCL faded an extended crude trend push after price stretched away from the session open with bounded reversal risk.";
-		if ("LIQREC".equals(code)) return "live Level 2 depth/tape confirmed a liquidity-reclaim setup from the approved best bias-free component stack.";
+		if ("LIQREC".equals(code)) return "a first-class Liquidity Reclaim source-stack setup triggered with reclaim structure and executable risk geometry.";
 		if ("OFLOW_EQ".equals(code)) return "order-flow equilibrium logic confirmed a dislocation reversion setup.";
 		return "the configured strategy filters passed for " + dir + " expectancy.";
 	}
@@ -14091,6 +14051,7 @@ public class FuturesManager {
 			+ "\"trailingDrawdownMode\":" + jsonString(cleanOrDefault(safeConfig.trailingDrawdownMode, "")) + ","
 			+ "\"useSavedRisk\":" + safeConfig.useSavedRisk + ","
 			+ "\"continueAfterRuleViolation\":" + safeConfig.continueAfterRuleViolation + ","
+			+ "\"qualitativeRiskEnabled\":" + safeConfig.qualitativeRiskEnabled + ","
 			+ "\"strategySlot\":" + jsonString(normalizeStrategySlot(safeConfig.strategySlot)) + ","
 			+ "\"strategyPreset\":" + jsonString(normalizeStrategyPresetName(safeConfig.strategyPreset)) + ","
 			+ "\"sourcePortfolioBacktestId\":" + safeConfig.sourcePortfolioBacktestId + ","
@@ -14498,25 +14459,6 @@ public class FuturesManager {
 		synchronized (FuturesManager.class) {
 			return copyLiveSession(liveSession);
 		}
-	}
-
-	private static boolean liveOnlyLiquidityReclaimEnabled(String symbolsCsv, String strategySlot) {
-		String clean = cleanSymbolsCsv(cleanOrDefault(symbolsCsv, DEFAULT_LIVE_SYMBOLS));
-		if (clean.trim().isEmpty()) {
-			return false;
-		}
-		String[] symbols = clean.split(",");
-		for (int index = 0; index < symbols.length; index++) {
-			String symbol = normalizeSymbol(symbols[index]);
-			if (!isLiquidityReclaimSourceSymbol(symbol)) {
-				continue;
-			}
-			FuturesStrategySettings settings = loadFuturesStrategySettings(symbol, strategySlot);
-			if (settings != null && settings.liquidityReclaim != null && settings.liquidityReclaim.enabled) {
-				return true;
-			}
-		}
-		return false;
 	}
 
 	private static boolean liveSessionStillRunning(int sessionId) {
@@ -15985,27 +15927,25 @@ public class FuturesManager {
 			state.remainingContracts = Math.max(1, position.contracts);
 		}
 		position.contracts = Math.max(1, state.remainingContracts);
-			double favorableMove = favorableMovePoints(position, favorableExtremePrice(position, bar));
-			double adverseMove = adverseMovePoints(position, adverseExtremePrice(position, bar));
-			double favorableR = favorableMove / position.initialRisk;
-			double adverseR = adverseMove / position.initialRisk;
-			state.peakFavorableR = Math.max(state.peakFavorableR, favorableR);
-			LiveRuntimeState.OrderFlowSnapshot flow = LiveRuntimeState.orderFlowSnapshot(position.symbol);
-			boolean flowAgainst = orderFlowAgainstPosition(position.side, flow);
-			boolean trendAgainst = trendAgainstPosition(position.side, bar);
-			boolean continuationStrong = dtmContinuationStrong(position, context, bar, flow);
-			String dtmState = dtmStateName(position, state, favorableR, adverseR, flowAgainst, trendAgainst, continuationStrong);
-			state.stateName = dtmState;
-			boolean thesisInvalidated = dtmThesisInvalidated(position, context, bar, flowAgainst, trendAgainst);
-			if (adverseR >= DTM_EARLY_CUT_ADVERSE_R && (flowAgainst || trendAgainst || thesisInvalidated)) {
-				state.exitEvidenceCount++;
-			} else {
-				state.exitEvidenceCount = 0;
-			}
-			boolean emergencyExit = adverseR >= DTM_EMERGENCY_CUT_ADVERSE_R && (trendAgainst || thesisInvalidated);
-			boolean normalExitArmed = adverseR >= DTM_EARLY_CUT_ADVERSE_R && thesisInvalidated && state.exitEvidenceCount >= 2;
-			if ((emergencyExit || normalExitArmed) && !state.exitRequested) {
-				DynamicTradeDecision decision = new DynamicTradeDecision();
+		double favorableMove = favorableMovePoints(position, favorableExtremePrice(position, bar));
+		double adverseMove = adverseMovePoints(position, adverseExtremePrice(position, bar));
+		double favorableR = favorableMove / position.initialRisk;
+		double adverseR = adverseMove / position.initialRisk;
+		LiveRuntimeState.OrderFlowSnapshot flow = LiveRuntimeState.orderFlowSnapshot(position.symbol);
+		boolean flowAgainst = orderFlowAgainstPosition(position.side, flow);
+		boolean trendAgainst = trendAgainstPosition(position.side, bar);
+		String dtmState = dtmStateName(position, state, favorableR, adverseR, flowAgainst, trendAgainst);
+		state.stateName = dtmState;
+		boolean thesisInvalidated = dtmThesisInvalidated(position, context, bar, flowAgainst, trendAgainst);
+		if (adverseR >= DTM_EARLY_CUT_ADVERSE_R && (flowAgainst || trendAgainst || thesisInvalidated)) {
+			state.exitEvidenceCount++;
+		} else {
+			state.exitEvidenceCount = 0;
+		}
+		boolean emergencyExit = adverseR >= DTM_EMERGENCY_CUT_ADVERSE_R && (trendAgainst || thesisInvalidated);
+		boolean normalExitArmed = adverseR >= DTM_EARLY_CUT_ADVERSE_R && thesisInvalidated && state.exitEvidenceCount >= 2;
+		if ((emergencyExit || normalExitArmed) && !state.exitRequested) {
+			DynamicTradeDecision decision = new DynamicTradeDecision();
 			decision.actionCode = "DTM_CUT_EARLY_THESIS_FAILED";
 			decision.exitReason = "DTM early cut: thesis failed before hard stop";
 			decision.stateName = "EXIT_ARMED";
@@ -16039,43 +15979,11 @@ public class FuturesManager {
 				state.breakevenMoved = true;
 				recordDynamicTradeDecision(session, snapshot, position, state, decision, bar);
 				return decision;
-				}
-				state.breakevenMoved = true;
 			}
-			if (favorableR >= 0.70 && continuationStrong && !state.partialTaken && !state.targetExtended) {
-				double runnerTarget = dynamicRunnerTarget(position, context, bar, 1.50);
-				if (targetImprovesReward(position, runnerTarget)) {
-					DynamicTradeDecision decision = new DynamicTradeDecision();
-					decision.actionCode = "DTM_EXTEND_TARGET_CONTINUATION";
-					decision.stateName = "TARGET_DECISION";
-					decision.normalizedAction = "EXTEND_TARGET";
-					decision.targetPrice = runnerTarget;
-					decision.reason = "DTM extended the target before the original bracket could cap a strong continuation move.";
-					decision.detailsJson = dtmDetailsJson(position, bar, flow, favorableR, adverseR, 0, 0.0, runnerTarget, false, decision.stateName, decision.normalizedAction, state.exitEvidenceCount);
-					String brokerJson = dynamicBrokerModifyProtectiveOrdersJson(
-						session,
-						snapshot,
-						position,
-						state.lastStopPrice > 0.0 ? state.lastStopPrice : position.activeStopPrice,
-						runnerTarget,
-						position.contracts
-					);
-					decision.brokerAction = jsonBoolean(brokerJson, "success");
-					decision.detailsJson = mergeSimpleJson(decision.detailsJson, "\"brokerModify\":" + jsonObjectOrDefault(brokerJson, "{}"));
-					state.targetExtended = true;
-					state.runnerDecision = decision.brokerAction
-						? decision.reason
-						: "DTM attempted to extend the target, but broker confirmation failed; DTM kept managing the existing bracket.";
-					if (decision.brokerAction) {
-						position.targetPrice = runnerTarget;
-						state.lastTargetPrice = runnerTarget;
-					}
-					recordDynamicTradeDecision(session, snapshot, position, state, decision, bar);
-					return decision;
-				}
-			}
-			if (position.contracts > 1 && favorableR >= DTM_PARTIAL_TRIGGER_R && !state.partialTaken && !state.partialCloseBlocked) {
-				int closeContracts = Math.max(1, position.contracts / 2);
+			state.breakevenMoved = true;
+		}
+		if (position.contracts > 1 && favorableR >= DTM_PARTIAL_TRIGGER_R && !state.partialTaken && !state.partialCloseBlocked) {
+			int closeContracts = Math.max(1, position.contracts / 2);
 			int remaining = Math.max(1, position.contracts - closeContracts);
 			DynamicTradeDecision decision = new DynamicTradeDecision();
 			decision.actionCode = "DTM_PARTIAL_TARGET";
@@ -16095,56 +16003,28 @@ public class FuturesManager {
 				state.remainingContracts = remaining;
 				state.partialTaken = true;
 				state.partialDecision = decision.reason;
-					double runnerTarget = dynamicRunnerTarget(position, context, bar, 1.50);
-					state.runnerDecision = "Runner held after partial because DTM had protected risk and continuation was not invalidated; target was prepared for extension if the broker accepted the protective-order update.";
-					position.contracts = remaining;
-					position.targetPrice = runnerTarget;
-					position.dtmRealizedPnl = state.realizedPnl;
+				state.runnerDecision = "Runner held after partial using the original target and current protective stop.";
+				position.contracts = remaining;
+				position.dtmRealizedPnl = state.realizedPnl;
 				position.dtmPartialContractsClosed = state.partialContractsClosed;
 				position.dtmPartialDecision = state.partialDecision;
 				position.dtmRunnerDecision = state.runnerDecision;
-					dynamicBrokerModifyProtectiveOrdersJson(
-						session,
-						snapshot,
-						position,
-						state.lastStopPrice > 0.0 ? state.lastStopPrice : position.activeStopPrice,
-						runnerTarget,
-						remaining
-					);
-					state.lastTargetPrice = runnerTarget;
-					state.targetExtended = true;
-				} else {
-					state.partialCloseBlocked = true;
+				dynamicBrokerModifyProtectiveOrdersJson(
+					session,
+					snapshot,
+					position,
+					state.lastStopPrice > 0.0 ? state.lastStopPrice : position.activeStopPrice,
+					position.targetPrice,
+					remaining
+				);
+			} else {
+				state.partialCloseBlocked = true;
 				state.remainingContracts = Math.max(1, position.contracts);
 				decision.actionCode = "DTM_PARTIAL_BLOCKED";
 				decision.normalizedAction = "HOLD_STATIC";
 				decision.reason = "DTM attempted a partial close, but broker confirmation failed; DTM kept managing the full position and did not assume a runner.";
 				state.partialDecision = decision.reason;
 			}
-			recordDynamicTradeDecision(session, snapshot, position, state, decision, bar);
-			return decision;
-		}
-		if (state.partialTaken && state.peakFavorableR - favorableR >= DTM_RUNNER_GIVEBACK_R) {
-			DynamicTradeDecision decision = new DynamicTradeDecision();
-			decision.actionCode = "DTM_CUT_EARLY_THESIS_FAILED";
-			decision.stateName = "EXIT_ARMED";
-			decision.normalizedAction = "CUT_EARLY";
-			decision.exitReason = "DTM runner giveback control exit";
-			decision.reason = "DTM closed the runner because it gave back " + liveNumberText(state.peakFavorableR - favorableR) + "R from peak open profit.";
-			decision.finalExit = true;
-			decision.detailsJson = dtmDetailsJson(position, bar, flow, favorableR, adverseR, 0, 0.0, 0.0, true, decision.stateName, decision.normalizedAction, state.exitEvidenceCount);
-			recordDynamicTradeDecision(session, snapshot, position, state, decision, bar);
-			return decision;
-		}
-		if (state.partialTaken && !state.runnerLogged && !flowAgainst) {
-			DynamicTradeDecision decision = new DynamicTradeDecision();
-			decision.actionCode = "DTM_HOLD_RUNNER";
-			decision.stateName = "RUNNER";
-			decision.normalizedAction = "HOLD_RUNNER";
-			decision.reason = "DTM held the runner because continuation evidence had not flipped against the position.";
-			decision.detailsJson = dtmDetailsJson(position, bar, flow, favorableR, adverseR, 0, 0.0, 0.0, false, decision.stateName, decision.normalizedAction, state.exitEvidenceCount);
-			state.runnerLogged = true;
-			state.runnerDecision = decision.reason;
 			recordDynamicTradeDecision(session, snapshot, position, state, decision, bar);
 			return decision;
 		}
@@ -16367,61 +16247,14 @@ public class FuturesManager {
 		return (hasVwap && bar.close > bar.vwap) && (hasEma20 && bar.close > bar.ema20);
 	}
 
-	private static boolean targetImprovesReward(PortfolioPosition position, double target) {
-		if (position == null || target <= 0.0) {
-			return false;
-		}
-		if ("LONG".equals(position.side)) {
-			return target > position.targetPrice + (position.spec.tickSize * 0.5);
-		}
-		return target < position.targetPrice - (position.spec.tickSize * 0.5);
-	}
-
-	private static double dynamicRunnerTarget(PortfolioPosition position, PortfolioSymbolContext context, Bar bar, double minimumR) {
-		double rTarget = "LONG".equals(position.side)
-			? position.entryPrice + (position.initialRisk * Math.max(1.0, minimumR))
-			: position.entryPrice - (position.initialRisk * Math.max(1.0, minimumR));
-		if (context == null || bar == null || bar.marketDate == null || bar.marketTime == null) {
-			return roundToTick(position.spec, rTarget);
-		}
-		Integer currentIndexValue = barIndex(context, bar.marketDate, bar.marketTime);
-		List<Bar> dayBars = context.byDay.get(bar.marketDate);
-		if (currentIndexValue == null || dayBars == null || dayBars.isEmpty()) {
-			return roundToTick(position.spec, rTarget);
-		}
-		int currentIndex = currentIndexValue.intValue();
-		double structureTarget = "LONG".equals(position.side)
-			? recentSwingHigh(dayBars, currentIndex, 8) + (position.spec.tickSize * 2.0)
-			: recentSwingLow(dayBars, currentIndex, 8) - (position.spec.tickSize * 2.0);
-		double target = "LONG".equals(position.side) ? Math.max(rTarget, structureTarget) : Math.min(rTarget, structureTarget);
-		return roundToTick(position.spec, target);
-	}
-
-	private static boolean dtmContinuationStrong(PortfolioPosition position, PortfolioSymbolContext context, Bar bar, LiveRuntimeState.OrderFlowSnapshot flow) {
-		if (position == null || bar == null) {
-			return false;
-		}
-		boolean flowSupport = false;
-		if (flow != null && flow.available && flow.fresh) {
-			flowSupport = "LONG".equals(position.side)
-				? (flow.depthImbalance5 >= 0.08 || flow.tapeDelta >= 10.0 || "BID_ABSORPTION".equals(flow.absorption))
-				: (flow.depthImbalance5 <= -0.08 || flow.tapeDelta <= -10.0 || "ASK_ABSORPTION".equals(flow.absorption));
-		}
-		boolean closeConstructive = "LONG".equals(position.side)
-			? bar.close >= bar.open && closeLocation(bar) >= 0.52
-			: bar.close <= bar.open && closeLocation(bar) <= 0.48;
-		boolean trendSupport = !trendAgainstPosition(position.side, bar);
-		return trendSupport && (flowSupport || closeConstructive);
-	}
-
-	private static String dtmStateName(PortfolioPosition position, DynamicTradeState state, double favorableR, double adverseR, boolean flowAgainst, boolean trendAgainst, boolean continuationStrong) {
-		if (state != null && (state.partialTaken || state.targetExtended)) {
+	private static String dtmStateName(PortfolioPosition position, DynamicTradeState state, double favorableR, double adverseR, boolean flowAgainst, boolean trendAgainst) {
+		if (state != null && state.partialTaken) {
 			return "RUNNER";
 		}
 		if (adverseR >= DTM_EARLY_CUT_ADVERSE_R && (flowAgainst || trendAgainst)) {
 			return "DEFEND";
 		}
-		if (favorableR >= DTM_PARTIAL_TRIGGER_R || continuationStrong && favorableR >= 0.70) {
+		if (favorableR >= DTM_PARTIAL_TRIGGER_R) {
 			return "TARGET_DECISION";
 		}
 		if (favorableR >= DTM_BREAKEVEN_TRIGGER_R) {
@@ -16513,8 +16346,6 @@ public class FuturesManager {
 		if ("DTM_TRAIL_STOP".equals(code)) return "DTM trailed the stop.";
 		if ("DTM_PARTIAL_TARGET".equals(code)) return "DTM partially sold the position.";
 		if ("DTM_PARTIAL_BLOCKED".equals(code)) return "DTM partial close was blocked.";
-		if ("DTM_EXTEND_TARGET_CONTINUATION".equals(code)) return "DTM extended the target.";
-		if ("DTM_HOLD_RUNNER".equals(code)) return "DTM held the runner.";
 		if ("DTM_CUT_EARLY_THESIS_FAILED".equals(code)) return "DTM cut the trade early.";
 		return "DTM trade decision recorded.";
 	}
@@ -16587,7 +16418,6 @@ public class FuturesManager {
 		private String reason = "";
 		private String detailsJson = "{}";
 		private double stopPrice;
-		private double targetPrice;
 		private int partialContracts;
 		private boolean brokerAction;
 		private boolean finalExit;
@@ -16599,13 +16429,9 @@ public class FuturesManager {
 		private int remainingContracts;
 		private int partialContractsClosed;
 		private boolean breakevenMoved;
-			private boolean partialTaken;
-			private boolean partialCloseBlocked;
-			private boolean runnerLogged;
-			private boolean targetExtended;
-			private double lastStopPrice;
-			private double lastTargetPrice;
-			private double peakFavorableR;
+		private boolean partialTaken;
+		private boolean partialCloseBlocked;
+		private double lastStopPrice;
 		private int exitEvidenceCount;
 		private boolean exitRequested;
 		private double realizedPnl;
@@ -16796,7 +16622,7 @@ public class FuturesManager {
 					if (liveDecisionExists(sessionId, context.symbol, event.signal.strategyCode, signalTime)) {
 						continue;
 					}
-				LivePortfolioSignalCandidate candidate = new LivePortfolioSignalCandidate();
+		LivePortfolioSignalCandidate candidate = new LivePortfolioSignalCandidate();
 				candidate.symbol = context.symbol;
 				candidate.context = context;
 				candidate.event = event;
@@ -16921,11 +16747,18 @@ public class FuturesManager {
 		if (candidate == null || candidate.event == null || candidate.event.signal == null || candidate.entryBar == null || candidate.context == null) {
 			return null;
 		}
+		LiveRuntimeState.OrderFlowSnapshot flow = candidate.syntheticSelfTest ? null : LiveRuntimeState.orderFlowSnapshot(candidate.symbol);
+		return executionBarForOrderFlow(candidate, flow);
+	}
+
+	private static Bar executionBarForOrderFlow(LivePortfolioSignalCandidate candidate, LiveRuntimeState.OrderFlowSnapshot flow) {
+		if (candidate == null || candidate.event == null || candidate.event.signal == null || candidate.entryBar == null || candidate.context == null) {
+			return null;
+		}
 		Bar source = candidate.entryBar;
 		Bar execution = copyBar(source);
 		Signal signal = candidate.event.signal;
 		double executablePrice = 0.0;
-		LiveRuntimeState.OrderFlowSnapshot flow = candidate.syntheticSelfTest ? null : LiveRuntimeState.orderFlowSnapshot(candidate.symbol);
 		if (flow != null && flow.available && flow.fresh) {
 			if ("LONG".equals(signal.side)) {
 				executablePrice = flow.bestAsk > 0.0 ? flow.bestAsk : flow.bestBid;
@@ -16944,6 +16777,11 @@ public class FuturesManager {
 		execution.low = execution.low <= 0.0 ? execution.open : Math.min(execution.low, execution.open);
 		execution.close = execution.open;
 		return execution;
+	}
+
+	private static LocalTime signalBarTime(PortfolioSymbolContext context, SignalEvent event) {
+		Bar signalBar = signalBarForEvent(context, event);
+		return signalBar == null ? (event == null ? null : event.entryTime) : signalBar.marketTime;
 	}
 
 	private static String liveEntryDecayRejectReason(PortfolioSymbolContext context, SignalEvent event, Bar executionBar) {
@@ -16991,7 +16829,19 @@ public class FuturesManager {
 		return 0.50;
 	}
 
+	private static LiveRuntimeState.OrderFlowSnapshot emptyOrderFlowSnapshot(String symbol) {
+		LiveRuntimeState.OrderFlowSnapshot snapshot = new LiveRuntimeState.OrderFlowSnapshot();
+		snapshot.symbol = normalizeSymbol(symbol);
+		return snapshot;
+	}
+
 	private static OrderFlowEntryDecision evaluateLiveEntryOrderFlow(FuturesLiveSession session, LivePortfolioSignalCandidate candidate) {
+		boolean optimizerEnabled = session != null && session.entryOptimizerEnabled;
+		LiveRuntimeState.OrderFlowSnapshot flow = candidate == null ? null : LiveRuntimeState.orderFlowSnapshot(candidate.symbol);
+		return evaluateEntryOrderFlow(candidate, flow, optimizerEnabled);
+	}
+
+	private static OrderFlowEntryDecision evaluateEntryOrderFlow(LivePortfolioSignalCandidate candidate, LiveRuntimeState.OrderFlowSnapshot flow, boolean optimizerEnabled) {
 		OrderFlowEntryDecision decision = new OrderFlowEntryDecision();
 		if (candidate == null || candidate.event == null || candidate.event.signal == null) {
 			decision.passed = false;
@@ -17000,21 +16850,16 @@ public class FuturesManager {
 			return decision;
 		}
 		Signal signal = candidate.event.signal;
-		boolean liquidityReclaim = "LIQREC".equals(cleanOrDefault(signal.strategyCode, "").toUpperCase(Locale.US));
-		decision.enabled = (session != null && session.entryOptimizerEnabled) || liquidityReclaim;
+		decision.enabled = optimizerEnabled;
 		if (!decision.enabled) {
 			return decision;
 		}
 		String side = cleanOrDefault(signal.side, "").toUpperCase(Locale.US);
-		LiveRuntimeState.OrderFlowSnapshot flow = LiveRuntimeState.orderFlowSnapshot(candidate.symbol);
+		if (flow == null) {
+			flow = emptyOrderFlowSnapshot(candidate.symbol);
+		}
 		decision.metricsJson = flow.toJson();
 		if (!flow.available || !flow.fresh) {
-			if (liquidityReclaim) {
-				decision.passed = false;
-				decision.actionCode = "ORDER_FLOW_BLOCK_LIQREC_DEPTH_MISSING";
-				decision.reason = "Liquidity Reclaim is live-only and requires fresh Level 2 depth/tape confirmation; no fallback pass was allowed.";
-				return decision;
-			}
 			decision.passed = true;
 			decision.actionCode = "ORDER_FLOW_PASS_FALLBACK";
 			decision.reason = "Entry optimizer passed in fallback mode because fresh Level 2 depth was not available; base strategy and Risk Config remain in control.";
@@ -17081,13 +16926,7 @@ public class FuturesManager {
 				decision.reason = "Entry optimizer blocked because fresh order flow was not confirming a fragile pattern entry and showed weak opposing evidence.";
 				return decision;
 			}
-			if (liquidityReclaim && !(confirmingLong || confirmingShort)) {
-				decision.passed = false;
-				decision.actionCode = "ORDER_FLOW_BLOCK_LIQREC_UNCONFIRMED";
-				decision.reason = "Liquidity Reclaim blocked because the live book/tape was neutral instead of confirming the reclaim direction.";
-				return decision;
-			}
-		decision.passed = true;
+			decision.passed = true;
 		decision.actionCode = (confirmingLong || confirmingShort) ? "ORDER_FLOW_PASS_CONFIRMED" : "ORDER_FLOW_PASS_NEUTRAL";
 		decision.reason = (confirmingLong || confirmingShort)
 			? "Entry optimizer passed because Level 2/tape did not fight the setup and at least one order-flow confirmation aligned."
@@ -17226,13 +17065,13 @@ public class FuturesManager {
 		double dailyRiskBudget = Math.abs(portfolioConfig.dailyLossLimit) + (equityAtOpen - dayStartBalance) - reservedOpenRisk;
 		double trailingRiskBudget = equityAtOpen - trailingThreshold - reservedOpenRisk;
 		double aggregateGuardBudget = Math.min(dailyRiskBudget, trailingRiskBudget);
-		double riskBudgetMultiplier = portfolioRiskBudgetMultiplier(
+		double riskBudgetMultiplier = context.config.qualitativeRiskEnabled ? portfolioRiskBudgetMultiplier(
 			context,
 			event,
 			balance - dayStartBalance,
 			aggregateGuardBudget,
 			openPositionCount
-		);
+		) : 1.0;
 		double symbolRiskBudget = context.config.maxRiskPerTrade * riskBudgetMultiplier;
 		double availableRiskBudget = Math.min(symbolRiskBudget, aggregateGuardBudget);
 		int aggregateRoom = portfolioConfig.maxAggregateContracts - openContracts;
@@ -17550,7 +17389,6 @@ public class FuturesManager {
 			0.0
 		);
 		config.strategySettings = loadFuturesStrategySettings(symbol, activeLiveStrategySlot(session, snapshot));
-		config.includeLiveOnlyStrategyOverlays = true;
 		config.fundedProfile = activeLiveFundedProfileCode(session, snapshot);
 		FundedRuleProfile profile = fundedRuleProfileFor(config.fundedProfile);
 		if (riskProfileUsesSavedRisk(profile.code)) {
@@ -18044,9 +17882,6 @@ public class FuturesManager {
 			if (state.lastStopPrice > 0.0) {
 				position.activeStopPrice = state.lastStopPrice;
 			}
-			if (state.lastTargetPrice > 0.0) {
-				position.targetPrice = state.lastTargetPrice;
-			}
 		position.dtmPartialContractsClosed = state.partialContractsClosed;
 		position.dtmRealizedPnl = state.realizedPnl;
 		position.dtmTimelineJson = state.timelineJson;
@@ -18067,7 +17902,6 @@ public class FuturesManager {
 					state.originalContracts = Math.max(1, position.originalContracts > 0 ? position.originalContracts : position.contracts);
 					state.remainingContracts = Math.max(1, position.contracts);
 					state.lastStopPrice = position.activeStopPrice > 0.0 ? position.activeStopPrice : position.stopPrice;
-					state.lastTargetPrice = position.targetPrice;
 					LIVE_DTM_STATES.put(key, state);
 				}
 			return state;
@@ -18342,8 +18176,7 @@ public class FuturesManager {
 		String cleanLiveSymbols = cleanSymbolsCsv(cleanOrDefault(symbols, DEFAULT_LIVE_SYMBOLS));
 		String strategyPresetName = normalizeStrategyPresetName(strategyPreset);
 		String strategySlot = strategyPresetSlot(strategyPresetName);
-		boolean liquidityReclaimEnabled = liveOnlyLiquidityReclaimEnabled(cleanLiveSymbols, strategySlot);
-		boolean effectiveEntryOptimizerEnabled = entryOptimizerEnabled || liquidityReclaimEnabled;
+		boolean effectiveEntryOptimizerEnabled = entryOptimizerEnabled;
 		boolean orderFlowFeaturesEnabled = effectiveEntryOptimizerEnabled || dtmEnabled;
 		String configuredAccountId = FuturesConnectionManager.getTopstepxConfiguredAccountId();
 		String requestedAccountId = cleanOrDefault(topstepAccountId, "");
@@ -18506,8 +18339,7 @@ public class FuturesManager {
 							+ "\"strategyConfig\":" + jsonString(strategyPresetName) + ","
 							+ "\"strategyPreset\":" + jsonString(strategyPresetName) + ","
 						+ "\"riskConfig\":" + jsonString(profile.name) + ","
-						+ "\"entryOptimizerEnabled\":" + effectiveEntryOptimizerEnabled + ","
-						+ "\"liquidityReclaimEnabled\":" + liquidityReclaimEnabled + ","
+							+ "\"entryOptimizerEnabled\":" + effectiveEntryOptimizerEnabled + ","
 						+ "\"dtmEnabled\":" + dtmEnabled + ","
 						+ "\"includeDepth\":" + orderFlowFeaturesEnabled + ","
 						+ "\"mode\":" + jsonString(normalizedMode) + ","
@@ -18597,7 +18429,6 @@ public class FuturesManager {
 						+ "\"strategyPreset\":" + jsonString(strategyPresetName) + ","
 					+ "\"riskConfig\":" + jsonString(profile.name) + ","
 					+ "\"entryOptimizerEnabled\":" + effectiveEntryOptimizerEnabled + ","
-					+ "\"liquidityReclaimEnabled\":" + liquidityReclaimEnabled + ","
 					+ "\"includeDepth\":" + orderFlowFeaturesEnabled + ","
 					+ "\"mode\":" + jsonString(normalizedMode) + ","
 					+ "\"profile\":" + jsonString(profile.name) + ","
@@ -18859,11 +18690,16 @@ public class FuturesManager {
 	public static String getFundedRuleProfilesJson() {
 		List<FundedRuleProfile> profiles = fundedRuleProfiles();
 		StringBuilder json = new StringBuilder("[");
+		int visibleCount = 0;
 		for (int index = 0; index < profiles.size(); index++) {
-			if (index > 0) {
+			FundedRuleProfile profile = profiles.get(index);
+			if ("CUSTOM".equals(profile.code)) {
+				continue;
+			}
+			if (visibleCount > 0) {
 				json.append(",");
 			}
-			FundedRuleProfile profile = profiles.get(index);
+			visibleCount++;
 			json.append("{")
 				.append("\"code\":").append(jsonString(profile.code)).append(",")
 				.append("\"name\":").append(jsonString(profile.name)).append(",")
@@ -18890,104 +18726,9 @@ public class FuturesManager {
 
 	private static List<FundedRuleProfile> fundedRuleProfiles() {
 		List<FundedRuleProfile> profiles = new ArrayList<FundedRuleProfile>();
-			profiles.add(fundedRuleProfile(
-				"TOPSTEP_150K_PRACTICE",
-				"Topstep 150K Combine",
-			"TOPSTEPX",
-			150000.0,
-			4500.0,
-			3000.0,
-			900.0,
-			15,
-			150,
-			3,
-			150,
-			15.0,
-			9000.0,
-			"END_OF_DAY",
-			"5:00 PM CT to 3:10 PM CT",
-			FORCED_EXIT_TIME.toString(),
-				"150K Combine profile tied to TopstepX account " + TOPSTEPX_PRACTICE_ACCOUNT_ID + ". MLL $4,500, DLL $3,000, target $9,000, 15 minis / 150 micros."
-			));
-			profiles.add(fundedRuleProfile(
-				"TOPSTEP_150K_RESEARCH",
-				"Topstep 150K Research",
-				"TOPSTEPX",
-				150000.0,
-				4500.0,
-				3000.0,
-				2100.0,
-				15,
-				150,
-				3,
-				150,
-				15.0,
-				0.0,
-				"END_OF_DAY",
-				"5:00 PM CT to 3:10 PM CT",
-				FORCED_EXIT_TIME.toString(),
-				"150K Research profile: same 150K Topstep loss/exposure guards, 15 funded units / 150 micros, and no Combine profit-target stop so full strategy quality can be measured."
-			));
-			profiles.add(fundedRuleProfile(
-				"TOPSTEP_50K_COMBINE",
-				"Topstep 50K Combine",
-			"TOPSTEPX",
-			50000.0,
-			2000.0,
-			1000.0,
-			400.0,
-			5,
-			50,
-			2,
-			50,
-			5.0,
-			3000.0,
-			"END_OF_DAY",
-			"5:00 PM CT to 3:10 PM CT",
-			FORCED_EXIT_TIME.toString(),
-			"50K Combine profile: MLL uses end-of-day trailing, DLL is modeled as a strict safety guard, and micros consume 0.1 funded contract units."
-		));
 		profiles.add(fundedRuleProfile(
-			"TOPSTEP_100K_COMBINE",
-			"Topstep 100K Combine",
-			"TOPSTEPX",
-			100000.0,
-			3000.0,
-			2000.0,
-			600.0,
-			10,
-			100,
-			3,
-			100,
-			10.0,
-			6000.0,
-			"END_OF_DAY",
-			"5:00 PM CT to 3:10 PM CT",
-			FORCED_EXIT_TIME.toString(),
-			"100K Combine profile: MLL $3,000, DLL $2,000, target $6,000, 10 minis / 100 micros."
-		));
-		profiles.add(fundedRuleProfile(
-			"TOPSTEP_100K_RESEARCH",
-			"Topstep 100K Research",
-			"TOPSTEPX",
-			100000.0,
-			3000.0,
-			2000.0,
-			1400.0,
-			10,
-			100,
-			3,
-			100,
-			10.0,
-			0.0,
-			"END_OF_DAY",
-			"5:00 PM CT to 3:10 PM CT",
-			FORCED_EXIT_TIME.toString(),
-			"100K Research profile: same 100K Topstep loss/exposure guards, 10 funded units / 100 micros, and no Combine profit-target stop."
-		));
-		profiles.add(fundedRuleProfile(
-			"TOPSTEP_50K_RESEARCH",
-			"Topstep 50K Research",
+			"TOPSTEP_50K",
+			"50K",
 			"TOPSTEPX",
 			50000.0,
 			2000.0,
@@ -19002,7 +18743,45 @@ public class FuturesManager {
 			"END_OF_DAY",
 			"5:00 PM CT to 3:10 PM CT",
 			FORCED_EXIT_TIME.toString(),
-			"Research profile: same 50K Topstep loss/exposure guards, but no Combine profit-target stop so annual strategy quality can be measured."
+			"50K risk config: $2,000 trailing drawdown, $1,000 daily loss limit, $700 max risk per trade, 5 funded units / 50 micros."
+		));
+		profiles.add(fundedRuleProfile(
+			"TOPSTEP_100K",
+			"100K",
+			"TOPSTEPX",
+			100000.0,
+			3000.0,
+			2000.0,
+			1400.0,
+			10,
+			100,
+			3,
+			100,
+			10.0,
+			0.0,
+			"END_OF_DAY",
+			"5:00 PM CT to 3:10 PM CT",
+			FORCED_EXIT_TIME.toString(),
+			"100K risk config: $3,000 trailing drawdown, $2,000 daily loss limit, $1,400 max risk per trade, 10 funded units / 100 micros."
+		));
+		profiles.add(fundedRuleProfile(
+			"TOPSTEP_150K",
+			"150K",
+			"TOPSTEPX",
+			150000.0,
+			4500.0,
+			3000.0,
+			2100.0,
+			15,
+			150,
+			3,
+			150,
+			15.0,
+			0.0,
+			"END_OF_DAY",
+			"5:00 PM CT to 3:10 PM CT",
+			FORCED_EXIT_TIME.toString(),
+			"150K risk config: $4,500 trailing drawdown, $3,000 daily loss limit, $2,100 max risk per trade, 15 funded units / 150 micros."
 		));
 		profiles.add(fundedRuleProfile(
 			"CUSTOM",
@@ -19067,7 +18846,7 @@ public class FuturesManager {
 	}
 
 	private static FundedRuleProfile fundedRuleProfileFor(String code) {
-		String normalized = code == null || code.trim().isEmpty() ? "CUSTOM" : code.trim().toUpperCase();
+		String normalized = normalizeFundedProfileCode(code);
 		List<FundedRuleProfile> profiles = fundedRuleProfiles();
 		for (int index = 0; index < profiles.size(); index++) {
 			if (profiles.get(index).code.equals(normalized)) {
@@ -19077,14 +18856,29 @@ public class FuturesManager {
 		return profiles.get(profiles.size() - 1);
 	}
 
+	private static String normalizeFundedProfileCode(String code) {
+		String normalized = code == null || code.trim().isEmpty() ? "CUSTOM" : code.trim().toUpperCase();
+		if ("TOPSTEP_50K_COMBINE".equals(normalized) || "TOPSTEP_50K_RESEARCH".equals(normalized)) {
+			return "TOPSTEP_50K";
+		}
+		if ("TOPSTEP_100K_COMBINE".equals(normalized) || "TOPSTEP_100K_RESEARCH".equals(normalized)) {
+			return "TOPSTEP_100K";
+		}
+		if ("TOPSTEP_150K_PRACTICE".equals(normalized) || "TOPSTEP_150K_RESEARCH".equals(normalized)) {
+			return "TOPSTEP_150K";
+		}
+		return normalized;
+	}
+
 	private static String accountIdForFundedProfile(String code) {
-		if ("CUSTOM".equals(code)) {
+		String normalized = normalizeFundedProfileCode(code);
+		if ("CUSTOM".equals(normalized)) {
 			return "";
 		}
-		if ("TOPSTEP_50K_COMBINE".equals(code) || "TOPSTEP_50K_RESEARCH".equals(code)) {
+		if ("TOPSTEP_50K".equals(normalized)) {
 			return TOPSTEPX_50K_COMBINE_ACCOUNT_ID;
 		}
-		if ("TOPSTEP_100K_COMBINE".equals(code) || "TOPSTEP_100K_RESEARCH".equals(code)) {
+		if ("TOPSTEP_100K".equals(normalized)) {
 			return TOPSTEPX_100K_COMBINE_ACCOUNT_ID;
 		}
 		return TOPSTEPX_PRACTICE_ACCOUNT_ID;
@@ -19109,31 +18903,23 @@ public class FuturesManager {
 	}
 
 	private static String accountModeForFundedProfile(String code) {
-		if ("TOPSTEP_50K_COMBINE".equals(code) || "TOPSTEP_50K_RESEARCH".equals(code)) {
-			return "TOPSTEP_50K_COMBINE";
+		String normalized = normalizeFundedProfileCode(code);
+		if ("TOPSTEP_50K".equals(normalized) || "TOPSTEP_100K".equals(normalized) || "TOPSTEP_150K".equals(normalized)) {
+			return normalized;
 		}
-		if ("TOPSTEP_100K_COMBINE".equals(code) || "TOPSTEP_100K_RESEARCH".equals(code)) {
-			return "TOPSTEP_100K_COMBINE";
-		}
-		if ("TOPSTEP_150K_PRACTICE".equals(code)) {
-			return "TOPSTEP_150K_PRACTICE";
-		}
-		if ("TOPSTEP_150K_RESEARCH".equals(code)) {
-			return "TOPSTEP_150K_RESEARCH";
-		}
-		return TOPSTEPX_PRACTICE_ACCOUNT_MODE;
+		return TOPSTEPX_DEFAULT_ACCOUNT_MODE;
 	}
 
 	private static String accountModeForTopstepAccountId(String accountId, String fallbackProfileCode) {
 		String cleanAccountId = cleanOrDefault(accountId, "");
 		if (TOPSTEPX_PRACTICE_ACCOUNT_ID.equals(cleanAccountId)) {
-			return "TOPSTEP_150K_PRACTICE";
+			return "TOPSTEP_150K";
 		}
 		if (TOPSTEPX_50K_COMBINE_ACCOUNT_ID.equals(cleanAccountId)) {
-			return "TOPSTEP_50K_COMBINE";
+			return "TOPSTEP_50K";
 		}
 		if (TOPSTEPX_100K_COMBINE_ACCOUNT_ID.equals(cleanAccountId)) {
-			return "TOPSTEP_100K_COMBINE";
+			return "TOPSTEP_100K";
 		}
 		return accountModeForFundedProfile(fallbackProfileCode);
 	}
@@ -19143,12 +18929,10 @@ public class FuturesManager {
 	}
 
 	private static boolean isTopstep50KProfile(String code) {
-		return "TOPSTEP_50K_COMBINE".equals(code)
-			|| "TOPSTEP_100K_COMBINE".equals(code)
-			|| "TOPSTEP_100K_RESEARCH".equals(code)
-			|| "TOPSTEP_50K_RESEARCH".equals(code)
-			|| "TOPSTEP_150K_PRACTICE".equals(code)
-			|| "TOPSTEP_150K_RESEARCH".equals(code);
+		String normalized = normalizeFundedProfileCode(code);
+		return "TOPSTEP_50K".equals(normalized)
+			|| "TOPSTEP_100K".equals(normalized)
+			|| "TOPSTEP_150K".equals(normalized);
 	}
 
 	private static boolean usesProfileSizingCeilings(String code) {
@@ -19156,8 +18940,9 @@ public class FuturesManager {
 	}
 
 	private static boolean scalesSavedSizingForProfile(String code) {
-		return "TOPSTEP_100K_RESEARCH".equals(code)
-			|| "TOPSTEP_150K_RESEARCH".equals(code);
+		String normalized = normalizeFundedProfileCode(code);
+		return "TOPSTEP_100K".equals(normalized)
+			|| "TOPSTEP_150K".equals(normalized);
 	}
 
 	private static boolean riskProfileUsesSavedRisk(String code) {
@@ -19395,13 +19180,13 @@ public class FuturesManager {
 						if (config.continueAfterRuleViolation && result.ruleViolation) {
 							aggregateGuardBudget = Math.max(aggregateGuardBudget, Math.min(context.config.maxRiskPerTrade, config.maxRiskPerTrade));
 						}
-						double riskBudgetMultiplier = portfolioRiskBudgetMultiplier(
+						double riskBudgetMultiplier = context.config.qualitativeRiskEnabled ? portfolioRiskBudgetMultiplier(
 							context,
 							event,
 							balance - dayStartBalance,
 							aggregateGuardBudget,
 							openPositions.size()
-						);
+						) : 1.0;
 						double symbolRiskBudget = context.config.maxRiskPerTrade * riskBudgetMultiplier;
 						double availableRiskBudget = Math.min(symbolRiskBudget, aggregateGuardBudget);
 						int aggregateRoom = config.maxAggregateContracts - openContracts;
@@ -19599,10 +19384,6 @@ public class FuturesManager {
 			context.config.strategySettings = sourceStrategySettings == null
 				? loadFuturesStrategySettings(symbol, config.strategySlot)
 				: sourceStrategySettings;
-			context.config.includeLiveOnlyStrategyOverlays = config.includeLiveOnlyStrategyOverlays;
-			if (!config.includeLiveOnlyStrategyOverlays && BEST_BIAS_FREE_STRATEGY_PRESET.equals(normalizeStrategyPresetName(config.strategyPreset))) {
-				disableBestBiasFreeLiveOnlyLiquidityOverlay(context.config.strategySettings, symbol);
-			}
 			FuturesRiskSettings savedRisk = null;
 			if (config.useSavedRisk) {
 				FuturesRiskSettings sourceRisk = loadPortfolioBacktestRiskSettings(config.sourcePortfolioBacktestId, symbol);
@@ -19623,6 +19404,7 @@ public class FuturesManager {
 			context.config.accountSize = config.accountSize;
 			context.config.maxTrailingDrawdown = config.maxTrailingDrawdown;
 			context.config.dailyLossLimit = config.dailyLossLimit;
+			context.config.qualitativeRiskEnabled = config.qualitativeRiskEnabled;
 			context.byDay = groupByDay(bars.bars);
 			context.fifteenMinuteByDay = groupByDay(loadNativeFuturesBars(symbol, config.startDate, config.endDate, "15min").bars);
 			context.oneHourByDay = groupByDay(loadNativeFuturesBars(symbol, config.startDate, config.endDate, "1hour").bars);
@@ -19697,151 +19479,6 @@ public class FuturesManager {
 			});
 			context.eventsByDay.put(day, events);
 		}
-	}
-
-	private static void disableBestBiasFreeLiveOnlyLiquidityOverlay(FuturesStrategySettings settings, String symbol) {
-		if (settings == null) {
-			return;
-		}
-		settings.liquidityReclaim.enabled = false;
-		String normalized = normalizeSymbol(symbol);
-		if ("MES".equals(normalized)) {
-			settings.microShadow.enabled = false;
-		} else if ("MNQ".equals(normalized)) {
-			settings.fvg.enabled = false;
-			settings.keltnerReversion.enabled = false;
-		} else if ("MGC".equals(normalized)) {
-			settings.keltnerReversion.enabled = false;
-		} else if ("ES".equals(normalized)) {
-			settings.vwapPullback.enabled = false;
-			settings.sweep.enabled = false;
-		} else if ("M2K".equals(normalized)) {
-			settings.valueAreaReclaim.enabled = false;
-		} else if ("MYM".equals(normalized)) {
-			settings.microShadow.enabled = false;
-			settings.sweep.enabled = false;
-		} else if ("MCL".equals(normalized)) {
-			settings.priorDayBreakout.enabled = false;
-		}
-	}
-
-	private static boolean isLiquidityReclaimSourceSymbol(String symbol) {
-		String normalized = normalizeSymbol(symbol);
-		return "MES".equals(normalized)
-			|| "MNQ".equals(normalized)
-			|| "NQ".equals(normalized)
-			|| "MGC".equals(normalized)
-			|| "ES".equals(normalized)
-			|| "M2K".equals(normalized)
-			|| "MYM".equals(normalized)
-			|| "MCL".equals(normalized);
-	}
-
-	private static boolean liquidityReclaimEnabledFor(BacktestConfig config, InstrumentSpec spec, FuturesStrategySettings settings) {
-		if (config == null || !config.includeLiveOnlyStrategyOverlays || settings == null || settings.liquidityReclaim == null || !settings.liquidityReclaim.enabled) {
-			return false;
-		}
-		return isLiquidityReclaimSourceSymbol(spec == null ? config.symbol : spec.symbol);
-	}
-
-	private static boolean liquidityReclaimOwnsComponent(String symbol, String strategyCode) {
-		String normalized = normalizeSymbol(symbol);
-		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
-		if ("MES".equals(normalized)) {
-			return "SHDW".equals(code);
-		}
-		if ("MNQ".equals(normalized) || "NQ".equals(normalized)) {
-			return "FVG".equals(code) || "KREV".equals(code);
-		}
-		if ("MGC".equals(normalized)) {
-			return "KREV".equals(code);
-		}
-		if ("ES".equals(normalized)) {
-			return "VWAP".equals(code) || "SWEEP".equals(code) || "SWEEP2".equals(code);
-		}
-		if ("M2K".equals(normalized)) {
-			return "VPB".equals(code);
-		}
-		if ("MYM".equals(normalized)) {
-			return "SHDW".equals(code) || "SWEEP".equals(code) || "SWEEP2".equals(code);
-		}
-		if ("MCL".equals(normalized)) {
-			return "PDB".equals(code);
-		}
-		return false;
-	}
-
-	private static void relabelLiquidityReclaimSignal(Signal signal) {
-		if (signal == null) {
-			return;
-		}
-		String sourceCode = cleanOrDefault(signal.strategyCode, "");
-		String sourceName = cleanOrDefault(signal.strategyName, "");
-		withSourceStrategy(signal, sourceCode, sourceName);
-		signal.strategyCode = "LIQREC";
-		signal.strategyName = "Liquidity Reclaim";
-		signal.notes = "Live-only Liquidity Reclaim: " + sourceName + " structure passed, with fresh Level 2/tape confirmation required before order submission. " + cleanOrDefault(signal.notes, "");
-	}
-
-	private static List<Signal> findLiquidityReclaimSignals(
-		InstrumentSpec spec,
-		List<Bar> bars,
-		List<Bar> previousBars,
-		List<Bar> fifteenMinuteBars,
-		List<Bar> oneHourBars,
-		BacktestConfig config,
-		List<Signal> existingSignals
-	) {
-		List<Signal> signals = new ArrayList<Signal>();
-		FuturesStrategySettings settings = config == null || config.strategySettings == null ? defaultFuturesStrategySettings() : config.strategySettings;
-		if (!liquidityReclaimEnabledFor(config, spec, settings)) {
-			return signals;
-		}
-		String symbol = spec == null ? "" : normalizeSymbol(spec.symbol);
-		List<Signal> candidates = new ArrayList<Signal>();
-		if ("MNQ".equals(symbol) || "NQ".equals(symbol)) {
-			candidates.addAll(findFvgSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings));
-			candidates.addAll(findKeltnerReversionSignals(spec, bars, fifteenMinuteBars, oneHourBars, settings));
-		} else if ("MGC".equals(symbol)) {
-			candidates.addAll(findKeltnerReversionSignals(spec, bars, fifteenMinuteBars, oneHourBars, settings));
-		} else if ("ES".equals(symbol)) {
-			candidates.addAll(findVwapPullbackSignals(spec, bars, fifteenMinuteBars, oneHourBars, settings));
-			candidates.addAll(findSweepSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings));
-		} else if ("M2K".equals(symbol)) {
-			candidates.addAll(findValueAreaReclaimSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings));
-		} else if ("MYM".equals(symbol)) {
-			candidates.addAll(findSweepSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings));
-		} else if ("MCL".equals(symbol)) {
-			candidates.addAll(findPriorDayBreakoutSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings));
-		}
-		for (int index = 0; index < candidates.size(); index++) {
-			Signal candidate = candidates.get(index);
-			if (candidate == null || !liquidityReclaimOwnsComponent(symbol, candidate.strategyCode) || sameSignalGeometryExists(existingSignals, candidate)) {
-				continue;
-			}
-			relabelLiquidityReclaimSignal(candidate);
-			signals.add(candidate);
-		}
-		return signals;
-	}
-
-	private static boolean sameSignalGeometryExists(List<Signal> existingSignals, Signal candidate) {
-		if (existingSignals == null || candidate == null) {
-			return false;
-		}
-		for (int index = 0; index < existingSignals.size(); index++) {
-			Signal existing = existingSignals.get(index);
-			if (existing == null) {
-				continue;
-			}
-			if (existing.entryIndex == candidate.entryIndex
-				&& cleanOrDefault(existing.side, "").equals(cleanOrDefault(candidate.side, ""))
-				&& Math.abs(existing.entryPrice - candidate.entryPrice) < 0.000001
-				&& Math.abs(existing.stopPrice - candidate.stopPrice) < 0.000001) {
-				return true;
-			}
-		}
-		return false;
 	}
 
 	private static void addMymBreadthConfirmationSignalEvents(Map<String, PortfolioSymbolContext> contexts) {
@@ -20066,15 +19703,18 @@ public class FuturesManager {
 			return;
 		}
 		FuturesStrategySettings settings = target.config.strategySettings == null ? defaultFuturesStrategySettings() : target.config.strategySettings;
-		boolean liquidityShadow = liquidityReclaimEnabledFor(target.config, target.spec, settings)
-			&& liquidityReclaimOwnsComponent(targetSymbol, "SHDW");
+		FuturesStrategySettings shadowSettings = settings;
+		boolean liquidityShadow = settings.liquidityReclaim != null
+			&& settings.liquidityReclaim.enabled
+			&& liquidityReclaimOwnsComponent(targetSymbol, "SHDW")
+			&& sourceStrategyAllowed("SHDW", settings.liquidityReclaimSourceCodes);
 		if ((settings.microShadow == null || !settings.microShadow.enabled) && !liquidityShadow) {
 			return;
 		}
 		List<LocalDate> days = new ArrayList<LocalDate>(source.eventsByDay.keySet());
 		Collections.sort(days);
-		int bucketMinutes = Math.max(3, settings.microShadowBucketMinutes);
-		double maxRiskTicks = Math.min(settings.maxInitialRiskTicks, settings.microShadowMaxRiskTicks);
+		int bucketMinutes = Math.max(3, shadowSettings.microShadowBucketMinutes);
+		double maxRiskTicks = Math.min(shadowSettings.maxInitialRiskTicks, shadowSettings.microShadowMaxRiskTicks);
 		for (int dayIndex = 0; dayIndex < days.size(); dayIndex++) {
 			LocalDate day = days.get(dayIndex);
 			List<SignalEvent> sourceEvents = source.eventsByDay.get(day);
@@ -20091,15 +19731,15 @@ public class FuturesManager {
 			Map<String, Integer> lastBucketBySide = new HashMap<String, Integer>();
 			for (int eventIndex = 0; eventIndex < sourceEvents.size(); eventIndex++) {
 				SignalEvent sourceEvent = sourceEvents.get(eventIndex);
-				if (sourceEvent == null || sourceEvent.signal == null || sourceEvent.entryTime == null || !sourceStrategyAllowed(sourceEvent.signal.strategyCode, settings.microShadowSourceCodes)) {
+				if (sourceEvent == null || sourceEvent.signal == null || sourceEvent.entryTime == null || !sourceStrategyAllowed(sourceEvent.signal.strategyCode, shadowSettings.microShadowSourceCodes)) {
 					continue;
 				}
 				String side = sourceEvent.signal.side;
-				if (("LONG".equals(side) && !settings.allowMicroShadowLongs) || ("SHORT".equals(side) && !settings.allowMicroShadowShorts)) {
+				if (("LONG".equals(side) && !shadowSettings.allowMicroShadowLongs) || ("SHORT".equals(side) && !shadowSettings.allowMicroShadowShorts)) {
 					continue;
 				}
 				int minuteOfDay = (sourceEvent.entryTime.getHour() * 60) + sourceEvent.entryTime.getMinute();
-				if (minuteOfDay < settings.microShadowStartMinute || minuteOfDay > settings.microShadowEndMinute) {
+				if (minuteOfDay < shadowSettings.microShadowStartMinute || minuteOfDay > shadowSettings.microShadowEndMinute) {
 					continue;
 				}
 				int bucket = minuteOfDay / bucketMinutes;
@@ -20117,7 +19757,7 @@ public class FuturesManager {
 					continue;
 				}
 				Bar signalBar = targetBars.get(signalIndex);
-				if (!microShadowTargetConfirms(target.spec, targetBars, signalIndex, side, settings)) {
+				if (!microShadowTargetConfirms(target.spec, targetBars, signalIndex, side, shadowSettings)) {
 					continue;
 				}
 				double stop = "LONG".equals(side)
@@ -20128,8 +19768,8 @@ public class FuturesManager {
 					continue;
 				}
 				double targetPrice = "LONG".equals(side)
-					? signalBar.close + (risk * settings.microShadowRewardRisk)
-					: signalBar.close - (risk * settings.microShadowRewardRisk);
+					? signalBar.close + (risk * shadowSettings.microShadowRewardRisk)
+					: signalBar.close - (risk * shadowSettings.microShadowRewardRisk);
 					Signal shadowSignal = signal(
 						"SHDW",
 						"Mini-Confirmed Micro Shadow",
@@ -20138,7 +19778,7 @@ public class FuturesManager {
 					signalBar.close,
 					stop,
 					targetPrice,
-					settings.microShadowMaxHoldBars,
+					shadowSettings.microShadowMaxHoldBars,
 						"Micro futures shadow entry when " + sourceSymbol + " prints a high-quality " + sourceEvent.signal.strategyCode + " signal and " + targetSymbol + " confirms VWAP/EMA direction with compressed risk."
 					);
 					withSourceStrategy(shadowSignal, sourceEvent.signal.strategyCode, sourceEvent.signal.strategyName);
@@ -20952,6 +20592,7 @@ public class FuturesManager {
 		position.minTrailDistance = managedTrailDistance(context.spec, initialRisk, settings);
 		position.riskPerContract = riskPerContract;
 		position.commissionPerContract = context.config.commissionPerContract;
+		position.originalContracts = contracts;
 		position.entryIndex = event.executionIndex;
 		position.openedAt = entryBar.displayTime;
 		position.openedMarketTime = entryBar.marketTime;
@@ -21161,10 +20802,14 @@ public class FuturesManager {
 		trade.targetPrice = roundToTick(position.spec, position.targetPrice);
 		trade.openedAt = position.openedAt;
 		trade.closedAt = bar.displayTime;
-		trade.pnl = round(grossPnl - commissions);
+		trade.pnl = round(grossPnl - commissions + position.dtmRealizedPnl);
 		trade.mfe = round(position.maxFavorable);
 		trade.mae = round(position.maxAdverse);
 		trade.exitReason = exitReason;
+		trade.dtmTimelineJson = position.dtmTimelineJson;
+		trade.dtmFinalAction = position.dtmFinalAction;
+		trade.dtmPartialDecision = position.dtmPartialDecision;
+		trade.dtmRunnerDecision = position.dtmRunnerDecision;
 		trade.entryIndex = position.entryIndex;
 		trade.exitIndex = exitIndex;
 		trade.openedMarketTime = position.openedMarketTime;
@@ -21598,14 +21243,148 @@ public class FuturesManager {
 		if (settings.mclTrendContinuation.enabled) {
 			signals.addAll(findMclTrendContinuationSignals(spec, bars, settings));
 		}
-		if (liquidityReclaimEnabledFor(config, spec, settings)) {
-			signals.addAll(findLiquidityReclaimSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, config, signals));
+		if (settings.liquidityReclaim.enabled) {
+			signals.addAll(findLiquidityReclaimSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings, signals));
 		}
 		return signals;
 	}
 
 	private static boolean isInstrumentSymbol(InstrumentSpec spec, String symbol) {
 		return spec != null && cleanOrDefault(spec.symbol, "").equalsIgnoreCase(symbol);
+	}
+
+	private static boolean isLiquidityReclaimSourceSymbol(String symbol) {
+		String normalized = normalizeSymbol(symbol);
+		return "MES".equals(normalized)
+			|| "MNQ".equals(normalized)
+			|| "NQ".equals(normalized)
+			|| "MGC".equals(normalized)
+			|| "ES".equals(normalized)
+			|| "M2K".equals(normalized)
+			|| "MYM".equals(normalized)
+			|| "MCL".equals(normalized);
+	}
+
+	private static boolean liquidityReclaimOwnsComponent(String symbol, String strategyCode) {
+		String normalized = normalizeSymbol(symbol);
+		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
+		if ("AFT".equals(code)) {
+			return isLiquidityReclaimSourceSymbol(normalized);
+		}
+		if ("MES".equals(normalized)) {
+			return "SHDW".equals(code);
+		}
+		if ("MNQ".equals(normalized) || "NQ".equals(normalized)) {
+			return "FVG".equals(code) || "KREV".equals(code);
+		}
+		if ("MGC".equals(normalized)) {
+			return "KREV".equals(code);
+		}
+		if ("ES".equals(normalized)) {
+			return "SWEEP".equals(code) || "VWAP".equals(code);
+		}
+		if ("M2K".equals(normalized)) {
+			return "VPB".equals(code);
+		}
+		if ("MYM".equals(normalized)) {
+			return "SHDW".equals(code) || "SWEEP".equals(code);
+		}
+		if ("MCL".equals(normalized)) {
+			return "PDB".equals(code);
+		}
+		return false;
+	}
+
+	private static void relabelLiquidityReclaimSignal(Signal signal) {
+		if (signal == null) {
+			return;
+		}
+		String sourceCode = cleanOrDefault(signal.strategyCode, "");
+		String sourceName = cleanOrDefault(signal.strategyName, sourceCode);
+		withSourceStrategy(signal, sourceCode, sourceName);
+		signal.strategyCode = "LIQREC";
+		signal.strategyName = "Liquidity Reclaim";
+		signal.notes = "Liquidity Reclaim: " + sourceName + " structure passed as part of the accepted reclaim source stack. " + cleanOrDefault(signal.notes, "");
+	}
+
+	private static List<Signal> findLiquidityReclaimSignals(
+		InstrumentSpec spec,
+		List<Bar> bars,
+		List<Bar> previousBars,
+		List<Bar> fifteenMinuteBars,
+		List<Bar> oneHourBars,
+		FuturesStrategySettings settings,
+		List<Signal> existingSignals
+	) {
+		List<Signal> signals = new ArrayList<Signal>();
+		FuturesStrategySettings safe = settings == null ? defaultFuturesStrategySettings() : settings;
+		if (!safe.liquidityReclaim.enabled || spec == null || !isLiquidityReclaimSourceSymbol(spec.symbol)) {
+			return signals;
+		}
+		String symbol = normalizeSymbol(spec.symbol);
+		List<Signal> candidates = new ArrayList<Signal>();
+		candidates.addAll(findAfternoonContinuationSignals(spec, bars, fifteenMinuteBars, oneHourBars, safe));
+		if ("MNQ".equals(symbol) || "NQ".equals(symbol)) {
+			candidates.addAll(findFvgSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, safe));
+			candidates.addAll(findKeltnerReversionSignals(spec, bars, fifteenMinuteBars, oneHourBars, safe));
+		} else if ("MGC".equals(symbol)) {
+			candidates.addAll(findKeltnerReversionSignals(spec, bars, fifteenMinuteBars, oneHourBars, safe));
+		} else if ("ES".equals(symbol)) {
+			candidates.addAll(findVwapPullbackSignals(spec, bars, fifteenMinuteBars, oneHourBars, safe));
+			candidates.addAll(findSweepSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, safe));
+		} else if ("M2K".equals(symbol)) {
+			candidates.addAll(findValueAreaReclaimSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, safe));
+		} else if ("MYM".equals(symbol)) {
+			candidates.addAll(findSweepSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, safe));
+		} else if ("MCL".equals(symbol)) {
+			candidates.addAll(findPriorDayBreakoutSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, safe));
+		}
+		for (int index = 0; index < candidates.size(); index++) {
+			Signal candidate = candidates.get(index);
+			if (candidate == null || !liquidityReclaimOwnsComponent(symbol, candidate.strategyCode)) {
+				continue;
+			}
+			if (!sourceStrategyAllowed(candidate.strategyCode, safe.liquidityReclaimSourceCodes)) {
+				continue;
+			}
+			Bar signalBar = signalBarForIndex(bars, candidate.entryIndex);
+			if (signalBar == null || !inMinuteWindow(minuteOfDay(signalBar), safe.liquidityReclaimStartMinute, safe.liquidityReclaimEndMinute)) {
+				continue;
+			}
+			if (!safe.liquidityReclaimAllowDuplicates && sameSignalGeometryExists(existingSignals, candidate)) {
+				continue;
+			}
+			relabelLiquidityReclaimSignal(candidate);
+			signals.add(candidate);
+		}
+		return dedupeByHour(signals, safe.liquidityReclaim.maxTradesPerDay);
+	}
+
+	private static Bar signalBarForIndex(List<Bar> bars, int index) {
+		if (bars == null || index < 0 || index >= bars.size()) {
+			return null;
+		}
+		return bars.get(index);
+	}
+
+	private static boolean sameSignalGeometryExists(List<Signal> signals, Signal candidate) {
+		if (signals == null || candidate == null) {
+			return false;
+		}
+		for (int index = 0; index < signals.size(); index++) {
+			Signal existing = signals.get(index);
+			if (existing == null) {
+				continue;
+			}
+			if (existing.entryIndex == candidate.entryIndex
+				&& cleanOrDefault(existing.side, "").equals(cleanOrDefault(candidate.side, ""))
+				&& Math.abs(existing.entryPrice - candidate.entryPrice) < 0.000001
+				&& Math.abs(existing.stopPrice - candidate.stopPrice) < 0.000001
+				&& Math.abs(existing.targetPrice - candidate.targetPrice) < 0.000001) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static List<Signal> findMclEiaContinuationSignals(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings) {
@@ -24629,6 +24408,21 @@ public class FuturesManager {
 		return loadCsv(new File(futuresDataDir() + "/" + timeframeFolder + "/" + spec.symbol + ".csv"), startDate, endDate, 1.0, "native futures csv " + timeframeFolder);
 	}
 
+	private static ZonedDateTime parseMarketTimestamp(String rawTimestamp) {
+		String clean = cleanOrDefault(rawTimestamp, "").trim();
+		if (clean.length() == 0) {
+			return null;
+		}
+		try {
+			if (clean.endsWith("Z") || clean.contains("+")) {
+				return OffsetDateTime.parse(clean.replace("Z", "+00:00")).atZoneSameInstant(NEW_YORK_ZONE);
+			}
+			return LocalDateTime.parse(clean).atZone(NEW_YORK_ZONE);
+		} catch (Exception ignored) {
+			return null;
+		}
+	}
+
 	private static DataBundle loadCsv(File file, LocalDate startDate, LocalDate endDate, double scale, String source) {
 		return loadCsv(file, startDate, endDate, scale, source, true);
 	}
@@ -24667,12 +24461,9 @@ public class FuturesManager {
 
 	private static Bar parseBar(String[] parts, double scale) {
 		try {
-			ZonedDateTime timestamp;
-			String rawTimestamp = parts[0].trim();
-			if (rawTimestamp.endsWith("Z") || rawTimestamp.contains("+")) {
-				timestamp = OffsetDateTime.parse(rawTimestamp.replace("Z", "+00:00")).atZoneSameInstant(NEW_YORK_ZONE);
-			} else {
-				timestamp = LocalDateTime.parse(rawTimestamp).atZone(NEW_YORK_ZONE);
+			ZonedDateTime timestamp = parseMarketTimestamp(parts[0]);
+			if (timestamp == null) {
+				return null;
 			}
 			Bar bar = new Bar();
 			bar.marketDate = timestamp.toLocalDate();

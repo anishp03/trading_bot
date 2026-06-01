@@ -968,7 +968,12 @@ textarea {
 }
 
 .futures-live-summary-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.futures-live-filtered-metrics-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-top: 0.75rem;
 }
 
 .app-live-card {
@@ -988,8 +993,8 @@ textarea {
 }
 
 .futures-portfolio-run-grid {
-  grid-template-columns: 0.44fr minmax(160px, 1.15fr) minmax(180px, 1.3fr) 0.58fr 0.82fr 0.66fr 0.78fr 0.52fr 0.55fr 0.55fr 0.82fr 0.68fr 0.68fr minmax(96px, 0.72fr);
-  min-width: 1320px;
+  grid-template-columns: 0.44fr minmax(150px, 1.08fr) minmax(78px, 0.52fr) 0.58fr 0.82fr 0.66fr 0.78fr 0.52fr 0.55fr 0.55fr 0.82fr 0.68fr 0.68fr minmax(96px, 0.72fr);
+  min-width: 1260px;
 }
 
 .futures-trade-grid {
@@ -4190,7 +4195,8 @@ textarea {
     font-size: 0.68rem;
   }
 
-  .futures-live-summary-grid {
+  .futures-live-summary-grid,
+  .futures-live-filtered-metrics-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
   }
@@ -4571,7 +4577,8 @@ textarea {
   .futures-live-trade-toolbar,
   .mobile-trade-meta-grid,
   .mobile-run-meta-grid,
-  .futures-live-summary-grid {
+  .futures-live-summary-grid,
+  .futures-live-filtered-metrics-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }

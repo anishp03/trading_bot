@@ -46,6 +46,8 @@ public class FuturesConnectionManager {
 	private static final long TOPSTEPX_CONTRACT_SEARCH_RETRY_BASE_MS = 350L;
 	private static final long TOPSTEPX_CONTRACT_CACHE_TTL_MS = 15L * 60L * 1000L;
 	private static final String ENRICHED_BAR_HEADER = "timestamp,open,high,low,close,volume,vwap,ema9,ema20,ema50,atr14,rsi14,volume_sma20,range_ticks,body_pct\n";
+	private static final String SYNTHETIC_LEVEL2_FOLDER = "level2-synthetic";
+	private static final String SYNTHETIC_LEVEL2_HEADER = "timestamp,best_bid,best_ask,spread_ticks,depth_imbalance5,tape_delta,cvd,bid_wall_distance_ticks,ask_wall_distance_ticks,bid_stacking,ask_stacking,absorption,liquidity_vacuum,optimizer_state,source_open,source_high,source_low,source_close,source_volume,source_range_ticks,source_body_pct,source\n";
 	private static final String DEFAULT_FUTURES_SYMBOLS = "MES.c.0,MNQ.c.0,M2K.c.0,MYM.c.0,ES.c.0,NQ.c.0,MGC.v.0,MCL.c.0,GC.v.0";
 	private static final Map<String, CachedTopstepContracts> TOPSTEPX_CONTRACT_CACHE = new HashMap<String, CachedTopstepContracts>();
 
@@ -458,7 +460,7 @@ public class FuturesConnectionManager {
 		symbolResults.append("]");
 
 		String message = "Backtest data updated for " + symbolList.size()
-			+ " symbol(s): Databento bars merged into native 1-minute files and derived 5-minute, 15-minute, and 1-hour files rebuilt.";
+			+ " symbol(s): Databento bars merged into native 1-minute files; derived 5-minute, 15-minute, 1-hour, and backtest-only synthetic Level 2 files rebuilt.";
 		if (totalAdded > 0 || totalReplaced > 0) {
 			message += " Added " + totalAdded + " timestamp(s), refreshed " + totalReplaced + ", final rows " + totalRows + ".";
 		}
@@ -495,10 +497,11 @@ public class FuturesConnectionManager {
 			}
 			int rows = writeInternalFuturesCsv(normalizedSymbol, csv.toString());
 			return "{\"success\":true,\"message\":"
-				+ jsonString("Rebuilt " + normalizedSymbol + " futures data into enriched 1-minute, 5-minute, 15-minute, and 1-hour files without calling Databento.")
+				+ jsonString("Rebuilt " + normalizedSymbol + " futures data into enriched 1-minute, 5-minute, 15-minute, 1-hour, and backtest-only synthetic Level 2 files without calling Databento.")
 				+ ",\"symbol\":" + jsonString(normalizedSymbol)
 				+ ",\"rows\":" + rows
 				+ ",\"path\":" + jsonString(futuresDataDir() + "/1min/" + normalizedSymbol + ".csv")
+				+ ",\"syntheticLevel2Path\":" + jsonString(futuresDataDir() + "/" + SYNTHETIC_LEVEL2_FOLDER + "/" + normalizedSymbol + ".csv")
 				+ "}";
 		} catch (Exception e) {
 			return "{\"success\":false,\"message\":" + jsonString("Derived futures rebuild failed: " + safeMessage(e.getMessage())) + ",\"rows\":0}";
@@ -2766,6 +2769,7 @@ public class FuturesConnectionManager {
 		writeAggregatedBars(symbol, bars, "5min", 5, tickSize);
 		writeAggregatedBars(symbol, bars, "15min", 15, tickSize);
 		writeAggregatedBars(symbol, bars, "1hour", 60, tickSize);
+		writeSyntheticLevel2Snapshots(symbol, bars, tickSize);
 		return bars.size();
 	}
 
@@ -2979,6 +2983,109 @@ public class FuturesConnectionManager {
 		}
 	}
 
+	private static void writeSyntheticLevel2Snapshots(String symbol, List<InternalBar> bars, double tickSize) throws Exception {
+		File dir = new File(futuresDataDir() + "/" + SYNTHETIC_LEVEL2_FOLDER);
+		if (!dir.exists()) {
+			dir.mkdirs();
+		}
+		double safeTick = Math.max(0.000001, tickSize);
+		double previousImbalance = 0.0;
+		double previousCvd = 0.0;
+		try (BufferedWriter writer = new BufferedWriter(new FileWriter(new File(dir, symbol + ".csv")))) {
+			writer.write(SYNTHETIC_LEVEL2_HEADER);
+			for (int index = 0; index < bars.size(); index++) {
+				InternalBar bar = bars.get(index);
+				double range = Math.max(safeTick, bar.high - bar.low);
+				double closeLocation = clamp((bar.close - bar.low) / range, 0.0, 1.0);
+				double direction = bar.close > bar.open ? 1.0 : (bar.close < bar.open ? -1.0 : 0.0);
+				double bodyStrength = clamp(Math.abs(bar.close - bar.open) / range, 0.0, 1.0);
+				double relativeVolume = bar.volumeSma20 <= 0.0 ? 1.0 : clamp(bar.volume / Math.max(1.0, bar.volumeSma20), 0.25, 3.0);
+				double closeBias = (closeLocation - 0.5) * 2.0;
+				double imbalance = clamp((closeBias * 0.45) + (direction * bodyStrength * 0.35), -0.80, 0.80);
+				double signedVolume = direction == 0.0 ? closeBias * bar.volume * 0.20 : direction * bar.volume * (0.20 + (bodyStrength * 0.35));
+				double tapeDelta = signedVolume * (0.60 + (relativeVolume * 0.20));
+				double cvd = previousCvd + tapeDelta;
+				double spreadTicks = syntheticSpreadTicks(bar, relativeVolume);
+				double halfSpread = Math.max(safeTick, spreadTicks * safeTick) / 2.0;
+				double bestBid = roundToTick(bar.close - halfSpread, safeTick);
+				double bestAsk = roundToTick(bar.close + halfSpread, safeTick);
+				if (bestAsk <= bestBid) {
+					bestAsk = roundToTick(bestBid + safeTick, safeTick);
+				}
+				double wallDistance = Math.max(1.0, Math.min(12.0, Math.max(1.0, bar.rangeTicks) / 6.0));
+				double bidWall = imbalance >= 0.18 ? Math.max(1.0, wallDistance * 0.65) : wallDistance;
+				double askWall = imbalance <= -0.18 ? Math.max(1.0, wallDistance * 0.65) : wallDistance;
+				double bidStacking = Math.max(0.0, imbalance - previousImbalance) * Math.max(1.0, relativeVolume * 10.0);
+				double askStacking = Math.max(0.0, previousImbalance - imbalance) * Math.max(1.0, relativeVolume * 10.0);
+				String absorption = syntheticAbsorption(direction, closeLocation, bodyStrength, bar);
+				boolean vacuum = spreadTicks >= 3.0 && relativeVolume < 0.75 && bar.rangeTicks >= 8.0;
+				String optimizerState = syntheticOptimizerState(imbalance, spreadTicks);
+				writer.write(cleanTimestamp(bar.timestampText) + ","
+					+ formatDecimal(bestBid) + ","
+					+ formatDecimal(bestAsk) + ","
+					+ formatDecimal(spreadTicks) + ","
+					+ formatDecimal(imbalance) + ","
+					+ formatDecimal(tapeDelta) + ","
+					+ formatDecimal(cvd) + ","
+					+ formatDecimal(bidWall) + ","
+					+ formatDecimal(askWall) + ","
+					+ formatDecimal(bidStacking) + ","
+					+ formatDecimal(askStacking) + ","
+					+ absorption + ","
+					+ vacuum + ","
+					+ optimizerState + ","
+					+ formatDecimal(bar.open) + ","
+					+ formatDecimal(bar.high) + ","
+					+ formatDecimal(bar.low) + ","
+					+ formatDecimal(bar.close) + ","
+					+ formatDecimal(bar.volume) + ","
+					+ formatDecimal(bar.rangeTicks) + ","
+					+ formatDecimal(bar.bodyPct) + ","
+					+ "SYNTHETIC_FROM_1MIN_CANDLE"
+					+ "\n");
+				previousImbalance = imbalance;
+				previousCvd = cvd;
+			}
+		}
+	}
+
+	private static double syntheticSpreadTicks(InternalBar bar, double relativeVolume) {
+		double rangeTicks = Math.max(0.0, bar.rangeTicks);
+		if (relativeVolume < 0.55 || rangeTicks >= 80.0) {
+			return 3.0;
+		}
+		if (relativeVolume < 0.80 || rangeTicks >= 45.0) {
+			return 2.0;
+		}
+		return 1.0;
+	}
+
+	private static String syntheticAbsorption(double direction, double closeLocation, double bodyStrength, InternalBar bar) {
+		if (bar == null || bodyStrength > 0.55) {
+			return "NONE";
+		}
+		if (direction >= 0.0 && closeLocation >= 0.70) {
+			return "BID_ABSORPTION";
+		}
+		if (direction <= 0.0 && closeLocation <= 0.30) {
+			return "ASK_ABSORPTION";
+		}
+		return "NONE";
+	}
+
+	private static String syntheticOptimizerState(double imbalance, double spreadTicks) {
+		if (spreadTicks >= 5.0) {
+			return "SPREAD_WIDE";
+		}
+		if (imbalance >= 0.25) {
+			return "BID_HEAVY";
+		}
+		if (imbalance <= -0.25) {
+			return "ASK_HEAVY";
+		}
+		return "BALANCED";
+	}
+
 	private static List<InternalBar> readInternalFuturesBars(String symbol) throws Exception {
 		List<InternalBar> bars = new ArrayList<InternalBar>();
 		File source = new File(futuresDataDir() + "/1min/" + symbol + ".csv");
@@ -3097,6 +3204,21 @@ public class FuturesConnectionManager {
 
 	private static String cleanTimestamp(String timestamp) {
 		return isBlank(timestamp) ? "" : timestamp.replace("\"", "").trim();
+	}
+
+	private static double clamp(double value, double min, double max) {
+		if (value < min) {
+			return min;
+		}
+		if (value > max) {
+			return max;
+		}
+		return value;
+	}
+
+	private static double roundToTick(double value, double tickSize) {
+		double safeTick = Math.max(0.000001, tickSize);
+		return Math.round(value / safeTick) * safeTick;
 	}
 
 	private static double typicalPrice(InternalBar bar) {

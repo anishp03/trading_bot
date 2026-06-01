@@ -22,6 +22,10 @@ const DEFAULT_SETTINGS = {
   mymBreadthConfirmation: { enabled: false, maxTradesPerDay: 6 },
   mclTrendContinuation: { enabled: false, maxTradesPerDay: 6 },
   liquidityReclaim: { enabled: false, maxTradesPerDay: 50 },
+  liquidityReclaimSourceCodes: "FVG,VWAP,AFT,SWEEP,PDB,KREV,SHDW,VPB",
+  liquidityReclaimStartMinute: 570,
+  liquidityReclaimEndMinute: 930,
+  liquidityReclaimAllowDuplicates: false,
   enableEarlySweep: true,
   enableLateSweep: true,
   enableSweepSecondChance: true,
@@ -196,11 +200,10 @@ const MODULES = [
   ["mymOrbRetest", "MYM ORB Retest"],
   ["mymBreadthConfirmation", "MYM Breadth Fade"],
   ["mclTrendContinuation", "MCL Trend Fade"],
+  ["liquidityReclaim", "Liquidity Reclaim"],
 ];
 
-const BEST_BIAS_FREE_LIVE_STRATEGIES = [
-  ["liquidityReclaim", "Liquidity Reclaim", new Set(["MES", "MNQ", "NQ", "MGC", "ES", "M2K", "MYM", "MCL"])],
-];
+const BEST_BIAS_FREE_LIVE_STRATEGIES = [];
 
 const HIGH_CAP_MODULES = new Set(["keltnerScalp", "keltnerReversion", "microScalp"]);
 const CUSTOM_MODULE_CAPS = {
@@ -352,6 +355,10 @@ export default function FuturesStrategy() {
       mclTrendContinuationMaxTradesPerDay: String(settings.mclTrendContinuation.maxTradesPerDay),
       liquidityReclaimEnabled: String(settings.liquidityReclaim.enabled),
       liquidityReclaimMaxTradesPerDay: String(settings.liquidityReclaim.maxTradesPerDay),
+      liquidityReclaimSourceCodes: String(settings.liquidityReclaimSourceCodes || ""),
+      liquidityReclaimStartMinute: String(settings.liquidityReclaimStartMinute),
+      liquidityReclaimEndMinute: String(settings.liquidityReclaimEndMinute),
+      liquidityReclaimAllowDuplicates: String(settings.liquidityReclaimAllowDuplicates),
       enableEarlySweep: String(settings.enableEarlySweep),
       enableLateSweep: String(settings.enableLateSweep),
       enableSweepSecondChance: String(settings.enableSweepSecondChance),
@@ -665,6 +672,7 @@ export default function FuturesStrategy() {
           <ToggleField label="FVG EMA Stack" field="fvgRequireEmaStack" settings={settings} updateField={updateField} />
           <ToggleField label="FVG HTF Guard" field="fvgRequireHigherTimeframeGuard" settings={settings} updateField={updateField} />
           <ToggleField label="IFVG Structure Break" field="fvgRequireInversionStructureBreak" settings={settings} updateField={updateField} />
+          <ToggleField label="LIQREC Duplicates" field="liquidityReclaimAllowDuplicates" settings={settings} updateField={updateField} />
 
           <NumberField label="ORB End Minute" field="orbBreakoutEndMinute" settings={settings} updateField={updateField} />
           <NumberField label="ORB Short Confirm" field="orbShortConfirmationMinute" settings={settings} updateField={updateField} />
@@ -687,6 +695,9 @@ export default function FuturesStrategy() {
           <NumberField label="FVG Slope Ticks" field="fvgMinTrendSlopeTicks" settings={settings} updateField={updateField} />
           <NumberField label="FVG VWAP Distance" field="fvgMaxVwapDistanceTicks" settings={settings} updateField={updateField} />
           <NumberField label="FVG Entry Extension" field="fvgMaxEntryExtensionTicks" settings={settings} updateField={updateField} />
+          <TextField label="LIQREC Sources" field="liquidityReclaimSourceCodes" settings={settings} updateField={updateField} />
+          <NumberField label="LIQREC Start Minute" field="liquidityReclaimStartMinute" settings={settings} updateField={updateField} />
+          <NumberField label="LIQREC End Minute" field="liquidityReclaimEndMinute" settings={settings} updateField={updateField} />
           <SelectField
             label="FVG Source Mode"
             field="fvgSourceMode"
@@ -918,6 +929,20 @@ function NumberField({ label, field, settings, updateField, step = "1", disabled
       <input
         type="number"
         step={step}
+        value={settings[field] ?? ""}
+        onChange={(event) => updateField(field, event.target.value)}
+        className="form-control app-input"
+        disabled={disabled}
+      />
+    </Field>
+  );
+}
+
+function TextField({ label, field, settings, updateField, disabled = false }) {
+  return (
+    <Field label={label} className="col-12 col-md-6">
+      <input
+        type="text"
         value={settings[field] ?? ""}
         onChange={(event) => updateField(field, event.target.value)}
         className="form-control app-input"
