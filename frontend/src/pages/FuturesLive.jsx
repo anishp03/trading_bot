@@ -21,11 +21,9 @@ const LIVE_TRADE_CACHE_VERSION = 1;
 const LIVE_TRADE_CACHE_MAX_ROWS = 10000;
 const LIVE_HISTORY_REQUEST_LIMIT = 10000;
 const LIVE_ALL_TRADES_PAGE_SIZE = 500;
-const NEAR_MISS_VISIBLE_LIMIT = 18;
-const NEAR_MISS_REVEAL_MS = 260;
 const DEFAULT_PROFILE = "TOPSTEP_150K";
 const DEFAULT_ACCOUNT_PROFILE = "TOPSTEP_150K";
-const DEFAULT_STRATEGY_PRESET = "backtestbias92k";
+const DEFAULT_STRATEGY_PRESET = "bestbiasfree";
 const BIAS_FREE_STRATEGY_PRESET = "biasfree92k";
 const BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
 const CANONICAL_STRATEGY_PRESETS = [
@@ -139,8 +137,7 @@ export default function FuturesLive() {
   const [selectedAccountProfileCode, setSelectedAccountProfileCode] = useState(DEFAULT_ACCOUNT_PROFILE);
   const [selectedProfileCode, setSelectedProfileCode] = useState(DEFAULT_PROFILE);
   const [selectedStrategyPreset, setSelectedStrategyPreset] = useState(DEFAULT_STRATEGY_PRESET);
-  const [entryOptimizerEnabled, setEntryOptimizerEnabled] = useState(false);
-  const [dtmEnabled, setDtmEnabled] = useState(false);
+  const [dtmEnabled, setDtmEnabled] = useState(true);
   const [liveRiskConfig, setLiveRiskConfig] = useState(DEFAULT_LIVE_RISK_CONFIG);
   const [fundedProfiles, setFundedProfiles] = useState([]);
   const [strategyPresets, setStrategyPresets] = useState([]);
@@ -224,7 +221,6 @@ export default function FuturesLive() {
   const graphReady = monitorDataActive && Boolean(graphReadiness?.ready);
   const graphBuilding = monitorDataActive && !graphReady;
   const botControlActive = Boolean(liveStatus?.running || realtimeStatus?.running || liveMonitor?.realtimeRunning);
-  const entryOptimizerToggleOn = botStarted ? Boolean(liveStatus?.entryOptimizerEnabled) : entryOptimizerEnabled;
   const dtmToggleOn = botStarted ? Boolean(liveStatus?.dtmEnabled) : dtmEnabled;
   const displayedDecisions = useMemo(() => (botStarted ? liveDecisions : []), [botStarted, liveDecisions]);
   const displayTradeRows = useMemo(() => mergeLiveTradeDecisions(displayedDecisions), [displayedDecisions]);
@@ -375,7 +371,6 @@ export default function FuturesLive() {
     }),
     [allTradeRows, botAccountDataActive, brokerSnapshot, displayTradeRows, liveMonitor?.marketData, monitorSymbols, symbolStates]
   );
-  const nearMissRows = useMemo(() => buildNearMissRows(symbolStates), [symbolStates]);
   const rawEquityReviewStatus = useMemo(
     () => buildEquityReviewStatus({
       backendOffline,
@@ -946,7 +941,6 @@ export default function FuturesLive() {
         maxAggregateMiniUnits: String(liveRiskConfig.maxAggregateMiniUnits || selectedProfile.maxAggregateMiniUnits || 5),
         symbols: monitorSymbols.join(","),
         strategyPreset: selectedStrategyPreset || DEFAULT_STRATEGY_PRESET,
-        entryOptimizerEnabled: String(entryOptimizerEnabled),
         dtmEnabled: String(dtmEnabled),
       });
       const response = await apiFetch(`/api/futures/live/start?${params.toString()}`, { method: "POST" });
@@ -1052,16 +1046,6 @@ export default function FuturesLive() {
           </div>
 
           <div className="futures-live-action-row futures-launch-actions">
-            <label className={`futures-feature-toggle ${entryOptimizerToggleOn ? "is-on" : "is-off"}`}>
-              <input
-                type="checkbox"
-                checked={entryOptimizerToggleOn}
-                onChange={(event) => setEntryOptimizerEnabled(event.target.checked)}
-                disabled={Boolean(liveStatus?.running) || busyAction === "start" || busyAction === "stop"}
-              />
-              <span aria-hidden="true" />
-              <b>Entry Opt</b>
-            </label>
             <label className={`futures-feature-toggle ${dtmToggleOn ? "is-on" : "is-off"}`}>
               <input
                 type="checkbox"
@@ -1214,8 +1198,6 @@ export default function FuturesLive() {
         </div>
       </section>
 
-      <FuturesNearMissPanel rows={nearMissRows} active={monitorDataActive} />
-
       <section className="app-panel">
         <div className="d-flex align-items-start justify-content-between gap-2 flex-wrap">
           <div>
@@ -1263,172 +1245,6 @@ export default function FuturesLive() {
       />
     </div>
   );
-}
-
-function FuturesNearMissPanel({ rows, active }) {
-  const incomingRows = useMemo(() => Array.isArray(rows) ? rows.slice(0, NEAR_MISS_VISIBLE_LIMIT) : [], [rows]);
-  const [feed, setFeed] = useState({ displayedRows: [], pendingRows: [] });
-  const revealTimerRef = useRef(null);
-
-  useEffect(() => {
-    if (!active || incomingRows.length === 0) {
-      if (revealTimerRef.current) {
-        window.clearTimeout(revealTimerRef.current);
-        revealTimerRef.current = null;
-      }
-      setFeed({ displayedRows: [], pendingRows: [] });
-      return;
-    }
-
-    setFeed((current) => {
-      const incomingByKey = new Map(incomingRows.map((row) => [nearMissRowKey(row), row]));
-      const displayedRows = mergeNearMissRows(current.displayedRows, incomingByKey);
-      const pendingRows = mergeNearMissRows(current.pendingRows, incomingByKey);
-      const knownKeys = new Set([...displayedRows, ...pendingRows].map(nearMissRowKey));
-      const additions = incomingRows.filter((row) => !knownKeys.has(nearMissRowKey(row)));
-      const nextPendingRows = additions.length ? sortNearMissDisplayRows([...pendingRows, ...additions]) : pendingRows;
-
-      if (
-        additions.length === 0
-        && displayedRows === current.displayedRows
-        && nextPendingRows === current.pendingRows
-      ) {
-        return current;
-      }
-
-      return {
-        displayedRows,
-        pendingRows: nextPendingRows,
-      };
-    });
-  }, [active, incomingRows]);
-
-  useEffect(() => {
-    if (revealTimerRef.current) {
-      window.clearTimeout(revealTimerRef.current);
-      revealTimerRef.current = null;
-    }
-    if (!active || feed.pendingRows.length === 0) return;
-
-    const delay = feed.displayedRows.length === 0 ? 0 : NEAR_MISS_REVEAL_MS;
-    revealTimerRef.current = window.setTimeout(() => {
-      setFeed((current) => {
-        if (current.pendingRows.length === 0) return current;
-        const nextTime = String(current.pendingRows[0]?.time || "");
-        const nextBatch = [];
-        const remainingPending = [];
-        current.pendingRows.forEach((row) => {
-          if (String(row?.time || "") === nextTime) {
-            nextBatch.push(row);
-          } else {
-            remainingPending.push(row);
-          }
-        });
-
-        const displayedKeys = new Set(current.displayedRows.map(nearMissRowKey));
-        const freshBatch = nextBatch.filter((row) => !displayedKeys.has(nearMissRowKey(row)));
-        const displayedRows = sortNearMissDisplayRows([...freshBatch, ...current.displayedRows]).slice(0, NEAR_MISS_VISIBLE_LIMIT);
-        const visibleKeys = new Set(displayedRows.map(nearMissRowKey));
-        return {
-          displayedRows,
-          pendingRows: remainingPending.filter((row) => !visibleKeys.has(nearMissRowKey(row))),
-        };
-      });
-    }, delay);
-
-    return () => {
-      if (revealTimerRef.current) {
-        window.clearTimeout(revealTimerRef.current);
-        revealTimerRef.current = null;
-      }
-    };
-  }, [active, feed.displayedRows.length, feed.pendingRows]);
-
-  const visibleRows = feed.displayedRows.length
-    ? feed.displayedRows
-    : (active && incomingRows.length ? firstNearMissTimeBatch(incomingRows) : []);
-  return (
-    <section className="app-panel futures-near-miss-panel">
-      <div className="futures-near-miss-header">
-        <div>
-          <div className="fw-bold app-kicker">Strategy Near Misses</div>
-        </div>
-        <span className="app-badge app-neutral-badge">{visibleRows.length} / {NEAR_MISS_VISIBLE_LIMIT} rows</span>
-      </div>
-      {visibleRows.length ? (
-        <div className="futures-near-miss-grid">
-          {visibleRows.map((row, index) => (
-            <article className={row.enabled ? "futures-near-miss-card" : "futures-near-miss-card disabled"} key={nearMissRowKey(row)}>
-              <div className="futures-near-miss-topline">
-                <span className="futures-near-miss-rank">{index + 1}</span>
-                <strong>{row.symbol}</strong>
-                <span>{row.strategyCode}</span>
-                <time>{formatEstTime(row.time)}</time>
-              </div>
-              <div className="futures-near-miss-reason">{nearMissReasonLabel(row.reason)}</div>
-              <div className="futures-near-miss-meta">
-                <span><b>{row.passedGates}</b> gates</span>
-                <span><b>{row.finalCandidates}</b> final</span>
-                <span><b>{formatPrice(row.price)}</b></span>
-              </div>
-              <div className="futures-near-miss-detail">
-                <span>Vol {formatNumber(row.volumeRatio)}</span>
-                <span>Risk {formatNumber(row.riskTicks)}t</span>
-              </div>
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div className="app-empty">{active ? "No near misses in the current strategy scan." : "Market monitor is idle."}</div>
-      )}
-    </section>
-  );
-}
-
-function nearMissRowKey(row) {
-  return [
-    String(row?.symbol || "").toUpperCase(),
-    String(row?.strategyCode || ""),
-    String(row?.time || ""),
-    String(row?.reason || ""),
-  ].join("|");
-}
-
-function firstNearMissTimeBatch(rows) {
-  const ordered = sortNearMissDisplayRows(rows);
-  const firstTime = String(ordered[0]?.time || "");
-  return ordered.filter((row) => String(row?.time || "") === firstTime).slice(0, NEAR_MISS_VISIBLE_LIMIT);
-}
-
-function mergeNearMissRows(rows, incomingByKey) {
-  const source = Array.isArray(rows) ? rows : [];
-  let changed = false;
-  const merged = [];
-  source.forEach((row) => {
-    const updated = incomingByKey.get(nearMissRowKey(row));
-    if (!updated) {
-      changed = true;
-      return;
-    }
-    if (updated !== row) {
-      changed = true;
-    }
-    merged.push(updated);
-  });
-  return changed ? merged : source;
-}
-
-function sortNearMissDisplayRows(rows) {
-  return [...(Array.isArray(rows) ? rows : [])].sort((first, second) => {
-    const timeCompare = String(second?.time || "").localeCompare(String(first?.time || ""));
-    if (timeCompare !== 0) return timeCompare;
-    if (Boolean(first?.enabled) !== Boolean(second?.enabled)) return first?.enabled ? -1 : 1;
-    const gateCompare = Number(second?.passedGates || 0) - Number(first?.passedGates || 0);
-    if (gateCompare !== 0) return gateCompare;
-    const symbolCompare = String(first?.symbol || "").localeCompare(String(second?.symbol || ""));
-    if (symbolCompare !== 0) return symbolCompare;
-    return String(first?.strategyCode || "").localeCompare(String(second?.strategyCode || ""));
-  });
 }
 
 function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
@@ -1800,7 +1616,7 @@ function compactEventSubtext(entry) {
     return "";
   }
   const text = eventSubtext(entry);
-  const maxLength = ["ORDER_SUBMITTED", "POSITION_EXITED", "DTM_DECISION", "ORDER_FLOW_PASS", "ORDER_FLOW_BLOCKED", "TRADING_ENABLED", "MARKET_DATA_STOPPED", "MARKET_DATA_RESUMED"].includes(code) ? 420 : 140;
+  const maxLength = ["ORDER_SUBMITTED", "POSITION_EXITED", "DTM_DECISION", "TRADING_ENABLED", "MARKET_DATA_STOPPED", "MARKET_DATA_RESUMED"].includes(code) ? 420 : 140;
   return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
 }
 
@@ -4099,51 +3915,6 @@ function compactExitReason(reason) {
   return `${cleaned.slice(0, 93).trim()}...`;
 }
 
-function buildNearMissRows(states) {
-  const rows = [];
-  (Array.isArray(states) ? states : []).forEach((state) => {
-    const diagnostics = Array.isArray(state?.strategyDiagnostics) ? state.strategyDiagnostics : [];
-    diagnostics.forEach((diagnostic) => {
-      const miss = diagnostic?.latestNearMiss;
-      if (!miss?.time) return;
-      rows.push({
-        symbol: String(diagnostic.symbol || miss.symbol || state?.symbol || "").toUpperCase(),
-        strategyCode: diagnostic.strategyCode || miss.strategyCode || "",
-        strategyName: diagnostic.strategyName || miss.strategyName || "",
-        enabled: Boolean(diagnostic.enabled),
-        time: miss.time,
-        reason: miss.reason || "",
-        passedGates: Number(miss.passedGates || 0),
-        price: Number(miss.price || 0),
-        volumeRatio: Number(miss.volumeRatio || 0),
-        riskTicks: Number(miss.riskTicks || 0),
-        finalCandidates: Number(diagnostic.finalCandidates || 0),
-      });
-    });
-  });
-  return rows.sort((first, second) => {
-    if (first.enabled !== second.enabled) return first.enabled ? -1 : 1;
-    const timeCompare = String(second.time || "").localeCompare(String(first.time || ""));
-    if (timeCompare !== 0) return timeCompare;
-    return Number(second.passedGates || 0) - Number(first.passedGates || 0);
-  });
-}
-
-function nearMissReasonLabel(reason) {
-  const code = String(reason || "").toUpperCase();
-  const labels = {
-    DISABLED: "Disabled",
-    PRIOR_SESSION_CONTEXT: "Prior Session",
-    TIME_WINDOW: "Window",
-    VOLUME: "Volume",
-    VWAP_EMA_PATTERN: "VWAP / EMA",
-    HIGHER_TIMEFRAME: "Higher TF",
-    RISK_TICKS: "Risk Ticks",
-    NO_FINAL_CANDIDATE: "No Final Candidate",
-  };
-  return labels[code] || code || "Watching";
-}
-
 function buildSymbolTrackers({ symbols, states, decisions, marketData, brokerPositions, brokerClosedTrades, brokerAuthoritative, botStarted }) {
   if (!botStarted) {
     return (Array.isArray(symbols) ? symbols : DEFAULT_SYMBOLS).map(idleSymbolTracker);
@@ -4811,6 +4582,21 @@ function tradeSortTimestamp(trade) {
   return parseChartTime(trade?.createdAt || trade?.entryTime || trade?.signalTime || trade?.closedAt || trade?.time);
 }
 
+function formatLiveTradeDuration(trade) {
+  const start = parseChartTime(trade?.entryTime || trade?.signalTime || trade?.openedAt);
+  const end = parseChartTime(trade?.exitTime || trade?.closedAt || trade?.updatedAt || trade?.createdAt);
+  if (!start || !end || end < start) return "--";
+  return formatDurationMs(end - start);
+}
+
+function formatDurationMs(durationMs) {
+  const totalMinutes = Math.max(0, Math.round(durationMs / 60000));
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+}
+
 function isTradeWithinDateRange(trade, startDate, endDate) {
   if (!startDate && !endDate) return true;
   const timestamp = tradeSortTimestamp(trade);
@@ -4836,16 +4622,20 @@ function localDateKey(timestamp) {
 function TradeMetricsGrid({ metrics, pnlLabel = "P/L", tradeLabel = "Trades", returnLabel = "Return %" }) {
   const safeMetrics = metrics || EMPTY_TRADE_METRICS;
   return (
-    <div className="app-live-grid futures-live-filtered-metrics-grid">
-      <MetricCard label={pnlLabel} value={formatCurrency(safeMetrics.totalPnl)} accent={safeMetrics.totalPnl} />
-      <MetricCard label={returnLabel} value={formatPct(safeMetrics.returnPct)} accent={safeMetrics.returnPct} />
-      <MetricCard label={tradeLabel} value={formatInteger(safeMetrics.trades)} />
-      <MetricCard label="Win Rate" value={formatRate(safeMetrics.winRate)} />
-      <MetricCard label="Avg Win" value={formatCurrency(safeMetrics.avgWin)} accent={safeMetrics.avgWin} />
-      <MetricCard label="Avg Loss" value={formatCurrency(safeMetrics.avgLoss)} accent={safeMetrics.avgLoss} />
-      <MetricCard label="Avg Day" value={formatCurrency(safeMetrics.avgDay)} accent={safeMetrics.avgDay} />
-      <MetricCard label="Avg Week" value={formatCurrency(safeMetrics.avgWeek)} accent={safeMetrics.avgWeek} />
-      <MetricCard label="Avg Month" value={formatCurrency(safeMetrics.avgMonth)} accent={safeMetrics.avgMonth} />
+    <div className="futures-live-filtered-metrics-stack">
+      <div className="app-live-grid futures-live-filtered-primary-grid">
+        <MetricCard label={pnlLabel} value={formatCurrency(safeMetrics.totalPnl)} accent={safeMetrics.totalPnl} />
+        <MetricCard label={returnLabel} value={formatPct(safeMetrics.returnPct)} accent={safeMetrics.returnPct} />
+        <MetricCard label={tradeLabel} value={formatInteger(safeMetrics.trades)} />
+        <MetricCard label="Win Rate" value={formatRate(safeMetrics.winRate)} />
+      </div>
+      <div className="app-live-grid futures-live-filtered-average-grid">
+        <MetricCard label="Avg Win" value={formatCurrency(safeMetrics.avgWin)} accent={safeMetrics.avgWin} />
+        <MetricCard label="Avg Loss" value={formatCurrency(safeMetrics.avgLoss)} accent={safeMetrics.avgLoss} />
+        <MetricCard label="Avg Day" value={formatCurrency(safeMetrics.avgDay)} accent={safeMetrics.avgDay} />
+        <MetricCard label="Avg Week" value={formatCurrency(safeMetrics.avgWeek)} accent={safeMetrics.avgWeek} />
+        <MetricCard label="Avg Month" value={formatCurrency(safeMetrics.avgMonth)} accent={safeMetrics.avgMonth} />
+      </div>
     </div>
   );
 }
@@ -4990,6 +4780,10 @@ function TradesTable({ trades, mode }) {
                   <em>{formatEstTime(trade.entryTime || trade.signalTime || trade.createdAt || "--")}</em>
                 </span>
                 <span>
+                  <b>Duration</b>
+                  <em>{formatLiveTradeDuration(trade)}</em>
+                </span>
+                <span>
                   <b>Qty</b>
                   <em>{trade.contracts || 0}</em>
                 </span>
@@ -5027,6 +4821,7 @@ function TradesTable({ trades, mode }) {
       <div className="app-table-wrap desktop-trade-table">
         <div className={`app-grid-head ${gridClass}`}>
           <div>Time</div>
+          <div>Duration</div>
           <div>Symbol</div>
           <div>Strategy</div>
           <div>Side</div>
@@ -5042,6 +4837,7 @@ function TradesTable({ trades, mode }) {
           trades.map((trade) => (
             <div className={`app-grid-row ${gridClass}`} key={trade.id}>
               <div className="app-time-cell">{formatEstTime(trade.entryTime || trade.signalTime || trade.createdAt || "--")}</div>
+              <div>{formatLiveTradeDuration(trade)}</div>
               <div>{trade.symbol || "--"}</div>
               <div>{displayTradeStrategyLabel(trade)}</div>
               <div>{trade.side || "--"}</div>
@@ -5290,7 +5086,6 @@ function compactConfirmationText(value) {
   return compactReasonClause(value)
     .replace(/^configured\s+\S+\s+filters passed and the next-bar live signal fired;?\s*/i, "filters passed; next-bar signal fired; ")
     .replace(/^configured\s+\S+\s+filters passed;\s*/i, "filters passed; ")
-    .replace(/\bentry optimizer recorded\s+/i, "")
     .replace(/\s*;\s*$/g, "");
 }
 

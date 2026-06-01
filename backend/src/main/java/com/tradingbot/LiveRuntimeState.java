@@ -1221,7 +1221,7 @@ public class LiveRuntimeState {
 		public double askWallDistanceTicks;
 		public double bidStacking;
 		public double askStacking;
-		public String optimizerState = "WAITING_FOR_DEPTH";
+		public String flowState = "WAITING_FOR_DEPTH";
 
 		private static OrderFlowSnapshot empty(String symbol) {
 			OrderFlowSnapshot snapshot = new OrderFlowSnapshot();
@@ -1256,7 +1256,7 @@ public class LiveRuntimeState {
 				+ "\"askWallDistanceTicks\":" + numberOrZero(askWallDistanceTicks) + ","
 				+ "\"bidStacking\":" + numberOrZero(bidStacking) + ","
 				+ "\"askStacking\":" + numberOrZero(askStacking) + ","
-				+ "\"optimizerState\":" + jsonString(optimizerState)
+				+ "\"flowState\":" + jsonString(flowState)
 				+ "}";
 		}
 	}
@@ -1310,7 +1310,7 @@ public class LiveRuntimeState {
 			snapshot.available = !crossedBook && (bid > 0.0 || ask > 0.0 || !bidLevels.isEmpty() || !askLevels.isEmpty() || !tape.isEmpty());
 			if (crossedBook) {
 				snapshot.fresh = false;
-				snapshot.optimizerState = "CROSSED_BOOK";
+				snapshot.flowState = "CROSSED_BOOK";
 				return snapshot;
 			}
 			double tickSize = tickSizeForSymbol(snapshot.symbol);
@@ -1359,15 +1359,15 @@ public class LiveRuntimeState {
 			}
 			snapshot.liquidityVacuum = (bidVolume5 + askVolume5) > 0.0 && (bidVolume3 + askVolume3) < Math.max(8.0, (bidVolume10 + askVolume10) * 0.18);
 			if (!snapshot.available) {
-				snapshot.optimizerState = "WAITING_FOR_DEPTH";
+				snapshot.flowState = "WAITING_FOR_DEPTH";
 			} else if (snapshot.spreadTicks >= 5.0) {
-				snapshot.optimizerState = "SPREAD_WIDE";
+				snapshot.flowState = "SPREAD_WIDE";
 			} else if (snapshot.depthImbalance5 >= 0.25) {
-				snapshot.optimizerState = "BID_HEAVY";
+				snapshot.flowState = "BID_HEAVY";
 			} else if (snapshot.depthImbalance5 <= -0.25) {
-				snapshot.optimizerState = "ASK_HEAVY";
+				snapshot.flowState = "ASK_HEAVY";
 			} else {
-				snapshot.optimizerState = "BALANCED";
+				snapshot.flowState = "BALANCED";
 			}
 			previousImbalance5 = snapshot.depthImbalance5;
 			previousBidVolume5 = bidVolume5;

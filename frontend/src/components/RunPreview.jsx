@@ -354,6 +354,10 @@ export default function RunPreview({
                         <em>{formatEstTime(trade.time ?? "--")}</em>
                       </span>
                       <span>
+                        <b>Duration</b>
+                        <em>{formatTradeDuration(trade)}</em>
+                      </span>
+                      <span>
                         <b>Qty</b>
                         <em>{formatNumber(trade.qty)}</em>
                       </span>
@@ -398,6 +402,7 @@ export default function RunPreview({
           <div className="app-table-wrap desktop-trade-table">
             <div className={onOpenTrade ? "app-grid-head trades-grid has-action" : "app-grid-head trades-grid"}>
               <div>Time</div>
+              <div>Duration</div>
               <div>Contract</div>
               <div>Strategy</div>
               <div>Side</div>
@@ -422,6 +427,7 @@ export default function RunPreview({
                       <strong>{formatEstTime(trade.time ?? "--")}</strong>
                       {trade.closedAt && <span>{formatEstTime(trade.closedAt)}</span>}
                     </div>
+                    <div>{formatTradeDuration(trade)}</div>
                     <div>
                       <strong>{trade.contractName || trade.symbol || "--"}</strong>
                       {trade.contractName && trade.symbol && <span className="app-muted d-block">{trade.symbol}</span>}
@@ -493,6 +499,27 @@ function pagedTradeLogSummary({
     return `Loading page ${formatNumber(page, 0)} of ${formatNumber(totalPages, 0)}.`;
   }
   return `Showing ${formatNumber(pageCount, 0)} trades on page ${formatNumber(page, 0)} of ${formatNumber(totalPages, 0)}. Filtered ${formatNumber(filteredCount, 0)} of ${formatNumber(totalCount, 0)} total trades.`;
+}
+
+function formatTradeDuration(trade) {
+  const start = parseTradeTimestamp(trade?.openedAt || trade?.time);
+  const end = parseTradeTimestamp(trade?.closedAt);
+  if (!start || !end || end < start) return "--";
+  return formatDurationMs(end - start);
+}
+
+function parseTradeTimestamp(value) {
+  if (!value) return null;
+  const parsed = Date.parse(String(value).trim().replace(" ", "T"));
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function formatDurationMs(durationMs) {
+  const totalMinutes = Math.max(0, Math.round(durationMs / 60000));
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
 }
 
 function MetricCard({ title, value, accent = 0 }) {

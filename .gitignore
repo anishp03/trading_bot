@@ -27,6 +27,17 @@ scripts/
 docker-compose.yml
 CONTAINER_DEPLOYMENT.md
 
+# Required backend resources that must survive strategy merges.
+!backend/
+backend/*
+!backend/src/
+backend/src/*
+!backend/src/main/
+backend/src/main/*
+!backend/src/main/resources/
+backend/src/main/resources/*
+!backend/src/main/resources/liqrec-source2268.properties
+
 # Backend runtime output
 backend/logs/
 release/**/tradingbot-backend.jar

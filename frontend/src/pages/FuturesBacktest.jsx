@@ -5,11 +5,12 @@ import { API_BASE_URL, apiFetch } from "../utils/api.js";
 const DEFAULT_RISK_PROFILE = "TOPSTEP_150K";
 const MAIN_PORTFOLIO_SYMBOLS = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K", "MYM", "MCL"];
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MYM", "MGC", "MCL"]);
-const DEFAULT_STRATEGY_PRESET = "backtestbias92k";
+const CONTROL_STRATEGY_PRESET = "backtestbias92k";
 const BIAS_FREE_STRATEGY_PRESET = "biasfree92k";
 const BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
+const DEFAULT_STRATEGY_PRESET = BEST_BIAS_FREE_STRATEGY_PRESET;
 const CANONICAL_STRATEGY_PRESETS = [
-  { name: DEFAULT_STRATEGY_PRESET, label: "Backtest Bias 92k" },
+  { name: CONTROL_STRATEGY_PRESET, label: "Backtest Bias 92k" },
   { name: BIAS_FREE_STRATEGY_PRESET, label: "Bias-Free 92k" },
   { name: BEST_BIAS_FREE_STRATEGY_PRESET, label: "Best Bias-Free" },
 ];
@@ -89,6 +90,7 @@ const DEFAULT_CONFIG = {
   useSavedRisk: "true",
   continueAfterRuleViolation: "true",
   qualitativeRiskEnabled: "true",
+  dtmEnabled: "true",
 };
 
 const DEFAULT_DATA_CONFIG = {
@@ -251,7 +253,8 @@ export default function FuturesBacktest() {
       maxAggregateMiniUnits: String(payload?.maxAggregateMiniUnits ?? DEFAULT_CONFIG.maxAggregateMiniUnits),
       useSavedRisk: String(payload?.useSavedRisk ?? DEFAULT_CONFIG.useSavedRisk),
       continueAfterRuleViolation: String(payload?.continueAfterRuleViolation ?? DEFAULT_CONFIG.continueAfterRuleViolation),
-      qualitativeRiskEnabled: String(payload?.qualitativeRiskEnabled ?? DEFAULT_CONFIG.qualitativeRiskEnabled),
+      qualitativeRiskEnabled: DEFAULT_CONFIG.qualitativeRiskEnabled,
+      dtmEnabled: String(payload?.dtmEnabled ?? DEFAULT_CONFIG.dtmEnabled),
     };
     setConfig(nextConfig);
     setBatchSymbols(nextSymbols);
@@ -355,7 +358,8 @@ export default function FuturesBacktest() {
       maxAggregateMiniUnits: config.maxAggregateMiniUnits,
       useSavedRisk: savedRiskSizingEnabled ? "true" : "false",
       continueAfterRuleViolation: config.continueAfterRuleViolation === "true" ? "true" : "false",
-      qualitativeRiskEnabled: config.qualitativeRiskEnabled === "true" ? "true" : "false",
+      qualitativeRiskEnabled: "true",
+      dtmEnabled: config.dtmEnabled === "true" ? "true" : "false",
     });
 
     try {
@@ -570,10 +574,10 @@ export default function FuturesBacktest() {
             <label className="app-toggle-row h-100">
               <input
                 type="checkbox"
-                checked={config.qualitativeRiskEnabled === "true"}
-                onChange={(event) => updateConfig("qualitativeRiskEnabled", event.target.checked ? "true" : "false")}
+                checked={config.dtmEnabled === "true"}
+                onChange={(event) => updateConfig("dtmEnabled", event.target.checked ? "true" : "false")}
               />
-              Qualitative Risk
+              DTM
             </label>
           </div>
 

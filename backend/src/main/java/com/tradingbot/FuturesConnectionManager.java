@@ -47,7 +47,7 @@ public class FuturesConnectionManager {
 	private static final long TOPSTEPX_CONTRACT_CACHE_TTL_MS = 15L * 60L * 1000L;
 	private static final String ENRICHED_BAR_HEADER = "timestamp,open,high,low,close,volume,vwap,ema9,ema20,ema50,atr14,rsi14,volume_sma20,range_ticks,body_pct\n";
 	private static final String SYNTHETIC_LEVEL2_FOLDER = "level2-synthetic";
-	private static final String SYNTHETIC_LEVEL2_HEADER = "timestamp,best_bid,best_ask,spread_ticks,depth_imbalance5,tape_delta,cvd,bid_wall_distance_ticks,ask_wall_distance_ticks,bid_stacking,ask_stacking,absorption,liquidity_vacuum,optimizer_state,source_open,source_high,source_low,source_close,source_volume,source_range_ticks,source_body_pct,source\n";
+	private static final String SYNTHETIC_LEVEL2_HEADER = "timestamp,best_bid,best_ask,spread_ticks,depth_imbalance5,tape_delta,cvd,bid_wall_distance_ticks,ask_wall_distance_ticks,bid_stacking,ask_stacking,absorption,liquidity_vacuum,flow_state,source_open,source_high,source_low,source_close,source_volume,source_range_ticks,source_body_pct,source\n";
 	private static final String DEFAULT_FUTURES_SYMBOLS = "MES.c.0,MNQ.c.0,M2K.c.0,MYM.c.0,ES.c.0,NQ.c.0,MGC.v.0,MCL.c.0,GC.v.0";
 	private static final Map<String, CachedTopstepContracts> TOPSTEPX_CONTRACT_CACHE = new HashMap<String, CachedTopstepContracts>();
 
@@ -3019,7 +3019,7 @@ public class FuturesConnectionManager {
 				double askStacking = Math.max(0.0, previousImbalance - imbalance) * Math.max(1.0, relativeVolume * 10.0);
 				String absorption = syntheticAbsorption(direction, closeLocation, bodyStrength, bar);
 				boolean vacuum = spreadTicks >= 3.0 && relativeVolume < 0.75 && bar.rangeTicks >= 8.0;
-				String optimizerState = syntheticOptimizerState(imbalance, spreadTicks);
+				String flowState = syntheticFlowState(imbalance, spreadTicks);
 				writer.write(cleanTimestamp(bar.timestampText) + ","
 					+ formatDecimal(bestBid) + ","
 					+ formatDecimal(bestAsk) + ","
@@ -3033,7 +3033,7 @@ public class FuturesConnectionManager {
 					+ formatDecimal(askStacking) + ","
 					+ absorption + ","
 					+ vacuum + ","
-					+ optimizerState + ","
+					+ flowState + ","
 					+ formatDecimal(bar.open) + ","
 					+ formatDecimal(bar.high) + ","
 					+ formatDecimal(bar.low) + ","
@@ -3073,7 +3073,7 @@ public class FuturesConnectionManager {
 		return "NONE";
 	}
 
-	private static String syntheticOptimizerState(double imbalance, double spreadTicks) {
+	private static String syntheticFlowState(double imbalance, double spreadTicks) {
 		if (spreadTicks >= 5.0) {
 			return "SPREAD_WIDE";
 		}

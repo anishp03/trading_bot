@@ -25,7 +25,8 @@ const DEFAULT_SETTINGS = {
   liquidityReclaimSourceCodes: "FVG,VWAP,AFT,SWEEP,PDB,KREV,SHDW,VPB",
   liquidityReclaimStartMinute: 570,
   liquidityReclaimEndMinute: 930,
-  liquidityReclaimAllowDuplicates: false,
+  liquidityReclaimAllowDuplicates: true,
+  liquidityReclaimMaxContracts: 0,
   enableEarlySweep: true,
   enableLateSweep: true,
   enableSweepSecondChance: true,
@@ -359,6 +360,7 @@ export default function FuturesStrategy() {
       liquidityReclaimStartMinute: String(settings.liquidityReclaimStartMinute),
       liquidityReclaimEndMinute: String(settings.liquidityReclaimEndMinute),
       liquidityReclaimAllowDuplicates: String(settings.liquidityReclaimAllowDuplicates),
+      liquidityReclaimMaxContracts: String(settings.liquidityReclaimMaxContracts),
       enableEarlySweep: String(settings.enableEarlySweep),
       enableLateSweep: String(settings.enableLateSweep),
       enableSweepSecondChance: String(settings.enableSweepSecondChance),
@@ -698,6 +700,7 @@ export default function FuturesStrategy() {
           <TextField label="LIQREC Sources" field="liquidityReclaimSourceCodes" settings={settings} updateField={updateField} />
           <NumberField label="LIQREC Start Minute" field="liquidityReclaimStartMinute" settings={settings} updateField={updateField} />
           <NumberField label="LIQREC End Minute" field="liquidityReclaimEndMinute" settings={settings} updateField={updateField} />
+          <NumberField label="LIQREC Max Contracts" field="liquidityReclaimMaxContracts" settings={settings} updateField={updateField} />
           <SelectField
             label="FVG Source Mode"
             field="fvgSourceMode"

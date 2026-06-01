@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.sql.Connection;
@@ -34,6 +35,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
@@ -45,6 +47,7 @@ import java.util.concurrent.TimeUnit;
 
 public class FuturesManager {
 	private static final String TIMEFRAME_FOLDER = "1min";
+	private static final String SYNTHETIC_LEVEL2_FOLDER = "level2-synthetic";
 	private static final ZoneId NEW_YORK_ZONE = ZoneId.of("America/New_York");
 	private static final DateTimeFormatter DISPLAY_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 	private static final DateTimeFormatter SERVER_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -106,9 +109,10 @@ public class FuturesManager {
 	private static final String WINDOWED_94K_STRATEGY_PRESET = "backtestbias92k";
 	private static final String BIAS_FREE_94K_STRATEGY_PRESET = "biasfree92k";
 	private static final String BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
+	private static final String LIQREC_SOURCE_2268_RESOURCE = "liqrec-source2268.properties";
 	private static final String DEFAULT_STRATEGY_PRESET = WINDOWED_94K_STRATEGY_PRESET;
 	private static final String WIP_STRATEGY_PRESET = "wip";
-	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-06-01-bestbiasfree-v16-clean";
+	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-06-01-bestbiasfree-v18-liqrec-all-day-mnqcap";
 	private static final String[] VISIBLE_STRATEGY_PRESETS = new String[] { WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET };
 	private static final String[] SEEDED_STRATEGY_PRESETS = new String[] { LEGACY_94K_STRATEGY_PRESET, WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET, WIP_STRATEGY_PRESET };
 	private static final String RESEARCH_RELAXED_WINDOWS_PROPERTY = "tradingbot.research.relaxedWindows";
@@ -132,6 +136,8 @@ public class FuturesManager {
 	private static ScheduledFuture<?> liveAutomationTask;
 	private static boolean defaultStrategyPresetsSeeded = false;
 	private static final ThreadLocal<String> STRATEGY_SETTING_SAVE_SLOT = new ThreadLocal<String>();
+	private static final Map<String, FuturesStrategySettings> LIQREC_SOURCE_2268_SETTINGS = new HashMap<String, FuturesStrategySettings>();
+	private static boolean liqrecSource2268SettingsLoaded = false;
 	private static long livePotentialSignalScanAttemptAtMillis = 0L;
 	private static final int LIVE_THINKING_LOG_LIMIT = 1000;
 	private static final List<LiveThinkingEntry> liveThinkingLog = new ArrayList<LiveThinkingEntry>();
@@ -149,21 +155,28 @@ public class FuturesManager {
 	private static final int LIVE_REALTIME_EVENT_SAMPLE_CAP = 180000;
 	private static final int LIVE_REALTIME_EVENTS_PER_MINUTE_ESTIMATE = 240;
 	private static final int LIVE_STRATEGY_ONE_MINUTE_BAR_LIMIT = 520;
-	private static final int LIVE_ENTRY_DIAGNOSTIC_START_MINUTE = (9 * 60) + 35;
-	private static final int LIVE_ENTRY_DIAGNOSTIC_END_MINUTE = (15 * 60) + 45;
 	private static final int LIVE_STALE_SIGNAL_AUDIT_LOOKBACK_BARS = 5;
 	private static final long LIVE_REALTIME_FRESH_SECONDS = 30L;
 	private static final long LIVE_POTENTIAL_SIGNAL_SCAN_INTERVAL_MS = TimeUnit.SECONDS.toMillis(10L);
-	private static final double ENTRY_OPTIMIZER_MAX_SPREAD_TICKS = 6.0;
-	private static final double ENTRY_OPTIMIZER_HARD_OPPOSING_IMBALANCE = 0.55;
-	private static final double ENTRY_OPTIMIZER_HARD_OPPOSING_TAPE = 5.0;
-	private static final double ENTRY_OPTIMIZER_KREV_MIN_TAPE_CONFIRMATION = 20.0;
-	private static final double ENTRY_OPTIMIZER_KREV_MIN_DEPTH_CONFIRMATION = 0.08;
+	private static final double ORDER_FLOW_HARD_OPPOSING_IMBALANCE = 0.55;
+	private static final double ORDER_FLOW_HARD_OPPOSING_TAPE = 5.0;
+	private static final double ORDER_FLOW_SOFT_CONFIRM_TAPE = 3.0;
 	private static final double DTM_BREAKEVEN_TRIGGER_R = 0.75;
 	private static final double DTM_PARTIAL_TRIGGER_R = 1.0;
 	private static final double DTM_TRAIL_TRIGGER_R = 1.15;
 	private static final double DTM_EARLY_CUT_ADVERSE_R = 0.45;
 	private static final double DTM_EMERGENCY_CUT_ADVERSE_R = 0.95;
+	private static final double DTM_BREAKEVEN_TARGET_FRACTION = 0.55;
+	private static final double DTM_TRAIL_TARGET_FRACTION = 0.78;
+	private static final double DTM_PARTIAL_TARGET_FRACTION = 0.92;
+	private static final double DTM_EARLY_CUT_CLOSE_ADVERSE_R = 0.65;
+	private static final double DTM_EXTENSION_TARGET_FRACTION = 0.86;
+	private static final double DTM_EXTENSION_ACCEPTANCE_R = 0.20;
+	private static final double DTM_EXTENSION_PROFIT_LOCK_BUFFER_R = 0.10;
+	private static final double DTM_EXTENSION_MAX_TARGET_GIVEBACK_R = 0.08;
+	private static final double DTM_DYNAMIC_TARGET_EXTENSION_MULTIPLE = 1.35;
+	private static final double DTM_DYNAMIC_TARGET_EXTENSION_MAX_ADD_R = 1.50;
+	private static final int DTM_EXIT_EVIDENCE_BARS_REQUIRED = 2;
 	private static final Map<String, LiveWarmupBars> LIVE_WARMUP_CACHE = new HashMap<String, LiveWarmupBars>();
 	private static final Set<String> LIVE_GRAPH_WARMUP_LOADING = new HashSet<String>();
 	private static final Map<String, DynamicTradeState> LIVE_DTM_STATES = new HashMap<String, DynamicTradeState>();
@@ -268,8 +281,6 @@ public class FuturesManager {
 		private String strategiesJson = "[]";
 		private String latestSignalsJson = "[]";
 		private String currentSignalsJson = "[]";
-		private String strategyDiagnosticsJson = "[]";
-		private String latestNearMissesJson = "[]";
 		private String lastSignalCode = "";
 		private String lastSignalName = "";
 		private String lastSignalSide = "";
@@ -281,61 +292,6 @@ public class FuturesManager {
 		private int enabledCount;
 		private int signalCount;
 		private int currentSignalCount;
-	}
-
-	private static class StrategyDiagnosticTarget {
-		private String code;
-		private String name;
-		private StrategyToggle toggle;
-		private boolean priorContextRequired;
-	}
-
-	private static class StrategyGateSnapshot {
-		private boolean enabled;
-		private boolean windowPass;
-		private boolean volumePass;
-		private boolean vwapEmaPass;
-		private boolean higherTimeframePass;
-		private boolean riskTickPass;
-		private boolean priorContextPass;
-		private String firstFailingRule = "";
-		private int passedGates;
-		private double volumeRatio;
-		private double riskTicks;
-		private double trendSlopeTicks;
-		private double vwapDistanceTicks;
-		private String detailOverride = "";
-	}
-
-	private static class StrategyFilterDiagnostic {
-		private String symbol;
-		private String code;
-		private String name;
-		private boolean enabled;
-		private boolean priorContextRequired;
-		private int maxTradesPerDay;
-		private int barsChecked;
-		private int windowPass;
-		private int windowFail;
-		private int volumePass;
-		private int volumeFail;
-		private int vwapEmaPass;
-		private int vwapEmaFail;
-		private int higherTimeframePass;
-		private int higherTimeframeFail;
-		private int riskTickPass;
-		private int riskTickFail;
-		private int priorContextPass;
-		private int priorContextFail;
-		private int finalCandidates;
-		private int htfBars;
-		private String latestNearMissTime = "";
-		private String latestNearMissReason = "";
-		private int latestNearMissPassedGates;
-		private double latestNearMissPrice;
-		private double latestNearMissVolumeRatio;
-		private double latestNearMissRiskTicks;
-		private String latestNearMissDetail = "";
 	}
 
 	private static class LiveThinkingEntry {
@@ -482,6 +438,7 @@ public class FuturesManager {
 		private boolean useSavedRisk;
 		private boolean continueAfterRuleViolation;
 		private boolean qualitativeRiskEnabled = true;
+		private boolean dtmEnabled = true;
 	}
 
 	private static class PortfolioBacktestResult {
@@ -511,6 +468,16 @@ public class FuturesManager {
 		private int overlapRejections;
 		private int exposureRejections;
 		private int riskRejections;
+		private int dtmEvaluations;
+		private int dtmOrderFlowAvailable;
+		private int dtmOrderFlowMissing;
+		private int dtmDecisions;
+		private int dtmBreakevenMoves;
+		private int dtmPartialActions;
+		private int dtmTrailActions;
+		private int dtmEarlyCuts;
+		private int dtmTargetExtensions;
+		private int dtmOneContractExtensions;
 		private boolean ruleViolation;
 		private String ruleMessage;
 		private boolean continuedAfterRuleViolation;
@@ -548,6 +515,7 @@ public class FuturesManager {
 		private Map<LocalDate, List<Bar>> oneHourByDay = new HashMap<LocalDate, List<Bar>>();
 		private Map<LocalDate, Map<LocalTime, Integer>> indexByDayTime = new HashMap<LocalDate, Map<LocalTime, Integer>>();
 		private Map<LocalDate, List<SignalEvent>> eventsByDay = new HashMap<LocalDate, List<SignalEvent>>();
+		private Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> orderFlowByDayTime = new HashMap<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>>();
 	}
 
 	private static class SignalEvent {
@@ -590,6 +558,9 @@ public class FuturesManager {
 		private String dtmFinalAction = "";
 		private String dtmPartialDecision = "";
 		private String dtmRunnerDecision = "";
+		private int dtmEvaluationCount;
+		private int dtmOrderFlowAvailableCount;
+		private int dtmDecisionCount;
 		private int entryIndex;
 		private String openedAt;
 		private LocalTime openedMarketTime;
@@ -638,7 +609,8 @@ public class FuturesManager {
 		public String liquidityReclaimSourceCodes = "FVG,VWAP,AFT,SWEEP,PDB,KREV,SHDW,VPB";
 		public int liquidityReclaimStartMinute = 570;
 		public int liquidityReclaimEndMinute = 930;
-		public boolean liquidityReclaimAllowDuplicates = false;
+		public boolean liquidityReclaimAllowDuplicates = true;
+		public int liquidityReclaimMaxContracts = 0;
 		public boolean enableEarlySweep = true;
 		public boolean enableLateSweep = true;
 		public boolean enableSweepSecondChance = true;
@@ -1117,7 +1089,6 @@ public class FuturesManager {
 		private int maxOpenPositions = 3;
 		private int maxAggregateContracts = 150;
 		private double maxAggregateMiniUnits = 15.0;
-		private boolean entryOptimizerEnabled;
 		private boolean dtmEnabled;
 		private int decisionCount;
 		private int acceptedDecisionCount;
@@ -1562,11 +1533,25 @@ public class FuturesManager {
 		enableBestBiasFreeModules(conn, slot, "MCL", new String[] { "orb", "ifvg", "afternoonContinuation", "marketIntradayMomentum", "closeMomentum" });
 
 		applyBestBiasFreeSidePolicy(conn, slot);
+		applyBestBiasFreeLiquidityReclaimPolicy(conn, slot);
 	}
 
 	private static void enableBestBiasFreeModules(Connection conn, String slot, String symbol, String[] modules) throws SQLException {
 		for (int index = 0; index < modules.length; index++) {
 			setSlotSymbolSetting(conn, slot, symbol, modules[index] + ".enabled", "true");
+		}
+	}
+
+	private static void applyBestBiasFreeLiquidityReclaimPolicy(Connection conn, String slot) throws SQLException {
+		for (String symbol : supportedInstrumentSymbols()) {
+			boolean sourceSymbol = isLiquidityReclaimSourceSymbol(symbol);
+			setSlotSymbolSetting(conn, slot, symbol, "liquidityReclaim.enabled", Boolean.toString(sourceSymbol));
+			setSlotSymbolSetting(conn, slot, symbol, "liquidityReclaim.maxTradesPerDay", "50");
+			setSlotSymbolSetting(conn, slot, symbol, "liquidityReclaimSourceCodes", "FVG,VWAP,AFT,SWEEP,PDB,KREV,SHDW,VPB");
+			setSlotSymbolSetting(conn, slot, symbol, "liquidityReclaimStartMinute", "570");
+			setSlotSymbolSetting(conn, slot, symbol, "liquidityReclaimEndMinute", "930");
+			setSlotSymbolSetting(conn, slot, symbol, "liquidityReclaimAllowDuplicates", Boolean.toString(sourceSymbol));
+			setSlotSymbolSetting(conn, slot, symbol, "liquidityReclaimMaxContracts", "MNQ".equals(normalizeSymbol(symbol)) ? "30" : "0");
 		}
 	}
 
@@ -2068,6 +2053,7 @@ public class FuturesManager {
 			strategyPreset,
 			sourcePortfolioBacktestId,
 			false,
+			true,
 			true
 		);
 	}
@@ -2113,6 +2099,7 @@ public class FuturesManager {
 			strategyPreset,
 			sourcePortfolioBacktestId,
 			continueAfterRuleViolation,
+			true,
 			true
 		);
 	}
@@ -2138,6 +2125,54 @@ public class FuturesManager {
 		int sourcePortfolioBacktestId,
 		boolean continueAfterRuleViolation,
 		boolean qualitativeRiskEnabled
+	) {
+		return generatePortfolioBacktest(
+			symbols,
+			startDate,
+			endDate,
+			accountSize,
+			maxTrailingDrawdown,
+			dailyLossLimit,
+			maxRiskPerTrade,
+			maxContracts,
+			commissionPerContract,
+			slippageTicks,
+			maxOpenPositions,
+			maxAggregateContracts,
+			maxAggregateMiniUnits,
+			useSavedRisk,
+			profitTarget,
+			fundedProfile,
+			strategyPreset,
+			sourcePortfolioBacktestId,
+			continueAfterRuleViolation,
+			qualitativeRiskEnabled,
+			true
+		);
+	}
+
+	public static int generatePortfolioBacktest(
+		String symbols,
+		String startDate,
+		String endDate,
+		double accountSize,
+		double maxTrailingDrawdown,
+		double dailyLossLimit,
+		double maxRiskPerTrade,
+		int maxContracts,
+		double commissionPerContract,
+		double slippageTicks,
+		int maxOpenPositions,
+		int maxAggregateContracts,
+		double maxAggregateMiniUnits,
+		boolean useSavedRisk,
+		double profitTarget,
+		String fundedProfile,
+		String strategyPreset,
+		int sourcePortfolioBacktestId,
+		boolean continueAfterRuleViolation,
+		boolean qualitativeRiskEnabled,
+		boolean dtmEnabled
 	) {
 		initializeStore();
 		String normalizedStrategyPreset = normalizeStrategyPresetName(strategyPreset);
@@ -2168,6 +2203,7 @@ public class FuturesManager {
 		config.sourcePortfolioBacktestId = Math.max(0, sourcePortfolioBacktestId);
 		config.continueAfterRuleViolation = continueAfterRuleViolation;
 		config.qualitativeRiskEnabled = qualitativeRiskEnabled;
+		config.dtmEnabled = dtmEnabled;
 		PortfolioBacktestResult result = runPortfolioBacktest(config);
 		if (result == null) {
 			return -1;
@@ -2315,6 +2351,7 @@ public class FuturesManager {
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaimStartMinute"), safeSettings.liquidityReclaimStartMinute);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaimEndMinute"), safeSettings.liquidityReclaimEndMinute);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaimAllowDuplicates"), safeSettings.liquidityReclaimAllowDuplicates);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaimMaxContracts"), safeSettings.liquidityReclaimMaxContracts);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "enableEarlySweep"), safeSettings.enableEarlySweep);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "enableLateSweep"), safeSettings.enableLateSweep);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "enableSweepSecondChance"), safeSettings.enableSweepSecondChance);
@@ -2813,6 +2850,7 @@ public class FuturesManager {
 			+ "\"liquidityReclaimStartMinute\":" + settings.liquidityReclaimStartMinute + ","
 			+ "\"liquidityReclaimEndMinute\":" + settings.liquidityReclaimEndMinute + ","
 			+ "\"liquidityReclaimAllowDuplicates\":" + settings.liquidityReclaimAllowDuplicates + ","
+			+ "\"liquidityReclaimMaxContracts\":" + settings.liquidityReclaimMaxContracts + ","
 			+ "\"enableEarlySweep\":" + settings.enableEarlySweep + ","
 			+ "\"enableLateSweep\":" + settings.enableLateSweep + ","
 			+ "\"enableSweepSecondChance\":" + settings.enableSweepSecondChance + ","
@@ -3255,7 +3293,7 @@ public class FuturesManager {
 			+ "\"timeNativeStrategies\":" + jsonStringArray(Arrays.asList(TIME_NATIVE_STRATEGY_CODES)) + ","
 			+ "\"patternLevelStrategies\":" + jsonStringArray(Arrays.asList(PATTERN_LEVEL_STRATEGY_CODES)) + ","
 			+ "\"disabledResearchStrategies\":" + jsonStringArray(Arrays.asList(DISABLED_RESEARCH_STRATEGY_CODES)) + ","
-				+ "\"rule\":" + jsonString("backtestbias92k is the frozen windowed control. biasfree92k is the broad comparison preset with fitted windows removed. bestbiasfree is the main best strategy config. Level 2 infrastructure remains available for Entry Optimizer, DTM, and synthetic research.")
+				+ "\"rule\":" + jsonString("backtestbias92k is the frozen windowed control. biasfree92k is the broad comparison preset with fitted windows removed. bestbiasfree is the main best strategy config. Level 2 infrastructure remains available for DTM and synthetic research.")
 				+ "}";
 	}
 
@@ -3700,6 +3738,7 @@ public class FuturesManager {
 		else if ("liquidityReclaimStartMinute".equals(key)) settings.liquidityReclaimStartMinute = parseInt(value, settings.liquidityReclaimStartMinute);
 		else if ("liquidityReclaimEndMinute".equals(key)) settings.liquidityReclaimEndMinute = parseInt(value, settings.liquidityReclaimEndMinute);
 		else if ("liquidityReclaimAllowDuplicates".equals(key)) settings.liquidityReclaimAllowDuplicates = parseBoolean(value, settings.liquidityReclaimAllowDuplicates);
+		else if ("liquidityReclaimMaxContracts".equals(key)) settings.liquidityReclaimMaxContracts = parseInt(value, settings.liquidityReclaimMaxContracts);
 		else if ("enableEarlySweep".equals(key)) settings.enableEarlySweep = parseBoolean(value, settings.enableEarlySweep);
 		else if ("enableLateSweep".equals(key)) settings.enableLateSweep = parseBoolean(value, settings.enableLateSweep);
 		else if ("enableSweepSecondChance".equals(key)) settings.enableSweepSecondChance = parseBoolean(value, settings.enableSweepSecondChance);
@@ -4180,6 +4219,7 @@ public class FuturesManager {
 		if (settings.liquidityReclaimEndMinute < settings.liquidityReclaimStartMinute) {
 			settings.liquidityReclaimEndMinute = settings.liquidityReclaimStartMinute;
 		}
+		settings.liquidityReclaimMaxContracts = boundedInt(settings.liquidityReclaimMaxContracts, 0, 0, 50);
 		settings.orbRetestStartMinutes = boundedInt(settings.orbRetestStartMinutes, 0, 0, 150);
 		settings.orbRetestEndMinutes = boundedInt(settings.orbRetestEndMinutes, 135, 0, 150);
 		if (settings.orbRetestEndMinutes < settings.orbRetestStartMinutes) {
@@ -4801,6 +4841,8 @@ public class FuturesManager {
 						+ "\"maxAggregateMiniUnits\":" + round(rs.getDouble("maxAggregateMiniUnits")) + ","
 						+ "\"useSavedRisk\":true,"
 						+ "\"continueAfterRuleViolation\":true,"
+						+ "\"qualitativeRiskEnabled\":" + jsonBooleanOrDefault(portfolioSettings, "qualitativeRiskEnabled", true) + ","
+						+ "\"dtmEnabled\":" + jsonBooleanOrDefault(portfolioSettings, "dtmEnabled", true) + ","
 						+ "\"sourceMetrics\":{"
 							+ "\"startingBalance\":" + round(rs.getDouble("startingBalance")) + ","
 							+ "\"totalProfit\":" + round(rs.getDouble("totalProfit")) + ","
@@ -4924,6 +4966,8 @@ public class FuturesManager {
 			+ "\"maxAggregateMiniUnits\":15,"
 			+ "\"useSavedRisk\":true,"
 			+ "\"continueAfterRuleViolation\":true,"
+			+ "\"qualitativeRiskEnabled\":true,"
+			+ "\"dtmEnabled\":true,"
 			+ "\"sourceMetrics\":{}"
 			+ "}";
 	}
@@ -5726,7 +5770,8 @@ public class FuturesManager {
 		double stopFillForRisk = applySlippage(spec, stopPrice, signal.side, config.slippageTicks, false);
 		double riskPerContract = (Math.abs(entryPrice - stopFillForRisk) / spec.tickSize * spec.tickValue) + (config.commissionPerContract * 2.0);
 		double availableRiskBudget = Math.min(config.maxRiskPerTrade, Math.min(Math.abs(config.dailyLossLimit), config.maxTrailingDrawdown));
-		int contracts = Math.min(config.maxContracts, (int) Math.floor(availableRiskBudget / Math.max(1.0, riskPerContract)));
+		int maxContracts = strategySpecificMaxContracts(spec.symbol, signal.strategyCode, settings, config.maxContracts);
+		int contracts = Math.min(maxContracts, (int) Math.floor(availableRiskBudget / Math.max(1.0, riskPerContract)));
 		if (contracts < 1) {
 			stat.contractRejected++;
 			return;
@@ -6242,6 +6287,7 @@ public class FuturesManager {
 		copy.liquidityReclaimStartMinute = safe.liquidityReclaimStartMinute;
 		copy.liquidityReclaimEndMinute = safe.liquidityReclaimEndMinute;
 		copy.liquidityReclaimAllowDuplicates = safe.liquidityReclaimAllowDuplicates;
+		copy.liquidityReclaimMaxContracts = safe.liquidityReclaimMaxContracts;
 		copy.enableEarlySweep = safe.enableEarlySweep;
 		copy.enableLateSweep = safe.enableLateSweep;
 		copy.enableSweepSecondChance = safe.enableSweepSecondChance;
@@ -8493,7 +8539,6 @@ public class FuturesManager {
 		FuturesLiveSession session = selfTestLiveSession(symbols);
 		session.sessionId = sessionId;
 		session.executionMode = "SIMULATED";
-		session.entryOptimizerEnabled = true;
 		session.dtmEnabled = true;
 		session.fundedProfile = "TOPSTEP_50K";
 		session.strategyPreset = "synthetic-lifecycle";
@@ -8513,17 +8558,12 @@ public class FuturesManager {
 		List<String> failures = new ArrayList<String>();
 		int acceptedEntries = 0;
 		int completedTrades = 0;
-		int orderFlowRejected = 0;
 		int standardTargetManagedTrades = 0;
 
 		LivePortfolioSignalCandidate managedCandidate = selfTestLifecycleCandidate("MYM", "ORB", "LONG", 1.20);
 		contexts.put(managedCandidate.symbol, managedCandidate.context);
 		seedSyntheticOrderFlow(managedCandidate.symbol, true);
-		OrderFlowEntryDecision managedFlow = evaluateLiveEntryOrderFlow(session, managedCandidate);
-		if (!managedFlow.enabled || !managedFlow.passed || !"ORDER_FLOW_PASS_CONFIRMED".equals(managedFlow.actionCode)) {
-			failures.add("Managed lifecycle entry optimizer did not produce ORDER_FLOW_PASS_CONFIRMED.");
-		}
-		pushSyntheticCandidateAndOrderFlowEvents(session.sessionId, managedCandidate, managedFlow);
+		pushSyntheticCandidateEvent(session.sessionId, managedCandidate);
 		LiveSignalOrder managedOrder = validateLivePortfolioSignal(
 			session,
 			portfolioConfig,
@@ -8536,12 +8576,6 @@ public class FuturesManager {
 		if (!managedOrder.accepted || managedOrder.position == null) {
 			failures.add("Managed lifecycle candidate failed live sizing: " + managedOrder.reason);
 		} else {
-			managedOrder.diagnosticsJson = mergeSimpleJson(
-				managedOrder.diagnosticsJson,
-				"\"orderFlowAction\":" + jsonString(managedFlow.actionCode)
-					+ ",\"orderFlowReason\":" + jsonString(managedFlow.reason)
-					+ ",\"orderFlow\":" + jsonObjectOrDefault(managedFlow.metricsJson, "{}")
-			);
 			insertLiveSignalDecisionFromSignal(
 				session.sessionId,
 				snapshot.snapshotId,
@@ -8589,11 +8623,7 @@ public class FuturesManager {
 		LivePortfolioSignalCandidate standardTargetCandidate = selfTestLifecycleCandidate("MCL", "PDB", "LONG");
 		contexts.put(standardTargetCandidate.symbol, standardTargetCandidate.context);
 		seedSyntheticOrderFlow(standardTargetCandidate.symbol, true);
-		OrderFlowEntryDecision standardTargetFlow = evaluateLiveEntryOrderFlow(session, standardTargetCandidate);
-		if (!standardTargetFlow.enabled || !standardTargetFlow.passed || !"ORDER_FLOW_PASS_CONFIRMED".equals(standardTargetFlow.actionCode)) {
-			failures.add("Standard-target lifecycle entry optimizer did not produce ORDER_FLOW_PASS_CONFIRMED.");
-		}
-		pushSyntheticCandidateAndOrderFlowEvents(session.sessionId, standardTargetCandidate, standardTargetFlow);
+		pushSyntheticCandidateEvent(session.sessionId, standardTargetCandidate);
 		LiveSignalOrder standardTargetOrder = validateLivePortfolioSignal(
 			session,
 			portfolioConfig,
@@ -8606,12 +8636,6 @@ public class FuturesManager {
 		if (!standardTargetOrder.accepted || standardTargetOrder.position == null) {
 			failures.add("Standard-target lifecycle candidate failed live sizing: " + standardTargetOrder.reason);
 		} else {
-			standardTargetOrder.diagnosticsJson = mergeSimpleJson(
-				standardTargetOrder.diagnosticsJson,
-				"\"orderFlowAction\":" + jsonString(standardTargetFlow.actionCode)
-					+ ",\"orderFlowReason\":" + jsonString(standardTargetFlow.reason)
-					+ ",\"orderFlow\":" + jsonObjectOrDefault(standardTargetFlow.metricsJson, "{}")
-			);
 			insertLiveSignalDecisionFromSignal(
 				session.sessionId,
 				snapshot.snapshotId,
@@ -8636,19 +8660,23 @@ public class FuturesManager {
 			standardTargetPositions.add(standardTargetOrder.position);
 			closeTriggeredLivePositions(session, snapshot, standardTargetPositions, contexts, singleBarMap(
 				standardTargetCandidate.symbol,
-				selfTestDtmBar(standardTargetCandidate.context, standardTargetOrder.position, 6, 0.80, false, false)
+				selfTestDtmBar(standardTargetCandidate.context, standardTargetOrder.position, 10, 1.40, false, false)
 			));
 			closeTriggeredLivePositions(session, snapshot, standardTargetPositions, contexts, singleBarMap(
 				standardTargetCandidate.symbol,
-				selfTestDtmBar(standardTargetCandidate.context, standardTargetOrder.position, 7, 1.05, false, false)
+				selfTestDtmBar(standardTargetCandidate.context, standardTargetOrder.position, 11, 2.10, false, false)
 			));
 			closeTriggeredLivePositions(session, snapshot, standardTargetPositions, contexts, singleBarMap(
 				standardTargetCandidate.symbol,
-				selfTestDtmBar(standardTargetCandidate.context, standardTargetOrder.position, 8, 1.30, false, false)
+				selfTestDtmBar(standardTargetCandidate.context, standardTargetOrder.position, 12, 2.65, false, false)
+			));
+			closeTriggeredLivePositions(session, snapshot, standardTargetPositions, contexts, singleBarMap(
+				standardTargetCandidate.symbol,
+				selfTestDtmBar(standardTargetCandidate.context, standardTargetOrder.position, 13, 2.75, false, false)
 			));
 			List<FuturesTrade> standardTargetTrades = closeTriggeredLivePositions(session, snapshot, standardTargetPositions, contexts, singleBarMap(
 				standardTargetCandidate.symbol,
-				selfTestDtmBar(standardTargetCandidate.context, standardTargetOrder.position, 9, 4.00, true, false)
+				selfTestDtmBar(standardTargetCandidate.context, standardTargetOrder.position, 14, 4.00, true, false)
 			));
 			if (standardTargetTrades.isEmpty()) {
 				failures.add("Standard-target lifecycle position did not complete through the exit engine.");
@@ -8661,11 +8689,13 @@ public class FuturesManager {
 			}
 		}
 
-		LivePortfolioSignalCandidate cutCandidate = selfTestLifecycleCandidate("MES", "OMOM", "LONG");
+		LivePortfolioSignalCandidate cutCandidate = selfTestLifecycleCandidate("MCL", "OMOM", "LONG");
+		if (cutCandidate.context != null && cutCandidate.context.config != null && cutCandidate.context.config.strategySettings != null) {
+			cutCandidate.context.config.strategySettings.enableEarlyLossCut = false;
+		}
 		contexts.put(cutCandidate.symbol, cutCandidate.context);
 		seedSyntheticOrderFlow(cutCandidate.symbol, true);
-		OrderFlowEntryDecision cutFlow = evaluateLiveEntryOrderFlow(session, cutCandidate);
-		pushSyntheticCandidateAndOrderFlowEvents(session.sessionId, cutCandidate, cutFlow);
+		pushSyntheticCandidateEvent(session.sessionId, cutCandidate);
 		LiveSignalOrder cutOrder = validateLivePortfolioSignal(
 			session,
 			portfolioConfig,
@@ -8678,12 +8708,6 @@ public class FuturesManager {
 		if (!cutOrder.accepted || cutOrder.position == null) {
 			failures.add("Early-cut lifecycle candidate failed live sizing: " + cutOrder.reason);
 		} else {
-			cutOrder.diagnosticsJson = mergeSimpleJson(
-				cutOrder.diagnosticsJson,
-				"\"orderFlowAction\":" + jsonString(cutFlow.actionCode)
-					+ ",\"orderFlowReason\":" + jsonString(cutFlow.reason)
-					+ ",\"orderFlow\":" + jsonObjectOrDefault(cutFlow.metricsJson, "{}")
-			);
 			insertLiveSignalDecisionFromSignal(
 				session.sessionId,
 				snapshot.snapshotId,
@@ -8706,59 +8730,21 @@ public class FuturesManager {
 			seedSyntheticOrderFlow(cutCandidate.symbol, false);
 			List<PortfolioPosition> cutPositions = new ArrayList<PortfolioPosition>();
 			cutPositions.add(cutOrder.position);
-			Bar firstCutBar = selfTestDtmBar(cutCandidate.context, cutOrder.position, 11, -0.55, false, true);
-			alignSyntheticPositionToBar(cutCandidate.context, cutOrder.position, firstCutBar);
-			closeTriggeredLivePositions(session, snapshot, cutPositions, contexts, singleBarMap(
-				cutCandidate.symbol,
-				firstCutBar
-			));
-			Bar secondCutBar = selfTestDtmBar(cutCandidate.context, cutOrder.position, 12, -0.58, false, true);
-			alignSyntheticPositionToBar(cutCandidate.context, cutOrder.position, secondCutBar);
-			List<FuturesTrade> cutTrades = closeTriggeredLivePositions(session, snapshot, cutPositions, contexts, singleBarMap(
-				cutCandidate.symbol,
-				secondCutBar
-			));
-			if (cutTrades.isEmpty()) {
+			alignSyntheticPositionToBar(cutCandidate.context, cutOrder.position, selfTestDtmBar(cutCandidate.context, cutOrder.position, 10, 0.0, false, false));
+			cutOrder.position.entryIndex = 0;
+			Bar firstCutBar = selfTestDtmBar(cutCandidate.context, cutOrder.position, 16, -0.70, false, true);
+			evaluateDynamicTradeManager(session, snapshot, cutOrder.position, cutCandidate.context, firstCutBar);
+			Bar secondCutBar = selfTestDtmBar(cutCandidate.context, cutOrder.position, 17, -0.95, false, true);
+			DynamicTradeDecision cutDecision = evaluateDynamicTradeManager(session, snapshot, cutOrder.position, cutCandidate.context, secondCutBar);
+			if (cutDecision == null || !cutDecision.finalExit) {
 				failures.add("Early-cut lifecycle position did not produce a DTM final exit.");
 			} else {
-				FuturesTrade trade = cutTrades.get(0);
+				FuturesTrade trade = buildPortfolioTrade(cutOrder.position, cutCandidate.context, secondCutBar, currentIndexOrEntry(cutOrder.position, cutCandidate.context, secondCutBar), secondCutBar.close, cutDecision.exitReason);
+				applyDynamicTradeStateToTrade(session.sessionId, snapshot.snapshotId, cutOrder.position, trade, cutDecision.actionCode);
 				insertLiveExitDecision(session.sessionId, snapshot.snapshotId, trade, "SIMULATED_DTM_EXIT", trade.exitReason);
 				pushSyntheticPositionExitedEvent(session.sessionId, trade, "SIMULATED_DTM_EXIT", trade.exitReason);
 				completedTrades++;
 			}
-		}
-
-		LivePortfolioSignalCandidate blockedCandidate = selfTestLifecycleCandidate("MCL", "VWAP", "SHORT");
-		contexts.put(blockedCandidate.symbol, blockedCandidate.context);
-		seedSyntheticOrderFlow(blockedCandidate.symbol, true);
-		OrderFlowEntryDecision blockedFlow = evaluateLiveEntryOrderFlow(session, blockedCandidate);
-		pushSyntheticCandidateAndOrderFlowEvents(session.sessionId, blockedCandidate, blockedFlow);
-		if (blockedFlow.enabled && !blockedFlow.passed) {
-			insertLiveSignalDecisionFromSignal(
-				session.sessionId,
-				snapshot.snapshotId,
-				blockedCandidate.symbol,
-				blockedCandidate.event.signal,
-				blockedCandidate.signalTime,
-				blockedCandidate.entryTime,
-				0,
-				0.0,
-				blockedCandidate.event.signal.stopPrice,
-				blockedCandidate.event.signal.targetPrice,
-				0.0,
-				"REJECTED_ORDER_FLOW",
-				blockedFlow.reason,
-				"",
-				"{"
-					+ "\"firstFailingRule\":\"ORDER_FLOW_OPTIMIZER\","
-					+ "\"orderFlowAction\":" + jsonString(blockedFlow.actionCode) + ","
-					+ "\"orderFlowReason\":" + jsonString(blockedFlow.reason) + ","
-					+ "\"orderFlow\":" + jsonObjectOrDefault(blockedFlow.metricsJson, "{}")
-					+ "}"
-			);
-			orderFlowRejected++;
-		} else {
-			failures.add("Blocked lifecycle candidate did not stop at the entry optimizer.");
 		}
 
 		String decisionsJson = getLiveSignalDecisionsJson(sessionId, 20);
@@ -8767,21 +8753,18 @@ public class FuturesManager {
 		int dtmEvents = countThinkingEvents(sessionId, "DTM_DECISION");
 		int submittedEvents = countThinkingEvents(sessionId, "ORDER_SUBMITTED");
 		int exitedEvents = countThinkingEvents(sessionId, "POSITION_EXITED");
-		int orderFlowBlockedEvents = countThinkingEvents(sessionId, "ORDER_FLOW_BLOCKED");
 		boolean entryReasonOk = decisionsJson.contains("\"entryReasonText\"")
-			&& decisionsJson.contains("\"entryReasoning\"")
-			&& decisionsJson.contains("\"ORDER_FLOW_PASS_CONFIRMED\"");
+			&& decisionsJson.contains("\"entryReasoning\"");
 		boolean exitReasonOk = decisionsJson.contains("\"exitReasonText\"")
 			&& decisionsJson.contains("\"exitReasoning\"")
 			&& decisionsJson.contains("\"DTM_CUT_EARLY_THESIS_FAILED\"")
-			&& decisionsJson.contains("\"DTM_TRAIL_STOP\"");
-		boolean thinkingOk = dtmEvents >= 3 && submittedEvents == acceptedEntries && exitedEvents == completedTrades && orderFlowBlockedEvents == orderFlowRejected;
+			&& (decisionsJson.contains("\"DTM_PARTIAL_HALF_RUNNER_EXTENDED\"") || decisionsJson.contains("\"DTM_PARTIAL_TARGET\""));
+		boolean thinkingOk = dtmEvents >= 2 && submittedEvents == acceptedEntries && exitedEvents == completedTrades;
 		boolean success = failures.isEmpty()
 			&& acceptedEntries == 3
 			&& completedTrades == 3
 			&& standardTargetManagedTrades == 1
-			&& orderFlowRejected == 1
-			&& decisionRows == 7
+			&& decisionRows == 6
 			&& entryReasonOk
 			&& exitReasonOk
 			&& thinkingOk;
@@ -8791,7 +8774,7 @@ public class FuturesManager {
 			"2026-05-14 09:46",
 			decisionRows,
 			acceptedEntries,
-			orderFlowRejected,
+			0,
 			success ? "Synthetic live trade lifecycle self-test completed." : "Synthetic live trade lifecycle self-test found workflow issues."
 		);
 		return "{"
@@ -8803,13 +8786,11 @@ public class FuturesManager {
 			+ "\"acceptedEntries\":" + acceptedEntries + ","
 			+ "\"completedTrades\":" + completedTrades + ","
 			+ "\"standardTargetManagedTrades\":" + standardTargetManagedTrades + ","
-			+ "\"orderFlowRejected\":" + orderFlowRejected + ","
 			+ "\"decisionRows\":" + decisionRows + ","
 			+ "\"thinkingEvents\":{"
 				+ "\"dtmDecision\":" + dtmEvents + ","
 				+ "\"orderSubmitted\":" + submittedEvents + ","
-				+ "\"positionExited\":" + exitedEvents + ","
-				+ "\"orderFlowBlocked\":" + orderFlowBlockedEvents
+				+ "\"positionExited\":" + exitedEvents
 			+ "},"
 			+ "\"checks\":{"
 				+ "\"entryReasonPayloads\":" + entryReasonOk + ","
@@ -9183,7 +9164,7 @@ public class FuturesManager {
 		);
 	}
 
-	private static void pushSyntheticCandidateAndOrderFlowEvents(int sessionId, LivePortfolioSignalCandidate candidate, OrderFlowEntryDecision flowDecision) {
+	private static void pushSyntheticCandidateEvent(int sessionId, LivePortfolioSignalCandidate candidate) {
 		if (candidate == null || candidate.event == null || candidate.event.signal == null) {
 			return;
 		}
@@ -9206,28 +9187,6 @@ public class FuturesManager {
 				+ "\"entry\":" + round(signal.entryPrice) + ","
 				+ "\"stop\":" + round(signal.stopPrice) + ","
 				+ "\"target\":" + round(signal.targetPrice)
-				+ "}"
-		);
-		if (flowDecision == null || !flowDecision.enabled) {
-			return;
-		}
-		pushLiveEvent(
-			sessionId,
-			flowDecision.passed ? "ORDER_FLOW_PASS" : "ORDER_FLOW_BLOCKED",
-			"Entry Optimizer",
-			flowDecision.passed ? "accepted" : "blocked",
-			candidate.symbol,
-			candidate.entryTime,
-			normalizeSymbol(candidate.symbol) + " " + cleanOrDefault(signal.strategyCode, "LIVE") + " entry optimizer " + (flowDecision.passed ? "passed." : "blocked."),
-			flowDecision.reason,
-			"{"
-				+ "\"symbol\":" + jsonString(normalizeSymbol(candidate.symbol)) + ","
-				+ "\"strategy\":" + jsonString(cleanOrDefault(signal.strategyCode, "LIVE")) + ","
-				+ "\"side\":" + jsonString(cleanOrDefault(signal.side, "")) + ","
-				+ "\"action\":" + jsonString(flowDecision.actionCode) + ","
-				+ "\"passed\":" + flowDecision.passed + ","
-				+ "\"reason\":" + jsonString(flowDecision.reason) + ","
-				+ "\"orderFlow\":" + jsonObjectOrDefault(flowDecision.metricsJson, "{}")
 				+ "}"
 		);
 	}
@@ -9753,1205 +9712,6 @@ public class FuturesManager {
 		return json.toString();
 	}
 
-	public static String getLiveStrategyFilterDiagnosticsJson(
-		String symbols,
-		String strategyPreset,
-		String source,
-		String startDateValue,
-		String endDateValue,
-		int startMinuteValue,
-		int endMinuteValue
-	) {
-		initializeStore();
-		ProjectXRealtimeManager.initializeStore();
-		List<String> symbolList = parseSymbols(cleanOrDefault(symbols, DEFAULT_LIVE_SYMBOLS));
-		String presetName = cleanOrDefault(strategyPreset, DEFAULT_STRATEGY_PRESET);
-		String presetSlot = strategyPresetSlot(presetName);
-		String normalizedSource = cleanOrDefault(source, "live").toLowerCase(Locale.ROOT);
-		boolean historySource = "history".equals(normalizedSource) || "native".equals(normalizedSource);
-		boolean recordedSource = "recorded".equals(normalizedSource) || "realtime".equals(normalizedSource);
-		LocalDate defaultEnd = LocalDate.now(NEW_YORK_ZONE);
-		LocalDate endDate = parseDate(endDateValue, defaultEnd);
-		LocalDate startDate = parseDate(startDateValue, endDate);
-		if (startDate.isAfter(endDate)) {
-			LocalDate swap = startDate;
-			startDate = endDate;
-			endDate = swap;
-		}
-		int startMinute = clampMinuteOfDay(startMinuteValue <= 0 ? LIVE_ENTRY_DIAGNOSTIC_START_MINUTE : startMinuteValue);
-		int endMinute = clampMinuteOfDay(endMinuteValue <= 0 ? LIVE_ENTRY_DIAGNOSTIC_END_MINUTE : endMinuteValue);
-		if (startMinute > endMinute) {
-			int swap = startMinute;
-			startMinute = endMinute;
-			endMinute = swap;
-		}
-
-		StringBuilder rows = new StringBuilder("[");
-		StringBuilder latestNearMisses = new StringBuilder("[");
-		boolean appendedRow = false;
-		boolean appendedNearMiss = false;
-		int totalBars = 0;
-		int totalCandidates = 0;
-		List<String> sourceUnavailableSymbols = new ArrayList<String>();
-		for (int symbolIndex = 0; symbolIndex < symbolList.size(); symbolIndex++) {
-			String symbol = normalizeSymbol(symbolList.get(symbolIndex));
-			FuturesStrategySettings settings = loadFuturesStrategySettings(symbol, presetSlot);
-			Map<String, StrategyFilterDiagnostic> diagnostics = emptyStrategyDiagnostics(symbol, settings);
-			String dataSource = historySource ? "LOCAL_NATIVE_HISTORY" : (recordedSource ? "RECORDED_REALTIME" : "LIVE_REALTIME");
-			int symbolBarsBefore = diagnosticBarsChecked(diagnostics);
-			if (historySource) {
-				analyzeHistoricalStrategyDiagnostics(symbol, settings, diagnostics, startDate, endDate, startMinute, endMinute);
-			} else if (recordedSource) {
-				for (LocalDate day = startDate; !day.isAfter(endDate); day = day.plusDays(1)) {
-					List<Bar> dayBars = recordedRealtimeBarsForSymbol(symbol, day, "1m", LIVE_STRATEGY_ONE_MINUTE_BAR_LIMIT);
-					if (dayBars.isEmpty()) {
-						continue;
-					}
-					List<Bar> previousBars = previousLocalDayBarsForLive(symbol, day);
-					List<Bar> fifteenMinuteBars = recordedRealtimeBarsForSymbol(symbol, day, "15m", 96);
-					List<Bar> oneHourBars = recordedRealtimeBarsForSymbol(symbol, day, "1h", 48);
-					analyzeStrategyDiagnosticsDay(symbol, settings, diagnostics, dayBars, previousBars, fifteenMinuteBars, oneHourBars, startMinute, endMinute);
-				}
-			} else {
-				List<Bar> oneMinuteBars = realtimeBarsForSymbol(symbol, "1m", LIVE_STRATEGY_ONE_MINUTE_BAR_LIMIT);
-				if (oneMinuteBars.isEmpty()) {
-					dataSource = "LOCAL_NATIVE_HISTORY_FALLBACK";
-					analyzeHistoricalStrategyDiagnostics(symbol, settings, diagnostics, startDate, endDate, startMinute, endMinute);
-				} else {
-					Map<LocalDate, List<Bar>> byDay = groupByDay(oneMinuteBars);
-					List<LocalDate> days = new ArrayList<LocalDate>(byDay.keySet());
-					Collections.sort(days);
-					LocalDate latestDay = days.isEmpty() ? endDate : days.get(days.size() - 1);
-					List<Bar> dayBars = byDay.get(latestDay);
-					List<Bar> previousBars = previousLocalDayBarsForLive(symbol, latestDay);
-					List<Bar> fifteenMinuteBars = realtimeBarsForSymbol(symbol, "15m", 96);
-					List<Bar> oneHourBars = realtimeBarsForSymbol(symbol, "1h", 48);
-					analyzeStrategyDiagnosticsDay(symbol, settings, diagnostics, dayBars, previousBars, groupByDay(fifteenMinuteBars).get(latestDay), groupByDay(oneHourBars).get(latestDay), startMinute, endMinute);
-				}
-			}
-			if (diagnosticBarsChecked(diagnostics) == symbolBarsBefore) {
-				sourceUnavailableSymbols.add(symbol);
-			}
-			for (StrategyFilterDiagnostic diagnostic : diagnostics.values()) {
-				diagnostic.htfBars = Math.max(0, diagnostic.htfBars);
-				totalBars += diagnostic.barsChecked;
-				totalCandidates += diagnostic.finalCandidates;
-				if (appendedRow) {
-					rows.append(",");
-				}
-				appendStrategyFilterDiagnosticJson(rows, diagnostic, dataSource);
-				appendedRow = true;
-				if (diagnostic.latestNearMissTime.length() > 0) {
-					if (appendedNearMiss) {
-						latestNearMisses.append(",");
-					}
-					appendStrategyNearMissJson(latestNearMisses, diagnostic);
-					appendedNearMiss = true;
-				}
-			}
-		}
-		rows.append("]");
-		latestNearMisses.append("]");
-		return "{"
-			+ "\"success\":true,"
-			+ "\"symbols\":" + jsonStringArray(symbolList) + ","
-			+ "\"strategyPreset\":" + jsonString(presetName) + ","
-			+ "\"strategySlot\":" + jsonString(presetSlot) + ","
-			+ "\"source\":" + jsonString(normalizedSource) + ","
-			+ "\"startDate\":" + jsonString(startDate.toString()) + ","
-			+ "\"endDate\":" + jsonString(endDate.toString()) + ","
-			+ "\"startMinute\":" + startMinute + ","
-			+ "\"endMinute\":" + endMinute + ","
-			+ "\"windowLabel\":" + jsonString(minuteLabel(startMinute) + "-" + minuteLabel(endMinute) + " ET") + ","
-			+ "\"generatedAt\":" + jsonString(LocalDateTime.now(NEW_YORK_ZONE).format(SERVER_TIME_FORMAT)) + ","
-			+ "\"sourceDataAvailable\":" + sourceUnavailableSymbols.isEmpty() + ","
-			+ "\"sourceUnavailableSymbols\":" + jsonStringArray(sourceUnavailableSymbols) + ","
-			+ "\"sourceDataWarning\":" + jsonString(sourceUnavailableSymbols.isEmpty() ? "" : "No bars were available from " + normalizedSource + " diagnostics for: " + String.join(",", sourceUnavailableSymbols)) + ","
-			+ "\"totalBarsChecked\":" + totalBars + ","
-			+ "\"totalFinalCandidates\":" + totalCandidates + ","
-			+ "\"rows\":" + rows + ","
-			+ "\"latestNearMisses\":" + latestNearMisses
-			+ "}";
-	}
-
-	private static void analyzeHistoricalStrategyDiagnostics(
-		String symbol,
-		FuturesStrategySettings settings,
-		Map<String, StrategyFilterDiagnostic> diagnostics,
-		LocalDate startDate,
-		LocalDate endDate,
-		int startMinute,
-		int endMinute
-	) {
-		DataBundle oneMinuteBundle = loadNativeFuturesBars(symbol, startDate, endDate, TIMEFRAME_FOLDER);
-		DataBundle fifteenMinuteBundle = loadNativeFuturesBars(symbol, startDate, endDate, "15min");
-		DataBundle oneHourBundle = loadNativeFuturesBars(symbol, startDate, endDate, "1hour");
-		Map<LocalDate, List<Bar>> byDay = groupByDay(oneMinuteBundle.bars);
-		Map<LocalDate, List<Bar>> fifteenMinuteByDay = groupByDay(fifteenMinuteBundle.bars);
-		Map<LocalDate, List<Bar>> oneHourByDay = groupByDay(oneHourBundle.bars);
-		List<LocalDate> days = new ArrayList<LocalDate>(byDay.keySet());
-		Collections.sort(days);
-		for (int dayIndex = 0; dayIndex < days.size(); dayIndex++) {
-			LocalDate day = days.get(dayIndex);
-			analyzeStrategyDiagnosticsDay(
-				symbol,
-				settings,
-				diagnostics,
-				byDay.get(day),
-				previousDayBars(byDay, days, dayIndex),
-				fifteenMinuteByDay.get(day),
-				oneHourByDay.get(day),
-				startMinute,
-				endMinute
-			);
-		}
-	}
-
-	private static int diagnosticBarsChecked(Map<String, StrategyFilterDiagnostic> diagnostics) {
-		if (diagnostics == null || diagnostics.isEmpty()) {
-			return 0;
-		}
-		int bars = 0;
-		for (StrategyFilterDiagnostic diagnostic : diagnostics.values()) {
-			if (diagnostic != null) {
-				bars += diagnostic.barsChecked;
-			}
-		}
-		return bars;
-	}
-
-	private static void analyzeStrategyDiagnosticsDay(
-		String symbol,
-		FuturesStrategySettings settings,
-		Map<String, StrategyFilterDiagnostic> diagnostics,
-		List<Bar> dayBars,
-		List<Bar> previousBars,
-		List<Bar> fifteenMinuteBars,
-		List<Bar> oneHourBars,
-		int startMinute,
-		int endMinute
-	) {
-		if (diagnostics == null || diagnostics.isEmpty() || dayBars == null || dayBars.isEmpty()) {
-			return;
-		}
-		int htfBars = (fifteenMinuteBars == null ? 0 : fifteenMinuteBars.size()) + (oneHourBars == null ? 0 : oneHourBars.size());
-		for (StrategyFilterDiagnostic diagnostic : diagnostics.values()) {
-			diagnostic.htfBars += htfBars;
-		}
-		InstrumentSpec spec = instrumentFor(symbol);
-		BacktestConfig config = new BacktestConfig();
-		config.symbol = normalizeSymbol(symbol);
-		config.strategySettings = settings;
-		List<Signal> signals = buildSignals(spec, dayBars, previousBars, fifteenMinuteBars, oneHourBars, config);
-		Set<String> finalCandidateKeys = new HashSet<String>();
-		for (int signalIndex = 0; signalIndex < signals.size(); signalIndex++) {
-			Signal signal = signals.get(signalIndex);
-			if (signal == null || signal.entryIndex < 0 || signal.entryIndex >= dayBars.size()) {
-				continue;
-			}
-			Bar signalBar = dayBars.get(signal.entryIndex);
-			if (signalBar == null || signalBar.marketTime == null) {
-				continue;
-			}
-			int minuteOfDay = minuteOfDay(signalBar);
-			if (minuteOfDay < startMinute || minuteOfDay > endMinute) {
-				continue;
-			}
-			String code = canonicalDiagnosticCode(signal.strategyCode);
-			StrategyFilterDiagnostic diagnostic = diagnostics.get(code);
-			if (diagnostic != null) {
-				diagnostic.finalCandidates++;
-				finalCandidateKeys.add(code + "|" + cleanOrDefault(signalBar.displayTime, ""));
-			}
-		}
-		List<StrategyDiagnosticTarget> targets = diagnosticTargets(settings);
-		for (int index = 0; index < dayBars.size(); index++) {
-			Bar bar = dayBars.get(index);
-			if (bar == null || bar.marketTime == null) {
-				continue;
-			}
-			int minuteOfDay = minuteOfDay(bar);
-			if (minuteOfDay < startMinute || minuteOfDay > endMinute) {
-				continue;
-			}
-			for (int targetIndex = 0; targetIndex < targets.size(); targetIndex++) {
-				StrategyDiagnosticTarget target = targets.get(targetIndex);
-				StrategyFilterDiagnostic diagnostic = diagnostics.get(target.code);
-				if (diagnostic == null) {
-					continue;
-				}
-				StrategyGateSnapshot gate = diagnoseStrategyGate(spec, dayBars, previousBars, fifteenMinuteBars, oneHourBars, settings, target, index);
-				if (finalCandidateKeys.contains(target.code + "|" + cleanOrDefault(bar.displayTime, ""))
-					&& "NO_FINAL_CANDIDATE".equals(gate.firstFailingRule)) {
-					gate.firstFailingRule = "";
-				}
-				recordStrategyGate(diagnostic, bar, gate);
-			}
-		}
-	}
-
-	private static Map<String, StrategyFilterDiagnostic> emptyStrategyDiagnostics(String symbol, FuturesStrategySettings settings) {
-		Map<String, StrategyFilterDiagnostic> diagnostics = new LinkedHashMap<String, StrategyFilterDiagnostic>();
-		List<StrategyDiagnosticTarget> targets = diagnosticTargets(settings);
-		for (int index = 0; index < targets.size(); index++) {
-			StrategyDiagnosticTarget target = targets.get(index);
-			StrategyToggle toggle = target.toggle == null ? new StrategyToggle(false, 0) : target.toggle;
-			StrategyFilterDiagnostic diagnostic = new StrategyFilterDiagnostic();
-			diagnostic.symbol = normalizeSymbol(symbol);
-			diagnostic.code = target.code;
-			diagnostic.name = target.name;
-			diagnostic.enabled = toggle.enabled;
-			diagnostic.maxTradesPerDay = toggle.maxTradesPerDay;
-			diagnostic.priorContextRequired = target.priorContextRequired;
-			diagnostics.put(target.code, diagnostic);
-		}
-		return diagnostics;
-	}
-
-	private static List<StrategyDiagnosticTarget> diagnosticTargets(FuturesStrategySettings settings) {
-		FuturesStrategySettings safe = settings == null ? defaultFuturesStrategySettings() : settings;
-		List<StrategyDiagnosticTarget> targets = new ArrayList<StrategyDiagnosticTarget>();
-		addDiagnosticTarget(targets, "ORB", "Opening Range", safe.orb, false);
-		addDiagnosticTarget(targets, "ORB2", "Opening Range Retest", new StrategyToggle(safe.orb.enabled && safe.enableOrbRetest, safe.orb.maxTradesPerDay), false);
-		addDiagnosticTarget(targets, "LORB", "Late ORB Continuation", safe.lateOrbContinuation, false);
-		addDiagnosticTarget(targets, "OMOM", "Opening Momentum", safe.openingMomentum, false);
-		addDiagnosticTarget(targets, "SWEEP", "Liquidity Sweep", safe.sweep, true);
-		addDiagnosticTarget(targets, "PDB", "Prior-Day Breakout", safe.priorDayBreakout, true);
-		addDiagnosticTarget(targets, "VWAP", "VWAP Pullback", safe.vwapPullback, false);
-		addDiagnosticTarget(targets, "VRCL", "VWAP Reclaim", safe.vwapReclaim, false);
-		addDiagnosticTarget(targets, "MRVWAP", "VWAP Reversion", safe.vwapMeanReversion, false);
-		addDiagnosticTarget(targets, "FVG", "Fair Value Gap", safe.fvg, false);
-		addDiagnosticTarget(targets, "IFVG", "Inversion Fair Value Gap", safe.ifvg, false);
-		addDiagnosticTarget(targets, "CMOM", "Close Momentum", safe.closeMomentum, false);
-		addDiagnosticTarget(targets, "AFT", "Afternoon Continuation", safe.afternoonContinuation, false);
-		addDiagnosticTarget(targets, "MIM", "Market/Impulse Momentum", safe.marketIntradayMomentum, false);
-		addDiagnosticTarget(targets, "KELT", "Keltner Scalp", safe.keltnerScalp, false);
-		addDiagnosticTarget(targets, "KREV", "Keltner Reversion", safe.keltnerReversion, false);
-		addDiagnosticTarget(targets, "SHDW", "Mini Shadow", safe.microShadow, false);
-		addDiagnosticTarget(targets, "TLAD", "Trend Ladder", safe.trendLadder, false);
-		addDiagnosticTarget(targets, "MSCALP", "Micro Scalp", safe.microScalp, false);
-		addDiagnosticTarget(targets, "RCB", "Compression Breakout", safe.rangeCompressionBreakout, false);
-		addDiagnosticTarget(targets, "VPB", "Value Area Reclaim", safe.valueAreaReclaim, true);
-		addDiagnosticTarget(targets, "ECHO", "Micro Echo", safe.microEcho, false);
-		addDiagnosticTarget(targets, "WFT", "Winner Follow-Through", safe.winnerFollowThrough, false);
-		addDiagnosticTarget(targets, "EIA", "MCL EIA Continuation", safe.mclEiaContinuation, false);
-		addDiagnosticTarget(targets, "COPEN", "MCL Crude Session Open", safe.mclCrudeSessionOpen, false);
-		addDiagnosticTarget(targets, "IDXCONF", "MYM Index Confirmation", safe.mymIndexConfirmation, false);
-		addDiagnosticTarget(targets, "MYMORB2", "MYM ORB Retest", safe.mymOrbRetest, false);
-		addDiagnosticTarget(targets, "MYMBR", "MYM Breadth Fade", safe.mymBreadthConfirmation, false);
-		addDiagnosticTarget(targets, "MCLTC", "MCL Trend Fade", safe.mclTrendContinuation, false);
-		addDiagnosticTarget(targets, "LIQREC", "Liquidity Reclaim", safe.liquidityReclaim, true);
-		return targets;
-	}
-
-	private static void addDiagnosticTarget(List<StrategyDiagnosticTarget> targets, String code, String name, StrategyToggle toggle, boolean priorContextRequired) {
-		StrategyDiagnosticTarget target = new StrategyDiagnosticTarget();
-		target.code = code;
-		target.name = name;
-		target.toggle = toggle;
-		target.priorContextRequired = priorContextRequired;
-		targets.add(target);
-	}
-
-	private static void recordStrategyGate(StrategyFilterDiagnostic diagnostic, Bar bar, StrategyGateSnapshot gate) {
-		if (diagnostic == null || gate == null) {
-			return;
-		}
-		diagnostic.barsChecked++;
-		if (gate.windowPass) diagnostic.windowPass++; else diagnostic.windowFail++;
-		if (gate.volumePass) diagnostic.volumePass++; else diagnostic.volumeFail++;
-		if (gate.vwapEmaPass) diagnostic.vwapEmaPass++; else diagnostic.vwapEmaFail++;
-		if (gate.higherTimeframePass) diagnostic.higherTimeframePass++; else diagnostic.higherTimeframeFail++;
-		if (gate.riskTickPass) diagnostic.riskTickPass++; else diagnostic.riskTickFail++;
-		if (gate.priorContextPass) diagnostic.priorContextPass++; else diagnostic.priorContextFail++;
-		if (gate.firstFailingRule.length() == 0) {
-			return;
-		}
-		diagnostic.latestNearMissTime = cleanOrDefault(bar == null ? "" : bar.displayTime, "");
-		diagnostic.latestNearMissReason = gate.firstFailingRule;
-		diagnostic.latestNearMissPassedGates = gate.passedGates;
-		diagnostic.latestNearMissPrice = bar == null ? 0.0 : bar.close;
-		diagnostic.latestNearMissVolumeRatio = gate.volumeRatio;
-		diagnostic.latestNearMissRiskTicks = gate.riskTicks;
-		diagnostic.latestNearMissDetail = diagnosticNearMissDetail(gate);
-	}
-
-	private static void appendStrategyFilterDiagnosticJson(StringBuilder json, StrategyFilterDiagnostic diagnostic, String dataSource) {
-		json.append("{")
-			.append("\"symbol\":").append(jsonString(diagnostic.symbol)).append(",")
-			.append("\"strategyCode\":").append(jsonString(diagnostic.code)).append(",")
-			.append("\"strategyName\":").append(jsonString(diagnostic.name)).append(",")
-			.append("\"enabled\":").append(diagnostic.enabled).append(",")
-			.append("\"maxTradesPerDay\":").append(diagnostic.maxTradesPerDay).append(",")
-			.append("\"dataSource\":").append(jsonString(dataSource)).append(",")
-			.append("\"priorContextRequired\":").append(diagnostic.priorContextRequired).append(",")
-			.append("\"barsChecked\":").append(diagnostic.barsChecked).append(",")
-			.append("\"windowPass\":").append(diagnostic.windowPass).append(",")
-			.append("\"windowFail\":").append(diagnostic.windowFail).append(",")
-			.append("\"volumePass\":").append(diagnostic.volumePass).append(",")
-			.append("\"volumeFail\":").append(diagnostic.volumeFail).append(",")
-			.append("\"vwapEmaPass\":").append(diagnostic.vwapEmaPass).append(",")
-			.append("\"vwapEmaFail\":").append(diagnostic.vwapEmaFail).append(",")
-			.append("\"higherTimeframePass\":").append(diagnostic.higherTimeframePass).append(",")
-			.append("\"higherTimeframeFail\":").append(diagnostic.higherTimeframeFail).append(",")
-			.append("\"riskTickPass\":").append(diagnostic.riskTickPass).append(",")
-			.append("\"riskTickFail\":").append(diagnostic.riskTickFail).append(",")
-			.append("\"priorContextPass\":").append(diagnostic.priorContextPass).append(",")
-			.append("\"priorContextFail\":").append(diagnostic.priorContextFail).append(",")
-			.append("\"finalCandidates\":").append(diagnostic.finalCandidates).append(",")
-			.append("\"htfBars\":").append(diagnostic.htfBars).append(",")
-			.append("\"latestNearMiss\":");
-		if (diagnostic.latestNearMissTime.length() == 0) {
-			json.append("null");
-		} else {
-			appendStrategyNearMissJson(json, diagnostic);
-		}
-		json.append("}");
-	}
-
-	private static void appendStrategyNearMissJson(StringBuilder json, StrategyFilterDiagnostic diagnostic) {
-		json.append("{")
-			.append("\"symbol\":").append(jsonString(diagnostic.symbol)).append(",")
-			.append("\"strategyCode\":").append(jsonString(diagnostic.code)).append(",")
-			.append("\"strategyName\":").append(jsonString(diagnostic.name)).append(",")
-			.append("\"time\":").append(jsonString(diagnostic.latestNearMissTime)).append(",")
-			.append("\"reason\":").append(jsonString(diagnostic.latestNearMissReason)).append(",")
-			.append("\"passedGates\":").append(diagnostic.latestNearMissPassedGates).append(",")
-			.append("\"price\":").append(round(diagnostic.latestNearMissPrice)).append(",")
-			.append("\"volumeRatio\":").append(round(diagnostic.latestNearMissVolumeRatio)).append(",")
-			.append("\"riskTicks\":").append(round(diagnostic.latestNearMissRiskTicks)).append(",")
-			.append("\"detail\":").append(jsonString(diagnostic.latestNearMissDetail))
-			.append("}");
-	}
-
-	private static String strategyFilterDiagnosticsArrayJson(Map<String, StrategyFilterDiagnostic> diagnostics, String dataSource) {
-		StringBuilder json = new StringBuilder("[");
-		if (diagnostics != null) {
-			boolean appended = false;
-			for (StrategyFilterDiagnostic diagnostic : diagnostics.values()) {
-				if (appended) {
-					json.append(",");
-				}
-				appendStrategyFilterDiagnosticJson(json, diagnostic, dataSource);
-				appended = true;
-			}
-		}
-		json.append("]");
-		return json.toString();
-	}
-
-	private static String latestNearMissesArrayJson(Map<String, StrategyFilterDiagnostic> diagnostics) {
-		StringBuilder json = new StringBuilder("[");
-		if (diagnostics != null) {
-			boolean appended = false;
-			for (StrategyFilterDiagnostic diagnostic : diagnostics.values()) {
-				if (diagnostic.latestNearMissTime.length() == 0) {
-					continue;
-				}
-				if (appended) {
-					json.append(",");
-				}
-				appendStrategyNearMissJson(json, diagnostic);
-				appended = true;
-			}
-		}
-		json.append("]");
-		return json.toString();
-	}
-
-	private static StrategyGateSnapshot diagnoseStrategyGate(
-		InstrumentSpec spec,
-		List<Bar> bars,
-		List<Bar> previousBars,
-		List<Bar> fifteenMinuteBars,
-		List<Bar> oneHourBars,
-		FuturesStrategySettings settings,
-		StrategyDiagnosticTarget target,
-		int index
-	) {
-		StrategyGateSnapshot gate = new StrategyGateSnapshot();
-		FuturesStrategySettings safe = settings == null ? defaultFuturesStrategySettings() : settings;
-		StrategyToggle toggle = target == null || target.toggle == null ? new StrategyToggle(false, 0) : target.toggle;
-		Bar bar = bars.get(index);
-		gate.enabled = toggle.enabled;
-		gate.priorContextPass = target == null || !target.priorContextRequired || (previousBars != null && previousBars.size() >= 40);
-		gate.windowPass = gate.enabled && diagnosticWindowPass(target.code, bar, safe);
-		gate.volumeRatio = volumeRatio(bar);
-		gate.volumePass = gate.enabled && diagnosticVolumePass(target.code, bar, safe);
-			gate.vwapEmaPass = gate.enabled && diagnosticStructurePass(target.code, spec, bars, previousBars, fifteenMinuteBars, oneHourBars, safe, index);
-			gate.higherTimeframePass = gate.enabled && diagnosticHigherTimeframePass(target.code, fifteenMinuteBars, oneHourBars, safe, bar.marketTime);
-			gate.riskTicks = diagnosticRiskTicks(target.code, spec, bars, previousBars, safe, index);
-			gate.riskTickPass = gate.enabled && gate.riskTicks > 0.0 && gate.riskTicks <= diagnosticMaxRiskTicks(target.code, safe);
-			gate.trendSlopeTicks = diagnosticTrendSlopeTicks(spec, bars, index, 10);
-			gate.vwapDistanceTicks = bar.vwap <= 0.0 ? 0.0 : Math.abs(bar.close - bar.vwap) / Math.max(spec.tickSize, 0.000001);
-			String strategyCode = target == null ? "" : cleanOrDefault(target.code, "").toUpperCase(Locale.ROOT);
-			String structureFailRule = "";
-			if ("ORB2".equals(strategyCode) && !gate.vwapEmaPass) {
-				structureFailRule = diagnosticOrbRetestRejectReason(spec, bars, safe, index);
-				gate.detailOverride = diagnosticOrbRetestNearMissDetail(spec, bars, safe, index, structureFailRule);
-			}
-		if (gate.enabled) gate.passedGates++;
-		if (gate.priorContextPass) gate.passedGates++;
-		if (gate.windowPass) gate.passedGates++;
-		if (gate.volumePass) gate.passedGates++;
-		if (gate.vwapEmaPass) gate.passedGates++;
-		if (gate.higherTimeframePass) gate.passedGates++;
-		if (gate.riskTickPass) gate.passedGates++;
-		if (!gate.enabled) {
-			gate.firstFailingRule = "DISABLED";
-		} else if (!gate.priorContextPass) {
-			gate.firstFailingRule = "PRIOR_SESSION_CONTEXT";
-		} else if (!gate.windowPass) {
-			gate.firstFailingRule = "TIME_WINDOW";
-		} else if (!gate.volumePass) {
-			gate.firstFailingRule = "VOLUME";
-			} else if (!gate.vwapEmaPass) {
-				gate.firstFailingRule = structureFailRule.length() > 0 ? structureFailRule : "VWAP_EMA_PATTERN";
-		} else if (!gate.higherTimeframePass) {
-			gate.firstFailingRule = "HIGHER_TIMEFRAME";
-		} else if (!gate.riskTickPass) {
-			gate.firstFailingRule = "RISK_TICKS";
-		} else {
-			gate.firstFailingRule = "NO_FINAL_CANDIDATE";
-		}
-		return gate;
-	}
-
-		private static String diagnosticNearMissDetail(StrategyGateSnapshot gate) {
-			String base = "volumeRatio=" + round(gate.volumeRatio)
-				+ ", riskTicks=" + round(gate.riskTicks)
-				+ ", trendSlopeTicks=" + round(gate.trendSlopeTicks)
-				+ ", vwapDistanceTicks=" + round(gate.vwapDistanceTicks);
-			return gate.detailOverride.length() == 0 ? base : gate.detailOverride + ", " + base;
-		}
-
-	private static boolean diagnosticWindowPass(String code, Bar bar, FuturesStrategySettings settings) {
-		int minute = minuteOfDay(bar);
-		String normalized = cleanOrDefault(code, "").toUpperCase(Locale.ROOT);
-		if ("ORB".equals(normalized)) {
-			return !bar.marketTime.isBefore(ORB_END) && !bar.marketTime.isAfter(ORB_CUTOFF);
-		}
-		if ("ORB2".equals(normalized)) {
-			return !bar.marketTime.isBefore(ORB_END)
-				&& !bar.marketTime.isAfter(LocalTime.of(11, 45));
-		}
-		if ("LORB".equals(normalized)) {
-			return minute >= settings.lateOrbContinuationStartMinute && minute <= settings.lateOrbContinuationEndMinute;
-		}
-		if ("OMOM".equals(normalized)) {
-			return (settings.allowOpeningMomentumLongs && inMinuteWindow(minute, settings.openingMomentumLongStartMinute, settings.openingMomentumLongEndMinute))
-				|| (settings.allowShorts && settings.allowOpeningMomentumShorts && inMinuteWindow(minute, settings.openingMomentumShortStartMinute, settings.openingMomentumShortEndMinute))
-				|| (settings.openingMomentumShortAltEnabled && inMinuteWindow(minute, settings.openingMomentumShortAltStartMinute, settings.openingMomentumShortAltEndMinute));
-		}
-		if ("SWEEP".equals(normalized)) {
-			return !bar.marketTime.isBefore(SWEEP_START) && !bar.marketTime.isAfter(SWEEP_END);
-		}
-		if ("PDB".equals(normalized)) {
-			return minute >= settings.priorDayBreakoutStartMinute && minute <= settings.priorDayBreakoutEndMinute;
-		}
-		if ("VWAP".equals(normalized)) {
-			return !bar.marketTime.isBefore(VWAP_START)
-				&& !bar.marketTime.isAfter(VWAP_END)
-				&& (settings.vwapStartMinute <= 0 || minute >= settings.vwapStartMinute)
-				&& (settings.vwapEndMinute <= 0 || minute <= settings.vwapEndMinute)
-				&& !inMinuteWindow(minute, settings.vwapSkipStartMinute, settings.vwapSkipEndMinute);
-		}
-		if ("VRCL".equals(normalized)) {
-			return minute >= 600 && minute <= 910;
-		}
-		if ("MRVWAP".equals(normalized)) {
-			return !bar.marketTime.isBefore(MEAN_REVERSION_START) && !bar.marketTime.isAfter(MEAN_REVERSION_END);
-		}
-		if ("FVG".equals(normalized) || "IFVG".equals(normalized)) {
-			return minute >= settings.fvgStartMinute
-				&& minute <= settings.fvgEndMinute
-				&& !inMinuteWindow(minute, settings.fvgSkipStartMinute, settings.fvgSkipEndMinute);
-		}
-		if ("CMOM".equals(normalized)) {
-			return (settings.allowCloseMomentumLongs && inMinuteWindow(minute, settings.closeMomentumLongStartMinute, settings.closeMomentumLongEndMinute))
-				|| (settings.allowShorts && settings.allowCloseMomentumShorts && inMinuteWindow(minute, settings.closeMomentumShortStartMinute, settings.closeMomentumShortEndMinute));
-		}
-		if ("AFT".equals(normalized)) {
-			return minute >= settings.afternoonStartMinute
-				&& minute <= settings.afternoonEndMinute
-				&& !inMinuteWindow(minute, settings.afternoonSkipStartMinute, settings.afternoonSkipEndMinute);
-		}
-		if ("MIM".equals(normalized)) {
-			return (settings.marketIntradayMomentum.maxTradesPerDay > 1
-				&& minute >= settings.marketImpulsePullbackStartMinute
-				&& minute <= settings.marketImpulsePullbackEndMinute
-				&& !inMinuteWindow(minute, settings.marketImpulsePullbackSkipStartMinute, settings.marketImpulsePullbackSkipEndMinute))
-				|| (minute >= (15 * 60) + 25 && minute <= (15 * 60) + 35);
-		}
-		if ("KELT".equals(normalized)) {
-			return !bar.marketTime.isBefore(KELTNER_SCALP_START) && !bar.marketTime.isAfter(KELTNER_SCALP_END);
-		}
-		if ("KREV".equals(normalized)) {
-			return minute >= 600 && !bar.marketTime.isAfter(KELTNER_SCALP_END);
-		}
-		if ("TLAD".equals(normalized)) {
-			return minute >= settings.trendLadderStartMinute && minute <= settings.trendLadderEndMinute;
-		}
-		if ("RCB".equals(normalized)) {
-			return minute >= settings.rangeCompressionStartMinute
-				&& minute <= settings.rangeCompressionEndMinute
-				&& !inMinuteWindow(minute, settings.rangeCompressionSkipStartMinute, settings.rangeCompressionSkipEndMinute);
-		}
-		if ("VPB".equals(normalized)) {
-			return minute >= settings.valueAreaStartMinute && minute <= settings.valueAreaEndMinute;
-		}
-		if ("MSCALP".equals(normalized)) {
-			return minute >= settings.microScalpStartMinute
-				&& minute <= settings.microScalpEndMinute
-				&& !inMinuteWindow(minute, settings.microScalpSkipStartMinute, settings.microScalpSkipEndMinute);
-		}
-		if ("SHDW".equals(normalized)) {
-			return minute >= settings.microShadowStartMinute && minute <= settings.microShadowEndMinute;
-		}
-		if ("ECHO".equals(normalized)) {
-			return minute >= settings.microEchoStartMinute && minute <= settings.microEchoEndMinute;
-		}
-		if ("WFT".equals(normalized)) {
-			return minute >= settings.winnerFollowThroughStartMinute && minute <= settings.winnerFollowThroughEndMinute;
-		}
-		if ("EIA".equals(normalized)) {
-			return bar.marketDate != null
-				&& bar.marketDate.getDayOfWeek() == DayOfWeek.WEDNESDAY
-				&& minute >= settings.mclEiaStartMinute
-				&& minute <= settings.mclEiaEndMinute;
-		}
-		if ("COPEN".equals(normalized)) {
-			return minute >= settings.mclCrudeOpenStartMinute && minute <= settings.mclCrudeOpenEndMinute;
-		}
-		if ("IDXCONF".equals(normalized)) {
-			return minute >= settings.mymIndexConfirmationStartMinute && minute <= settings.mymIndexConfirmationEndMinute;
-		}
-		if ("MYMORB2".equals(normalized)) {
-			return minute >= settings.mymOrbRetestStartMinute && minute <= settings.mymOrbRetestEndMinute;
-		}
-		return true;
-	}
-
-	private static boolean diagnosticVolumePass(String code, Bar bar, FuturesStrategySettings settings) {
-		String normalized = cleanOrDefault(code, "").toUpperCase(Locale.ROOT);
-		double ratio = volumeRatio(bar);
-		if ("ORB2".equals(normalized)) return ratio >= 0.65;
-		if ("LORB".equals(normalized)) return ratio >= settings.lateOrbContinuationMinVolumeRatio;
-		if ("OMOM".equals(normalized)) return ratio >= settings.openingMomentumVolumeRatio;
-		if ("PDB".equals(normalized)) return ratio >= settings.priorDayBreakoutMinVolumeRatio;
-		if ("VWAP".equals(normalized)) return ratio >= settings.vwapMinVolumeRatio;
-		if ("VRCL".equals(normalized)) return ratio >= settings.vwapReclaimMinVolumeRatio;
-		if ("FVG".equals(normalized) || "IFVG".equals(normalized)) return ratio >= settings.fvgMinVolumeRatio;
-		if ("CMOM".equals(normalized)) return ratio >= settings.closeMomentumVolumeRatio;
-		if ("AFT".equals(normalized)) return ratio >= settings.afternoonMinVolumeRatio;
-		if ("MIM".equals(normalized)) return ratio >= settings.marketIntradayMomentumMinVolumeRatio;
-		if ("KELT".equals(normalized) || "KREV".equals(normalized)) return ratio >= settings.keltnerMinVolumeRatio && bar.bodyPct >= settings.keltnerMinBodyPct;
-		if ("TLAD".equals(normalized)) return ratio >= settings.trendLadderMinVolumeRatio;
-		if ("RCB".equals(normalized)) return ratio >= settings.rangeCompressionMinVolumeRatio && bar.bodyPct >= settings.rangeCompressionMinBodyPct;
-		if ("VPB".equals(normalized)) return ratio >= settings.valueAreaMinVolumeRatio;
-		if ("MSCALP".equals(normalized)) return ratio >= settings.microScalpMinVolumeRatio && bar.bodyPct >= settings.microScalpMinBodyPct;
-		if ("SHDW".equals(normalized)) return ratio >= settings.microShadowMinVolumeRatio;
-		if ("ECHO".equals(normalized)) return ratio >= settings.microEchoMinVolumeRatio;
-		if ("WFT".equals(normalized)) return ratio >= settings.winnerFollowThroughMinVolumeRatio && bar.bodyPct >= settings.winnerFollowThroughMinBodyPct;
-		if ("EIA".equals(normalized)) return ratio >= settings.mclEiaMinVolumeRatio && bar.bodyPct >= settings.mclEiaMinBodyPct;
-		if ("COPEN".equals(normalized)) return ratio >= settings.mclCrudeOpenMinVolumeRatio && bar.bodyPct >= settings.mclCrudeOpenMinBodyPct;
-		if ("IDXCONF".equals(normalized)) return ratio >= settings.mymIndexConfirmationMinVolumeRatio && bar.bodyPct >= settings.mymIndexConfirmationMinBodyPct;
-		if ("MYMORB2".equals(normalized)) return ratio >= settings.mymOrbRetestMinVolumeRatio && bar.bodyPct >= settings.mymOrbRetestMinBodyPct;
-		return true;
-	}
-
-	private static boolean diagnosticStructurePass(
-		String code,
-		InstrumentSpec spec,
-		List<Bar> bars,
-		List<Bar> previousBars,
-		List<Bar> fifteenMinuteBars,
-		List<Bar> oneHourBars,
-		FuturesStrategySettings settings,
-		int index
-	) {
-		if (bars == null || index < 0 || index >= bars.size()) {
-			return false;
-		}
-		Bar bar = bars.get(index);
-		Bar previous = index > 0 ? bars.get(index - 1) : bar;
-		String normalized = cleanOrDefault(code, "").toUpperCase(Locale.ROOT);
-		if ("ORB".equals(normalized) || "LORB".equals(normalized) || "OMOM".equals(normalized) || "CMOM".equals(normalized)) {
-			return bar.close > 0.0 && bar.high > bar.low;
-		}
-		if ("ORB2".equals(normalized)) {
-			return diagnosticOrbRetestStructurePass(spec, bars, settings, index);
-		}
-		if ("SWEEP".equals(normalized)) {
-			if (previousBars == null || previousBars.isEmpty()) return false;
-			double previousHigh = highest(previousBars);
-			double previousLow = lowest(previousBars);
-			return (bar.low < previousLow - spec.tickSize && bar.close > previousLow)
-				|| (settings.allowShorts && bar.high > previousHigh + spec.tickSize && bar.close < previousHigh);
-		}
-		if ("PDB".equals(normalized)) {
-			if (previousBars == null || previousBars.isEmpty() || bar.vwap <= 0.0) return false;
-			double previousHigh = highest(previousBars);
-			double previousLow = lowest(previousBars);
-			double retest = settings.priorDayBreakoutRetestTicks * spec.tickSize;
-			return (bar.high > previousHigh && bar.low <= previousHigh + retest && bar.close > previousHigh && bar.close > bar.vwap)
-				|| (settings.allowShorts && bar.low < previousLow && bar.high >= previousLow - retest && bar.close < previousLow && bar.close < bar.vwap);
-		}
-		if ("VWAP".equals(normalized)) {
-			if (bar.vwap <= 0.0 || previous == null) return false;
-			double distanceTicks = Math.abs(bar.close - bar.vwap) / spec.tickSize;
-			double trendSlopeTicks = Math.abs(diagnosticTrendSlopeTicks(spec, bars, index, 5));
-			boolean longOk = settings.allowVwapPullbackLongs && bar.close > bar.vwap && bar.ema9 >= bar.ema20 && bar.ema20 >= bar.ema50 && previous.low <= previous.ema20 + spec.tickSize && bar.close > previous.high && closeLocation(bar) >= 0.55;
-			boolean shortOk = settings.allowShorts && settings.allowVwapPullbackShorts && bar.close < bar.vwap && bar.ema9 <= bar.ema20 && bar.ema20 <= bar.ema50 && previous.high >= previous.ema20 - spec.tickSize && bar.close < previous.low && closeLocation(bar) <= 0.45;
-			return distanceTicks <= settings.vwapMaxDistanceTicks && trendSlopeTicks >= settings.vwapMinTrendSlopeTicks && (longOk || shortOk);
-		}
-		if ("VRCL".equals(normalized)) {
-			if (bar.vwap <= 0.0 || previous == null || previous.vwap <= 0.0) return false;
-			double distanceTicks = Math.abs(bar.close - bar.vwap) / spec.tickSize;
-			double trendSlopeTicks = diagnosticTrendSlopeTicks(spec, bars, index, 8);
-			boolean recentVwapTouch = previous.low <= previous.vwap + (spec.tickSize * 2.0) && previous.high >= previous.vwap - (spec.tickSize * 2.0);
-			boolean longOk = settings.allowVwapReclaimLongs && bar.close > bar.vwap + spec.tickSize && recentVwapTouch && bar.close > previous.high && bar.ema9 >= bar.ema20 && bar.ema20 >= bar.ema50 && trendSlopeTicks >= Math.max(0.5, settings.vwapMinTrendSlopeTicks * 0.5);
-			boolean shortOk = settings.allowShorts && settings.allowVwapReclaimShorts && bar.close < bar.vwap - spec.tickSize && recentVwapTouch && bar.close < previous.low && bar.ema9 <= bar.ema20 && bar.ema20 <= bar.ema50 && trendSlopeTicks <= -Math.max(0.5, settings.vwapMinTrendSlopeTicks * 0.5);
-			return distanceTicks <= settings.vwapMaxDistanceTicks && (longOk || shortOk);
-		}
-		if ("MRVWAP".equals(normalized)) {
-			if (bar.vwap <= 0.0 || previous == null) return false;
-			double distanceTicks = Math.abs(bar.close - bar.vwap) / spec.tickSize;
-			return distanceTicks >= settings.meanReversionMinDistanceTicks
-				&& ((bar.close < bar.vwap && bar.rsi14 <= settings.meanReversionOversoldRsi + 3.0 && bar.close > previous.high)
-					|| (settings.allowShorts && bar.close > bar.vwap && bar.rsi14 >= settings.meanReversionOverboughtRsi - 3.0 && bar.close < previous.low));
-		}
-		if ("FVG".equals(normalized) || "IFVG".equals(normalized)) {
-			return diagnosticFvgStructurePass(spec, bars, settings, index);
-		}
-		if ("AFT".equals(normalized)) {
-			if (bar.vwap <= 0.0 || index < 2) return false;
-			double trendSlopeTicks = diagnosticTrendSlopeTicks(spec, bars, index, 10);
-			double channelHigh = recentSwingHigh(bars, index - 1, settings.afternoonChannelBars);
-			double channelLow = recentSwingLow(bars, index - 1, settings.afternoonChannelBars);
-			boolean longOk = settings.allowAfternoonContinuationLongs && bar.close > channelHigh + spec.tickSize && bar.close > bar.vwap && bar.ema9 >= bar.ema20 && bar.close >= bar.ema50 && trendSlopeTicks >= Math.max(1.0, settings.vwapMinTrendSlopeTicks * 0.5) && closeLocation(bar) >= 0.55;
-			boolean shortOk = settings.allowShorts && settings.allowAfternoonContinuationShorts && bar.close < channelLow - spec.tickSize && bar.close < bar.vwap && bar.ema9 <= bar.ema20 && bar.close <= bar.ema50 && trendSlopeTicks <= -Math.max(1.0, settings.vwapMinTrendSlopeTicks * 0.5) && closeLocation(bar) <= 0.45;
-			return longOk || shortOk;
-		}
-		if ("MIM".equals(normalized)) {
-			return diagnosticMarketIntradayStructurePass(spec, bars, fifteenMinuteBars, oneHourBars, settings, index);
-		}
-		if ("KELT".equals(normalized) || "KREV".equals(normalized)) {
-			return diagnosticKeltnerStructurePass(normalized, spec, bars, fifteenMinuteBars, oneHourBars, settings, index);
-		}
-		if ("TLAD".equals(normalized)) {
-			return diagnosticTrendLadderStructurePass(spec, bars, settings, index);
-		}
-		if ("RCB".equals(normalized)) {
-			return diagnosticRangeCompressionStructurePass(spec, bars, settings, index);
-		}
-		if ("VPB".equals(normalized)) {
-			return diagnosticValueAreaStructurePass(spec, bars, previousBars, settings, index);
-		}
-		if ("MSCALP".equals(normalized) || "SHDW".equals(normalized) || "ECHO".equals(normalized) || "WFT".equals(normalized)) {
-			if (bar.vwap <= 0.0 || bar.ema20 <= 0.0) return false;
-			boolean longOk = bar.close > bar.vwap && bar.ema9 >= bar.ema20 && closeLocation(bar) >= 0.52;
-			boolean shortOk = settings.allowShorts && bar.close < bar.vwap && bar.ema9 <= bar.ema20 && closeLocation(bar) <= 0.48;
-			return longOk || shortOk;
-		}
-		if ("EIA".equals(normalized) || "COPEN".equals(normalized)) {
-			if (bar.vwap <= 0.0 || bar.ema20 <= 0.0) return false;
-			boolean longOk = bar.close > bar.vwap && bar.ema9 >= bar.ema20 && closeLocation(bar) >= 0.55;
-			boolean shortOk = settings.allowShorts && bar.close < bar.vwap && bar.ema9 <= bar.ema20 && closeLocation(bar) <= 0.45;
-			return longOk || shortOk;
-		}
-		if ("IDXCONF".equals(normalized)) {
-			if (bar.vwap <= 0.0 || bar.ema20 <= 0.0 || bar.ema50 <= 0.0) return false;
-			double trendSlopeTicks = diagnosticTrendSlopeTicks(spec, bars, index, Math.max(3, settings.mymIndexConfirmationLookbackBars));
-			boolean longOk = settings.allowMymIndexConfirmationLongs && bar.close > bar.vwap && bar.ema9 >= bar.ema20 && bar.ema20 >= bar.ema50 && trendSlopeTicks >= settings.mymIndexConfirmationMinTrendSlopeTicks && closeLocation(bar) >= 0.55;
-			boolean shortOk = settings.allowShorts && settings.allowMymIndexConfirmationShorts && bar.close < bar.vwap && bar.ema9 <= bar.ema20 && bar.ema20 <= bar.ema50 && trendSlopeTicks <= -settings.mymIndexConfirmationMinTrendSlopeTicks && closeLocation(bar) <= 0.45;
-			return longOk || shortOk;
-		}
-		if ("MYMORB2".equals(normalized)) {
-			if (bar.vwap <= 0.0 || bar.ema20 <= 0.0) return false;
-			boolean longOk = settings.allowMymOrbRetestLongs && bar.close > bar.vwap && bar.ema9 >= bar.ema20 && closeLocation(bar) >= 0.56;
-			boolean shortOk = settings.allowShorts && settings.allowMymOrbRetestShorts && bar.close < bar.vwap && bar.ema9 <= bar.ema20 && closeLocation(bar) <= 0.44;
-			return longOk || shortOk;
-		}
-		return bar.close > 0.0;
-	}
-
-	private static boolean diagnosticHigherTimeframePass(String code, List<Bar> fifteenMinuteBars, List<Bar> oneHourBars, FuturesStrategySettings settings, LocalTime marketTime) {
-		if (!settings.requireHigherTimeframeGuard) {
-			return true;
-		}
-		String normalized = cleanOrDefault(code, "").toUpperCase(Locale.ROOT);
-		if ("SWEEP".equals(normalized) || "KREV".equals(normalized) || "VPB".equals(normalized) || "TLAD".equals(normalized)) {
-			return higherTimeframeConstructive(fifteenMinuteBars, oneHourBars, marketTime) || higherTimeframeBearish(fifteenMinuteBars, oneHourBars, marketTime);
-		}
-		return higherTimeframeBreakoutLong(fifteenMinuteBars, oneHourBars, marketTime) || higherTimeframeBearish(fifteenMinuteBars, oneHourBars, marketTime);
-	}
-
-	private static double diagnosticRiskTicks(String code, InstrumentSpec spec, List<Bar> bars, List<Bar> previousBars, FuturesStrategySettings settings, int index) {
-		if (bars == null || index < 0 || index >= bars.size() || spec.tickSize <= 0.0) {
-			return 0.0;
-		}
-		Bar bar = bars.get(index);
-		String normalized = cleanOrDefault(code, "").toUpperCase(Locale.ROOT);
-		double maxRiskTicks = diagnosticMaxRiskTicks(normalized, settings);
-		double best = Double.POSITIVE_INFINITY;
-		if ("SWEEP".equals(normalized) && previousBars != null && !previousBars.isEmpty()) {
-			double previousHigh = highest(previousBars);
-			double previousLow = lowest(previousBars);
-			if (bar.low < previousLow - spec.tickSize && bar.close > previousLow) {
-				best = Math.min(best, riskTicks(spec, bar.close, bar.low - (spec.tickSize * 2.0)));
-			}
-			if (settings.allowShorts && bar.high > previousHigh + spec.tickSize && bar.close < previousHigh) {
-				best = Math.min(best, riskTicks(spec, bar.close, bar.high + (spec.tickSize * 2.0)));
-			}
-		} else if ("PDB".equals(normalized) && previousBars != null && !previousBars.isEmpty()) {
-			double previousHigh = highest(previousBars);
-			double previousLow = lowest(previousBars);
-			double retest = settings.priorDayBreakoutRetestTicks * spec.tickSize;
-			best = Math.min(best, riskTicks(spec, bar.close, Math.min(recentSwingLow(bars, index, 5), previousHigh - retest) - (spec.tickSize * 2.0)));
-			best = Math.min(best, riskTicks(spec, bar.close, Math.max(recentSwingHigh(bars, index, 5), previousLow + retest) + (spec.tickSize * 2.0)));
-		} else if ("VWAP".equals(normalized) || "VRCL".equals(normalized) || "TLAD".equals(normalized)) {
-			best = Math.min(best, riskTicks(spec, bar.close, Math.min(recentSwingLow(bars, index, 5), bar.ema20 > 0.0 ? bar.ema20 : bar.low) - (spec.tickSize * 2.0)));
-			best = Math.min(best, riskTicks(spec, bar.close, Math.max(recentSwingHigh(bars, index, 5), bar.ema20 > 0.0 ? bar.ema20 : bar.high) + (spec.tickSize * 2.0)));
-		} else if ("FVG".equals(normalized) || "IFVG".equals(normalized)) {
-			best = Math.min(best, Math.max(settings.fvgMinRiskTicks, riskTicks(spec, bar.close, recentSwingLow(bars, index, 5) - (spec.tickSize * 2.0))));
-			best = Math.min(best, Math.max(settings.fvgMinRiskTicks, riskTicks(spec, bar.close, recentSwingHigh(bars, index, 5) + (spec.tickSize * 2.0))));
-		} else if ("RCB".equals(normalized)) {
-			int boxBars = Math.max(3, settings.rangeCompressionBars);
-			if (index >= boxBars) {
-				double boxHigh = recentSwingHigh(bars, index - 1, boxBars);
-				double boxLow = recentSwingLow(bars, index - 1, boxBars);
-				best = Math.min(best, riskTicks(spec, bar.close, boxLow - (spec.tickSize * 2.0)));
-				best = Math.min(best, riskTicks(spec, bar.close, boxHigh + (spec.tickSize * 2.0)));
-			}
-		} else if ("VPB".equals(normalized) && previousBars != null && !previousBars.isEmpty()) {
-			VolumeProfile profile = previousSessionVolumeProfile(spec, previousBars, settings);
-			if (profile != null && profile.valid) {
-				best = Math.min(best, riskTicks(spec, bar.close, profile.valueAreaHigh - (settings.valueAreaReclaimTicks * spec.tickSize)));
-				best = Math.min(best, riskTicks(spec, bar.close, profile.valueAreaLow + (settings.valueAreaReclaimTicks * spec.tickSize)));
-			}
-		}
-		if (best == Double.POSITIVE_INFINITY || best <= 0.0) {
-			best = Math.min(
-				riskTicks(spec, bar.close, compressedLongStop(spec, bars, index, bar.close, maxRiskTicks)),
-				riskTicks(spec, bar.close, compressedShortStop(spec, bars, index, bar.close, maxRiskTicks))
-			);
-		}
-		return best == Double.POSITIVE_INFINITY ? 0.0 : best;
-	}
-
-	private static double diagnosticMaxRiskTicks(String code, FuturesStrategySettings settings) {
-		String normalized = cleanOrDefault(code, "").toUpperCase(Locale.ROOT);
-		double maxInitial = settings == null ? defaultFuturesStrategySettings().maxInitialRiskTicks : settings.maxInitialRiskTicks;
-		FuturesStrategySettings safe = settings == null ? defaultFuturesStrategySettings() : settings;
-		if ("LORB".equals(normalized)) return Math.min(maxInitial, safe.lateOrbContinuationMaxRiskTicks);
-		if ("ORB2".equals(normalized)) return Math.min(maxInitial, safe.orbRetestMaxRiskTicks);
-		if ("OMOM".equals(normalized)) return Math.min(maxInitial, safe.openingMomentumMaxRiskTicks);
-		if ("PDB".equals(normalized)) return Math.min(maxInitial, safe.priorDayBreakoutMaxRiskTicks);
-		if ("VWAP".equals(normalized)) return Math.min(maxInitial, safe.vwapMaxRiskTicks);
-		if ("VRCL".equals(normalized)) return Math.min(maxInitial, safe.vwapReclaimMaxRiskTicks);
-		if ("FVG".equals(normalized) || "IFVG".equals(normalized)) return Math.min(maxInitial, safe.fvgMaxRiskTicks);
-		if ("AFT".equals(normalized)) return Math.min(maxInitial, safe.afternoonMaxRiskTicks);
-		if ("MIM".equals(normalized)) return Math.min(maxInitial, safe.marketIntradayMomentumMaxRiskTicks);
-		if ("KELT".equals(normalized) || "KREV".equals(normalized)) return Math.min(maxInitial, safe.keltnerMaxRiskTicks);
-		if ("TLAD".equals(normalized)) return Math.min(maxInitial, safe.trendLadderMaxRiskTicks);
-		if ("RCB".equals(normalized)) return Math.min(maxInitial, safe.rangeCompressionMaxRiskTicks);
-		if ("VPB".equals(normalized)) return Math.min(maxInitial, safe.valueAreaMaxRiskTicks);
-		if ("MSCALP".equals(normalized)) return Math.min(maxInitial, safe.microScalpMaxRiskTicks);
-		if ("SHDW".equals(normalized)) return Math.min(maxInitial, safe.microShadowMaxRiskTicks);
-		if ("ECHO".equals(normalized)) return Math.min(maxInitial, safe.microEchoMaxRiskTicks);
-		if ("WFT".equals(normalized)) return Math.min(maxInitial, safe.winnerFollowThroughMaxRiskTicks);
-		if ("EIA".equals(normalized)) return Math.min(maxInitial, safe.mclEiaStopTicks);
-		if ("COPEN".equals(normalized)) return Math.min(maxInitial, safe.mclCrudeOpenStopTicks);
-		if ("IDXCONF".equals(normalized)) return Math.min(maxInitial, safe.mymIndexConfirmationMaxRiskTicks);
-		if ("MYMORB2".equals(normalized)) return Math.min(maxInitial, safe.mymOrbRetestMaxRiskTicks);
-		return maxInitial;
-	}
-
-	private static boolean diagnosticOrbRetestStructurePass(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int index) {
-		if (spec == null || bars == null || settings == null || index < 0 || index >= bars.size()) {
-			return false;
-		}
-		double high = Double.NEGATIVE_INFINITY;
-		double low = Double.POSITIVE_INFINITY;
-		double volume = 0.0;
-		int openingBars = 0;
-		for (int barIndex = 0; barIndex < bars.size(); barIndex++) {
-			Bar rangeBar = bars.get(barIndex);
-			if (rangeBar == null || rangeBar.marketTime == null) {
-				continue;
-			}
-			if (!rangeBar.marketTime.isBefore(RTH_START) && rangeBar.marketTime.isBefore(ORB_END)) {
-				high = Math.max(high, rangeBar.high);
-				low = Math.min(low, rangeBar.low);
-				volume += rangeBar.volume;
-				openingBars++;
-			}
-		}
-		if (openingBars < 5 || high <= low) {
-			return false;
-		}
-		double averageVolume = volume / openingBars;
-		boolean brokeLong = false;
-		boolean brokeShort = false;
-		for (int barIndex = 0; barIndex <= index; barIndex++) {
-			Bar prior = bars.get(barIndex);
-			if (prior == null || prior.marketTime == null || prior.marketTime.isBefore(ORB_END)) {
-				continue;
-			}
-			if (prior.close > high + (spec.tickSize * 2.0)) {
-				brokeLong = true;
-			}
-			if (settings.allowShorts && prior.close < low - (spec.tickSize * 2.0)) {
-				brokeShort = true;
-			}
-		}
-		Bar bar = bars.get(index);
-		if (bar == null) {
-			return false;
-		}
-		boolean longOk = settings.allowOrbRetestLongs
-			&& brokeLong
-			&& bar.low <= high + (spec.tickSize * 2.0)
-			&& bar.close > high
-			&& bar.close > bar.open
-			&& closeLocation(bar) >= 0.58
-			&& bar.volume >= averageVolume * 0.65;
-		boolean shortOk = settings.allowShorts
-			&& settings.allowOrbRetestShorts
-			&& brokeShort
-			&& bar.high >= low - (spec.tickSize * 2.0)
-			&& bar.close < low
-			&& bar.close < bar.open
-			&& closeLocation(bar) <= 0.42
-			&& bar.volume >= averageVolume * 0.65;
-		return longOk || shortOk;
-	}
-
-	private static String diagnosticOrbRetestRejectReason(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int index) {
-		if (spec == null || bars == null || settings == null || index < 0 || index >= bars.size()) {
-			return "ORB2_INCOMPLETE_CONTEXT";
-		}
-		double high = Double.NEGATIVE_INFINITY;
-		double low = Double.POSITIVE_INFINITY;
-		double volume = 0.0;
-		int openingBars = 0;
-		for (int barIndex = 0; barIndex < bars.size(); barIndex++) {
-			Bar rangeBar = bars.get(barIndex);
-			if (rangeBar == null || rangeBar.marketTime == null) {
-				continue;
-			}
-			if (!rangeBar.marketTime.isBefore(RTH_START) && rangeBar.marketTime.isBefore(ORB_END)) {
-				high = Math.max(high, rangeBar.high);
-				low = Math.min(low, rangeBar.low);
-				volume += rangeBar.volume;
-				openingBars++;
-			}
-		}
-		if (openingBars < 5 || high <= low) {
-			return "ORB2_OPENING_RANGE_UNAVAILABLE";
-		}
-		double averageVolume = volume / openingBars;
-		Bar bar = bars.get(index);
-		if (bar == null) {
-			return "ORB2_INCOMPLETE_CONTEXT";
-		}
-		boolean brokeLong = false;
-		boolean brokeShort = false;
-		for (int barIndex = 0; barIndex <= index; barIndex++) {
-			Bar prior = bars.get(barIndex);
-			if (prior == null || prior.marketTime == null || prior.marketTime.isBefore(ORB_END)) {
-				continue;
-			}
-			if (prior.close > high + (spec.tickSize * 2.0)) {
-				brokeLong = true;
-			}
-			if (settings.allowShorts && prior.close < low - (spec.tickSize * 2.0)) {
-				brokeShort = true;
-			}
-		}
-		boolean longTouch = settings.allowOrbRetestLongs && bar.low <= high + (spec.tickSize * 2.0);
-		boolean shortTouch = settings.allowShorts && settings.allowOrbRetestShorts && bar.high >= low - (spec.tickSize * 2.0);
-		if ((longTouch && !brokeLong) || (shortTouch && !brokeShort)) {
-			return "ORB2_NO_BREAK";
-		}
-		if ((longTouch || shortTouch) && bar.volume < averageVolume * 0.65) {
-			return "ORB2_RETEST_VOLUME";
-		}
-		if (longTouch && !(bar.close > high && bar.close > bar.open && closeLocation(bar) >= 0.58)) {
-			return "ORB2_RETEST_RECLAIM_FAILED";
-		}
-		if (shortTouch && !(bar.close < low && bar.close < bar.open && closeLocation(bar) <= 0.42)) {
-			return "ORB2_RETEST_REJECTION_FAILED";
-		}
-		return "ORB2_NO_RETEST_TOUCH";
-	}
-
-	private static String diagnosticOrbRetestNearMissDetail(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int index, String reason) {
-		if (spec == null || bars == null || settings == null || index < 0 || index >= bars.size()) {
-			return "orb2Reason=" + cleanOrDefault(reason, "ORB2_INCOMPLETE_CONTEXT");
-		}
-		double high = Double.NEGATIVE_INFINITY;
-		double low = Double.POSITIVE_INFINITY;
-		double volume = 0.0;
-		int openingBars = 0;
-		for (int barIndex = 0; barIndex < bars.size(); barIndex++) {
-			Bar rangeBar = bars.get(barIndex);
-			if (rangeBar == null || rangeBar.marketTime == null) {
-				continue;
-			}
-			if (!rangeBar.marketTime.isBefore(RTH_START) && rangeBar.marketTime.isBefore(ORB_END)) {
-				high = Math.max(high, rangeBar.high);
-				low = Math.min(low, rangeBar.low);
-				volume += rangeBar.volume;
-				openingBars++;
-			}
-		}
-		if (openingBars < 5 || high <= low) {
-			return "orb2Reason=" + cleanOrDefault(reason, "ORB2_OPENING_RANGE_UNAVAILABLE");
-		}
-		double averageVolume = volume / openingBars;
-		int longBreakIndex = -1;
-		int shortBreakIndex = -1;
-		for (int barIndex = 0; barIndex <= index; barIndex++) {
-			Bar prior = bars.get(barIndex);
-			if (prior == null || prior.marketTime == null || prior.marketTime.isBefore(ORB_END)) {
-				continue;
-			}
-			if (longBreakIndex < 0 && prior.close > high + (spec.tickSize * 2.0)) {
-				longBreakIndex = barIndex;
-			}
-			if (shortBreakIndex < 0 && settings.allowShorts && prior.close < low - (spec.tickSize * 2.0)) {
-				shortBreakIndex = barIndex;
-			}
-		}
-		Bar bar = bars.get(index);
-		Bar longBreak = longBreakIndex >= 0 ? bars.get(longBreakIndex) : null;
-		Bar shortBreak = shortBreakIndex >= 0 ? bars.get(shortBreakIndex) : null;
-		return "orb2Reason=" + cleanOrDefault(reason, "")
-			+ ", orbHigh=" + round(high)
-			+ ", orbLow=" + round(low)
-			+ ", longBreakTime=" + cleanOrDefault(longBreak == null ? "" : longBreak.displayTime, "")
-			+ ", shortBreakTime=" + cleanOrDefault(shortBreak == null ? "" : shortBreak.displayTime, "")
-			+ ", retestTime=" + cleanOrDefault(bar == null ? "" : bar.displayTime, "")
-			+ ", volumeMin=0.65";
-	}
-
-	private static boolean diagnosticFvgStructurePass(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int index) {
-		if (index < 2 || bars == null || index >= bars.size()) {
-			return false;
-		}
-		Bar first = bars.get(index - 2);
-		Bar middle = bars.get(index - 1);
-		Bar third = bars.get(index);
-		boolean bullishGap = first.high < third.low
-			&& middle.close > middle.open
-			&& ((third.low - first.high) / spec.tickSize) >= settings.fvgMinWidthTicks;
-		boolean bearishGap = first.low > third.high
-			&& middle.close < middle.open
-			&& ((first.low - third.high) / spec.tickSize) >= settings.fvgMinWidthTicks;
-		if (bullishGap || (settings.allowShorts && bearishGap)) {
-			return true;
-		}
-		int start = Math.max(2, index - Math.max(2, settings.fvgRetestBars));
-		for (int gapIndex = start; gapIndex < index; gapIndex++) {
-			Bar gapFirst = bars.get(gapIndex - 2);
-			Bar gapMiddle = bars.get(gapIndex - 1);
-			Bar gapThird = bars.get(gapIndex);
-			if (settings.allowFvgLongs && gapFirst.high < gapThird.low && gapMiddle.close > gapMiddle.open) {
-				double widthTicks = (gapThird.low - gapFirst.high) / spec.tickSize;
-				if (widthTicks >= settings.fvgMinWidthTicks && third.low <= gapThird.low && third.close > gapThird.low && third.close > third.open && closeLocation(third) >= 0.55) {
-					return true;
-				}
-			}
-			if (settings.allowShorts && settings.allowFvgShorts && gapFirst.low > gapThird.high && gapMiddle.close < gapMiddle.open) {
-				double widthTicks = (gapFirst.low - gapThird.high) / spec.tickSize;
-				if (widthTicks >= settings.fvgMinWidthTicks && third.high >= gapThird.high && third.close < gapThird.high && third.close < third.open && closeLocation(third) <= 0.45) {
-					return true;
-				}
-			}
-		}
-		return false;
-	}
-
-	private static boolean diagnosticMarketIntradayStructurePass(
-		InstrumentSpec spec,
-		List<Bar> bars,
-		List<Bar> fifteenMinuteBars,
-		List<Bar> oneHourBars,
-		FuturesStrategySettings settings,
-		int index
-	) {
-		if (bars == null || bars.size() < 300 || index < 60 || index >= bars.size()) {
-			return false;
-		}
-		Bar openBar = null;
-		Bar firstHalfHourCloseBar = null;
-		double openingHigh = Double.NEGATIVE_INFINITY;
-		double openingLow = Double.POSITIVE_INFINITY;
-		for (int cursor = 0; cursor < bars.size(); cursor++) {
-			Bar bar = bars.get(cursor);
-			if (openBar == null && !bar.marketTime.isBefore(RTH_START)) {
-				openBar = bar;
-			}
-			if (!bar.marketTime.isBefore(RTH_START) && bar.marketTime.isBefore(MARKET_INTRADAY_MOMENTUM_OPEN_END)) {
-				firstHalfHourCloseBar = bar;
-				openingHigh = Math.max(openingHigh, bar.high);
-				openingLow = Math.min(openingLow, bar.low);
-			}
-		}
-		if (openBar == null || firstHalfHourCloseBar == null || openingHigh <= openingLow) {
-			return false;
-		}
-		double firstMoveTicks = (firstHalfHourCloseBar.close - openBar.open) / spec.tickSize;
-		double openingRangeTicks = (openingHigh - openingLow) / spec.tickSize;
-		if (Math.abs(firstMoveTicks) < settings.marketIntradayMomentumMinOpenMoveTicks
-			|| openingRangeTicks < settings.marketIntradayMomentumMinOpenMoveTicks * 1.2) {
-			return false;
-		}
-		Bar bar = bars.get(index);
-		Bar previous = bars.get(index - 1);
-		if (bar.vwap <= 0.0 || previous == null) {
-			return false;
-		}
-		double trendSlopeTicks = diagnosticTrendSlopeTicks(spec, bars, index, 10);
-		double slopeThreshold = Math.max(1.0, settings.marketIntradayMomentumMinLateMoveTicks * 0.25);
-		boolean longOk = settings.allowMarketIntradayMomentumLongs
-			&& firstMoveTicks > 0.0
-			&& bar.close > bar.vwap
-			&& bar.ema9 >= bar.ema20
-			&& bar.ema20 >= bar.ema50
-			&& trendSlopeTicks >= slopeThreshold
-			&& previous.low <= Math.max(previous.vwap, previous.ema20) + (spec.tickSize * 2.0)
-			&& bar.close > previous.high
-			&& closeLocation(bar) >= 0.55;
-		boolean shortOk = settings.allowShorts
-			&& settings.allowMarketIntradayMomentumShorts
-			&& firstMoveTicks < 0.0
-			&& bar.close < bar.vwap
-			&& bar.ema9 <= bar.ema20
-			&& bar.ema20 <= bar.ema50
-			&& trendSlopeTicks <= -slopeThreshold
-			&& previous.high >= Math.min(previous.vwap, previous.ema20) - (spec.tickSize * 2.0)
-			&& bar.close < previous.low
-			&& closeLocation(bar) <= 0.45;
-		return longOk || shortOk;
-	}
-
-	private static boolean diagnosticKeltnerStructurePass(String code, InstrumentSpec spec, List<Bar> bars, List<Bar> fifteenMinuteBars, List<Bar> oneHourBars, FuturesStrategySettings settings, int index) {
-		if (bars == null || index < 55 || index >= bars.size()) {
-			return false;
-		}
-		Bar bar = bars.get(index);
-		Bar previous = bars.get(index - 1);
-		if (bar.vwap <= 0.0 || bar.atr14 <= 0.0 || bar.ema20 <= 0.0 || previous == null) {
-			return false;
-		}
-		double atrMultiplier = Math.max(0.7, settings.keltnerAtrMultiplier);
-		double upperBand = bar.ema20 + (bar.atr14 * atrMultiplier);
-		double lowerBand = bar.ema20 - (bar.atr14 * atrMultiplier);
-		double previousUpperBand = previous.ema20 + (Math.max(0.0, previous.atr14) * atrMultiplier);
-		double previousLowerBand = previous.ema20 - (Math.max(0.0, previous.atr14) * atrMultiplier);
-		double bandWidthTicks = (upperBand - lowerBand) / spec.tickSize;
-		if (bandWidthTicks < settings.keltnerMinBandWidthTicks) {
-			return false;
-		}
-		double trendSlopeTicks = diagnosticTrendSlopeTicks(spec, bars, index, 10);
-		if ("KREV".equals(code)) {
-			double maxTrendSlopeTicks = Math.max(3.0, settings.keltnerMinTrendSlopeTicks * 8.0);
-			if (Math.abs(trendSlopeTicks) > maxTrendSlopeTicks) {
-				return false;
-			}
-			boolean longOk = settings.allowKeltnerScalpLongs && previous.close < previousLowerBand && bar.close > lowerBand && bar.close > previous.high && bar.rsi14 <= 50.0 && closeLocation(bar) >= 0.54;
-			boolean shortOk = settings.allowShorts && settings.allowKeltnerScalpShorts && previous.close > previousUpperBand && bar.close < upperBand && bar.close < previous.low && bar.rsi14 >= 50.0 && closeLocation(bar) <= 0.46;
-			return longOk || shortOk;
-		}
-		boolean longMomentum = previous.close > previousUpperBand || bar.close > previous.high + spec.tickSize;
-		boolean shortMomentum = previous.close < previousLowerBand || bar.close < previous.low - spec.tickSize;
-		boolean longOk = settings.allowKeltnerScalpLongs && bar.close > upperBand && longMomentum && bar.close > bar.vwap && bar.ema9 >= bar.ema20 && bar.ema20 >= bar.ema50 && trendSlopeTicks >= settings.keltnerMinTrendSlopeTicks && bar.rsi14 >= 50.0 && closeLocation(bar) >= 0.56;
-		boolean shortOk = settings.allowShorts && settings.allowKeltnerScalpShorts && bar.close < lowerBand && shortMomentum && bar.close < bar.vwap && bar.ema9 <= bar.ema20 && bar.ema20 <= bar.ema50 && trendSlopeTicks <= -settings.keltnerMinTrendSlopeTicks && bar.rsi14 <= 50.0 && closeLocation(bar) <= 0.44;
-		return longOk || shortOk;
-	}
-
-	private static boolean diagnosticTrendLadderStructurePass(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int index) {
-		if (bars == null || index < 55 || index >= bars.size()) {
-			return false;
-		}
-		Bar bar = bars.get(index);
-		Bar previous = bars.get(index - 1);
-		if (bar.vwap <= 0.0 || bar.ema20 <= 0.0 || bar.ema50 <= 0.0 || previous == null) {
-			return false;
-		}
-		double trendSlopeTicks = diagnosticTrendSlopeTicks(spec, bars, index, 12);
-		double pullbackTicks = Math.max(0.0, settings.trendLadderPullbackTicks);
-		double distanceToVwapTicks = Math.abs(bar.close - bar.vwap) / spec.tickSize;
-		if (distanceToVwapTicks > Math.max(settings.vwapMaxDistanceTicks, pullbackTicks * 6.0)) {
-			return false;
-		}
-		boolean longOk = settings.allowTrendLadderLongs && bar.close > bar.vwap && bar.ema9 >= bar.ema20 && bar.ema20 >= bar.ema50 && trendSlopeTicks >= settings.trendLadderMinTrendSlopeTicks && previous.low <= previous.ema20 + (spec.tickSize * pullbackTicks) && bar.close > previous.high && closeLocation(bar) >= 0.55 && bar.rsi14 >= 48.0 && bar.rsi14 <= 76.0;
-		boolean shortOk = settings.allowShorts && settings.allowTrendLadderShorts && bar.close < bar.vwap && bar.ema9 <= bar.ema20 && bar.ema20 <= bar.ema50 && trendSlopeTicks <= -settings.trendLadderMinTrendSlopeTicks && previous.high >= previous.ema20 - (spec.tickSize * pullbackTicks) && bar.close < previous.low && closeLocation(bar) <= 0.45 && bar.rsi14 <= 52.0 && bar.rsi14 >= 24.0;
-		return longOk || shortOk;
-	}
-
-	private static boolean diagnosticRangeCompressionStructurePass(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int index) {
-		int boxBars = Math.max(3, settings.rangeCompressionBars);
-		if (bars == null || index < Math.max(60, boxBars + 2) || index >= bars.size()) {
-			return false;
-		}
-		Bar bar = bars.get(index);
-		Bar previous = bars.get(index - 1);
-		if (bar.vwap <= 0.0 || bar.ema20 <= 0.0 || bar.ema50 <= 0.0 || previous == null) {
-			return false;
-		}
-		double boxHigh = Double.NEGATIVE_INFINITY;
-		double boxLow = Double.POSITIVE_INFINITY;
-		double totalRangeTicks = 0.0;
-		for (int boxIndex = index - boxBars; boxIndex < index; boxIndex++) {
-			Bar boxBar = bars.get(boxIndex);
-			boxHigh = Math.max(boxHigh, boxBar.high);
-			boxLow = Math.min(boxLow, boxBar.low);
-			totalRangeTicks += boxBar.rangeTicks > 0.0 ? boxBar.rangeTicks : Math.abs(boxBar.high - boxBar.low) / spec.tickSize;
-		}
-		double averageRangeTicks = totalRangeTicks / boxBars;
-		double atrTicks = bar.atr14 > 0.0 ? bar.atr14 / spec.tickSize : averageRangeTicks;
-		if (boxHigh <= boxLow || averageRangeTicks > atrTicks * settings.rangeCompressionMaxAtrRatio) {
-			return false;
-		}
-		double trendSlopeTicks = diagnosticTrendSlopeTicks(spec, bars, index, 12);
-		boolean longOk = settings.allowRangeCompressionLongs && bar.close > boxHigh + spec.tickSize && previous.close <= boxHigh + spec.tickSize && bar.close > bar.open && bar.close > bar.vwap && bar.ema9 >= bar.ema20 && bar.close >= bar.ema50 && trendSlopeTicks >= settings.rangeCompressionMinTrendSlopeTicks && closeLocation(bar) >= 0.58 && bar.rsi14 >= 48.0 && bar.rsi14 <= 76.0;
-		boolean shortOk = settings.allowShorts && settings.allowRangeCompressionShorts && bar.close < boxLow - spec.tickSize && previous.close >= boxLow - spec.tickSize && bar.close < bar.open && bar.close < bar.vwap && bar.ema9 <= bar.ema20 && bar.close <= bar.ema50 && trendSlopeTicks <= -settings.rangeCompressionMinTrendSlopeTicks && closeLocation(bar) <= 0.42 && bar.rsi14 <= 52.0 && bar.rsi14 >= 24.0;
-		return longOk || shortOk;
-	}
-
-	private static boolean diagnosticValueAreaStructurePass(InstrumentSpec spec, List<Bar> bars, List<Bar> previousBars, FuturesStrategySettings settings, int index) {
-		if (bars == null || previousBars == null || previousBars.size() < 40 || index < 25 || index >= bars.size()) {
-			return false;
-		}
-		VolumeProfile profile = previousSessionVolumeProfile(spec, previousBars, settings);
-		if (profile == null || !profile.valid || profile.valueAreaHigh <= profile.valueAreaLow) {
-			return false;
-		}
-		Bar bar = bars.get(index);
-		Bar previous = bars.get(index - 1);
-		if (bar.vwap <= 0.0 || bar.ema20 <= 0.0 || previous == null) {
-			return false;
-		}
-		double reclaimDistance = Math.max(1.0, settings.valueAreaReclaimTicks) * spec.tickSize;
-		double trendSlopeTicks = diagnosticTrendSlopeTicks(spec, bars, index, 10);
-		boolean longOk = settings.allowValueAreaLongs && bar.low <= profile.valueAreaHigh + reclaimDistance && bar.close > profile.valueAreaHigh + reclaimDistance && previous.close >= profile.valueAreaLow && bar.close > bar.vwap && bar.ema9 >= bar.ema20 && trendSlopeTicks >= Math.max(0.0, settings.rangeCompressionMinTrendSlopeTicks * 0.5) && closeLocation(bar) >= 0.56;
-		boolean shortOk = settings.allowShorts && settings.allowValueAreaShorts && bar.high >= profile.valueAreaLow - reclaimDistance && bar.close < profile.valueAreaLow - reclaimDistance && previous.close <= profile.valueAreaHigh && bar.close < bar.vwap && bar.ema9 <= bar.ema20 && trendSlopeTicks <= -Math.max(0.0, settings.rangeCompressionMinTrendSlopeTicks * 0.5) && closeLocation(bar) <= 0.44;
-		return longOk || shortOk;
-	}
-
-	private static double diagnosticTrendSlopeTicks(InstrumentSpec spec, List<Bar> bars, int index, int lookback) {
-		if (spec == null || spec.tickSize <= 0.0 || bars == null || bars.isEmpty() || index < 0 || index >= bars.size()) {
-			return 0.0;
-		}
-		Bar bar = bars.get(index);
-		Bar earlier = bars.get(Math.max(0, index - Math.max(1, lookback)));
-		return (bar.ema20 - earlier.ema20) / spec.tickSize;
-	}
-
 	private static double volumeRatio(Bar bar) {
 		if (bar == null || bar.volumeSma20 <= 0.0) {
 			return 1.0;
@@ -10964,26 +9724,6 @@ public class FuturesManager {
 			return 0;
 		}
 		return (bar.marketTime.getHour() * 60) + bar.marketTime.getMinute();
-	}
-
-	private static int clampMinuteOfDay(int minute) {
-		return Math.max(0, Math.min((23 * 60) + 59, minute));
-	}
-
-	private static String minuteLabel(int minute) {
-		int safeMinute = clampMinuteOfDay(minute);
-		return String.format(Locale.US, "%02d:%02d", safeMinute / 60, safeMinute % 60);
-	}
-
-	private static String canonicalDiagnosticCode(String code) {
-		String normalized = cleanOrDefault(code, "").toUpperCase(Locale.ROOT);
-		if ("IPB".equals(normalized)) {
-			return "MIM";
-		}
-		if ("SWEEP2".equals(normalized)) {
-			return "SWEEP";
-		}
-		return normalized;
 	}
 
 	public static String getLiveMonitorJson(String symbols, int limit) {
@@ -11094,8 +9834,6 @@ public class FuturesManager {
 				.append("\"strategies\":").append(analysis.strategiesJson).append(",")
 				.append("\"currentSignals\":").append(analysis.currentSignalsJson).append(",")
 				.append("\"latestSignals\":").append(analysis.latestSignalsJson).append(",")
-				.append("\"strategyDiagnostics\":").append(analysis.strategyDiagnosticsJson).append(",")
-				.append("\"latestNearMisses\":").append(analysis.latestNearMissesJson).append(",")
 				.append("\"orderFlow\":").append(orderFlow.toJson())
 				.append("}");
 		}
@@ -12056,8 +10794,6 @@ public class FuturesManager {
 		analysis.enabledCount = enabledStrategyCount(settings);
 		analysis.strategiesJson = strategyWatchJson(settings, new ArrayList<Signal>(), new ArrayList<Bar>());
 		analysis.latestSignalsJson = "[]";
-		analysis.strategyDiagnosticsJson = "[]";
-		analysis.latestNearMissesJson = "[]";
 		return analysis;
 	}
 
@@ -12393,20 +11129,6 @@ public class FuturesManager {
 						groupByDay(oneHourBars).get(latestDay),
 						config
 					);
-					Map<String, StrategyFilterDiagnostic> diagnostics = emptyStrategyDiagnostics(symbol, settings);
-					analyzeStrategyDiagnosticsDay(
-						symbol,
-						settings,
-						diagnostics,
-						dayBars,
-						previousBars,
-						groupByDay(fifteenMinuteBars).get(latestDay),
-						groupByDay(oneHourBars).get(latestDay),
-						LIVE_ENTRY_DIAGNOSTIC_START_MINUTE,
-						LIVE_ENTRY_DIAGNOSTIC_END_MINUTE
-					);
-					analysis.strategyDiagnosticsJson = strategyFilterDiagnosticsArrayJson(diagnostics, "LIVE_MONITOR");
-					analysis.latestNearMissesJson = latestNearMissesArrayJson(diagnostics);
 				}
 			}
 		} catch (Exception e) {
@@ -14052,6 +12774,24 @@ public class FuturesManager {
 			+ "\"useSavedRisk\":" + safeConfig.useSavedRisk + ","
 			+ "\"continueAfterRuleViolation\":" + safeConfig.continueAfterRuleViolation + ","
 			+ "\"qualitativeRiskEnabled\":" + safeConfig.qualitativeRiskEnabled + ","
+			+ "\"dtmEnabled\":" + safeConfig.dtmEnabled + ","
+			+ "\"dtmDynamicProtectiveOrdersEnabled\":" + dtmDynamicProtectiveOrdersEnabled() + ","
+			+ "\"dtmOneContractExtensionEnabled\":" + dtmOneContractExtensionEnabled() + ","
+			+ "\"dtmHalfRunnerEnabled\":" + dtmExperimentalHalfRunnerEnabled() + ","
+			+ "\"dtmHalfRunnerTrigger\":" + jsonString(dtmExperimentalHalfRunnerTriggerMode()) + ","
+			+ "\"dtmHalfRunnerStopMode\":" + jsonString(dtmExperimentalHalfRunnerStopMode()) + ","
+			+ "\"dtmHalfRunnerMinContracts\":" + dtmExperimentalHalfRunnerMinContracts() + ","
+			+ "\"dtmHalfRunnerTargetMode\":" + jsonString(dtmExperimentalHalfRunnerTargetMode()) + ","
+			+ "\"dtmEvaluations\":" + safeResult.dtmEvaluations + ","
+			+ "\"dtmOrderFlowAvailable\":" + safeResult.dtmOrderFlowAvailable + ","
+			+ "\"dtmOrderFlowMissing\":" + safeResult.dtmOrderFlowMissing + ","
+			+ "\"dtmDecisions\":" + safeResult.dtmDecisions + ","
+			+ "\"dtmBreakevenMoves\":" + safeResult.dtmBreakevenMoves + ","
+			+ "\"dtmPartialActions\":" + safeResult.dtmPartialActions + ","
+			+ "\"dtmTrailActions\":" + safeResult.dtmTrailActions + ","
+			+ "\"dtmEarlyCuts\":" + safeResult.dtmEarlyCuts + ","
+			+ "\"dtmTargetExtensions\":" + safeResult.dtmTargetExtensions + ","
+			+ "\"dtmOneContractExtensions\":" + safeResult.dtmOneContractExtensions + ","
 			+ "\"strategySlot\":" + jsonString(normalizeStrategySlot(safeConfig.strategySlot)) + ","
 			+ "\"strategyPreset\":" + jsonString(normalizeStrategyPresetName(safeConfig.strategyPreset)) + ","
 			+ "\"sourcePortfolioBacktestId\":" + safeConfig.sourcePortfolioBacktestId + ","
@@ -15235,48 +13975,7 @@ public class FuturesManager {
 					+ "\"target\":" + round(signal.targetPrice)
 						+ "}"
 				);
-				OrderFlowEntryDecision flowDecision = evaluateLiveEntryOrderFlow(session, candidate);
-				if (flowDecision.enabled) {
-					pushLiveEvent(
-						session.sessionId,
-						flowDecision.passed ? "ORDER_FLOW_PASS" : "ORDER_FLOW_BLOCKED",
-						"Entry Optimizer",
-						flowDecision.passed ? "accepted" : "blocked",
-						candidate.symbol,
-						candidate.entryTime,
-						normalizeSymbol(candidate.symbol) + " " + cleanOrDefault(signal.strategyCode, "LIVE") + " entry optimizer " + (flowDecision.passed ? "passed." : "blocked."),
-						flowDecision.reason,
-						"{"
-							+ "\"symbol\":" + jsonString(normalizeSymbol(candidate.symbol)) + ","
-							+ "\"strategy\":" + jsonString(cleanOrDefault(signal.strategyCode, "LIVE")) + ","
-							+ "\"side\":" + jsonString(cleanOrDefault(signal.side, "")) + ","
-							+ "\"action\":" + jsonString(flowDecision.actionCode) + ","
-							+ "\"passed\":" + flowDecision.passed + ","
-							+ "\"reason\":" + jsonString(flowDecision.reason) + ","
-							+ "\"orderFlow\":" + jsonObjectOrDefault(flowDecision.metricsJson, "{}")
-							+ "}"
-					);
-					if (!flowDecision.passed) {
-						String diagnosticsJson = "{"
-							+ "\"firstFailingRule\":\"ORDER_FLOW_OPTIMIZER\","
-							+ "\"orderFlowAction\":" + jsonString(flowDecision.actionCode) + ","
-							+ "\"orderFlowReason\":" + jsonString(flowDecision.reason) + ","
-							+ "\"orderFlow\":" + jsonObjectOrDefault(flowDecision.metricsJson, "{}")
-							+ "}";
-						insertLiveSignalDecisionFromSignal(session.sessionId, snapshot.snapshotId, candidate.symbol, signal, candidate.signalTime, candidate.entryTime, 0, 0.0, signal.stopPrice, signal.targetPrice, 0.0, "REJECTED_ORDER_FLOW", flowDecision.reason, "", diagnosticsJson);
-						rejectedThisCycle++;
-						continue;
-					}
-				}
 				LiveSignalOrder order = validateLivePortfolioSignal(session, portfolioConfig, liveContexts, candidate, openPositions, takenByStrategy, brokerExposure);
-				if (flowDecision.enabled) {
-					order.diagnosticsJson = mergeSimpleJson(
-						order.diagnosticsJson,
-						"\"orderFlowAction\":" + jsonString(flowDecision.actionCode)
-							+ ",\"orderFlowReason\":" + jsonString(flowDecision.reason)
-							+ ",\"orderFlow\":" + jsonObjectOrDefault(flowDecision.metricsJson, "{}")
-					);
-				}
 				if (!order.accepted) {
 					insertLiveSignalDecisionFromSignal(session.sessionId, snapshot.snapshotId, candidate.symbol, signal, candidate.signalTime, candidate.entryTime, 0, 0.0, signal.stopPrice, signal.targetPrice, 0.0, "REJECTED", order.reason, "", order.diagnosticsJson);
 					pushLiveEvent(
@@ -15884,13 +14583,24 @@ public class FuturesManager {
 			PortfolioPosition position = positions.get(index);
 			PortfolioSymbolContext context = contexts.get(position.symbol);
 			Bar bar = currentBars.get(position.symbol);
-				if (context == null || bar == null || bar.marketDate == null || bar.marketTime == null) {
-					continue;
-				}
-				hydrateLivePositionState(position, context, bar);
-				applyDynamicTradeStateToPosition(session == null ? 0 : session.sessionId, snapshot == null ? 0 : snapshot.snapshotId, position);
-				if (session != null && session.dtmEnabled) {
-					DynamicTradeDecision dtmDecision = evaluateDynamicTradeManager(session, snapshot, position, context, bar);
+			if (context == null || bar == null || bar.marketDate == null || bar.marketTime == null) {
+				continue;
+			}
+			hydrateLivePositionState(position, context, bar);
+			applyDynamicTradeStateToPosition(session == null ? 0 : session.sessionId, snapshot == null ? 0 : snapshot.snapshotId, position);
+			boolean dtmActive = session != null && session.dtmEnabled;
+			FuturesTrade triggeredTrade = dtmActive
+				? closePortfolioPositionIfStopTriggered(position, context, bar, bar.marketDate, bar.marketTime)
+				: closePortfolioPositionIfTriggered(position, context, bar, bar.marketDate, bar.marketTime);
+			if (triggeredTrade != null) {
+				applyDynamicTradeStateToTrade(session == null ? 0 : session.sessionId, snapshot == null ? 0 : snapshot.snapshotId, position, triggeredTrade, "");
+				trades.add(0, triggeredTrade);
+				positions.remove(index);
+				continue;
+			}
+			if (dtmActive) {
+				double preDtmTargetPrice = position.targetPrice;
+				DynamicTradeDecision dtmDecision = evaluateDynamicTradeManager(session, snapshot, position, context, bar);
 				if (dtmDecision != null && dtmDecision.finalExit) {
 					FuturesTrade dtmTrade = buildPortfolioTrade(position, context, bar, currentIndexOrEntry(position, context, bar), bar.close, dtmDecision.exitReason);
 					applyDynamicTradeStateToTrade(session.sessionId, snapshot == null ? 0 : snapshot.snapshotId, position, dtmTrade, dtmDecision.actionCode);
@@ -15898,12 +14608,12 @@ public class FuturesManager {
 					positions.remove(index);
 					continue;
 				}
-			}
-			FuturesTrade trade = closePortfolioPositionIfTriggered(position, context, bar, bar.marketDate, bar.marketTime);
-			if (trade != null) {
-				applyDynamicTradeStateToTrade(session == null ? 0 : session.sessionId, snapshot == null ? 0 : snapshot.snapshotId, position, trade, "");
-				trades.add(0, trade);
-				positions.remove(index);
+				FuturesTrade postDtmTrade = closePortfolioPositionAfterDtmDecision(position, context, bar, bar.marketDate, bar.marketTime, dtmDecision, preDtmTargetPrice);
+				if (postDtmTrade != null) {
+					applyDynamicTradeStateToTrade(session.sessionId, snapshot == null ? 0 : snapshot.snapshotId, position, postDtmTrade, "");
+					trades.add(0, postDtmTrade);
+					positions.remove(index);
+				}
 			}
 		}
 		return trades;
@@ -15915,6 +14625,18 @@ public class FuturesManager {
 		PortfolioPosition position,
 		PortfolioSymbolContext context,
 		Bar bar
+	) {
+		return evaluateDynamicTradeManager(session, snapshot, position, context, bar, null, true);
+	}
+
+	private static DynamicTradeDecision evaluateDynamicTradeManager(
+		FuturesLiveSession session,
+		LiveStrategySnapshotRow snapshot,
+		PortfolioPosition position,
+		PortfolioSymbolContext context,
+		Bar bar,
+		LiveRuntimeState.OrderFlowSnapshot orderFlow,
+		boolean publishLiveEvent
 	) {
 		if (session == null || snapshot == null || position == null || context == null || bar == null || position.initialRisk <= 0.0) {
 			return null;
@@ -15931,33 +14653,81 @@ public class FuturesManager {
 		double adverseMove = adverseMovePoints(position, adverseExtremePrice(position, bar));
 		double favorableR = favorableMove / position.initialRisk;
 		double adverseR = adverseMove / position.initialRisk;
-		LiveRuntimeState.OrderFlowSnapshot flow = LiveRuntimeState.orderFlowSnapshot(position.symbol);
+		double favorableCloseR = favorableMovePoints(position, bar.close) / position.initialRisk;
+		double adverseCloseR = adverseMovePoints(position, bar.close) / position.initialRisk;
+		double targetR = dtmTargetR(position);
+		int currentIndex = currentIndexOrEntry(position, context, bar);
+		int barsHeld = Math.max(0, currentIndex - Math.max(0, position.entryIndex));
+		double breakevenTriggerR = dtmTargetAwareTrigger(DTM_BREAKEVEN_TRIGGER_R, targetR, DTM_BREAKEVEN_TARGET_FRACTION, 1.35);
+		double partialTriggerR = dtmTargetAwareTrigger(DTM_PARTIAL_TRIGGER_R, targetR, DTM_PARTIAL_TARGET_FRACTION, 2.50);
+		double trailTriggerR = dtmTargetAwareTrigger(DTM_TRAIL_TRIGGER_R, targetR, DTM_TRAIL_TARGET_FRACTION, 2.00);
+		LiveRuntimeState.OrderFlowSnapshot flow = orderFlow == null ? LiveRuntimeState.orderFlowSnapshot(position.symbol) : orderFlow;
 		boolean flowAgainst = orderFlowAgainstPosition(position.side, flow);
+		boolean strongFlowAgainst = strongOrderFlowAgainstPosition(position.side, flow);
 		boolean trendAgainst = trendAgainstPosition(position.side, bar);
-		String dtmState = dtmStateName(position, state, favorableR, adverseR, flowAgainst, trendAgainst);
+		boolean continuationAligned = dtmContinuationAligned(position, bar, flow, trendAgainst, strongFlowAgainst);
+		double extensionTriggerR = dtmExtensionTriggerR(targetR);
+		double extensionAcceptanceR = dtmExtensionAcceptanceR(targetR);
+		String dtmState = dtmStateName(position, state, favorableCloseR, adverseCloseR, flowAgainst, trendAgainst, breakevenTriggerR, partialTriggerR);
 		state.stateName = dtmState;
-		boolean thesisInvalidated = dtmThesisInvalidated(position, context, bar, flowAgainst, trendAgainst);
-		if (adverseR >= DTM_EARLY_CUT_ADVERSE_R && (flowAgainst || trendAgainst || thesisInvalidated)) {
-			state.exitEvidenceCount++;
+		boolean thesisInvalidated = dtmThesisInvalidated(position, context, bar, strongFlowAgainst, trendAgainst, adverseCloseR);
+		boolean earlyCutMature = barsHeld >= dtmMinimumBarsBeforeEarlyCut(position);
+		boolean exitEvidence = earlyCutMature
+			&& adverseCloseR >= DTM_EARLY_CUT_CLOSE_ADVERSE_R
+			&& thesisInvalidated
+			&& (trendAgainst || strongFlowAgainst);
+		if (exitEvidence) {
+			if (state.lastExitEvidenceIndex != currentIndex) {
+				state.exitEvidenceCount++;
+				state.lastExitEvidenceIndex = currentIndex;
+			}
 		} else {
 			state.exitEvidenceCount = 0;
+			state.lastExitEvidenceIndex = -1;
 		}
-		boolean emergencyExit = adverseR >= DTM_EMERGENCY_CUT_ADVERSE_R && (trendAgainst || thesisInvalidated);
-		boolean normalExitArmed = adverseR >= DTM_EARLY_CUT_ADVERSE_R && thesisInvalidated && state.exitEvidenceCount >= 2;
+		boolean emergencyExit = earlyCutMature && adverseCloseR >= DTM_EMERGENCY_CUT_ADVERSE_R && thesisInvalidated && (trendAgainst || strongFlowAgainst);
+		boolean normalExitArmed = exitEvidence && state.exitEvidenceCount >= DTM_EXIT_EVIDENCE_BARS_REQUIRED;
 		if ((emergencyExit || normalExitArmed) && !state.exitRequested) {
 			DynamicTradeDecision decision = new DynamicTradeDecision();
 			decision.actionCode = "DTM_CUT_EARLY_THESIS_FAILED";
 			decision.exitReason = "DTM early cut: thesis failed before hard stop";
 			decision.stateName = "EXIT_ARMED";
 			decision.normalizedAction = "CUT_EARLY";
-			decision.reason = "DTM cut early because adverse movement reached " + liveNumberText(adverseR) + "R and structure plus smoothed market/order-flow evidence confirmed thesis failure.";
+			decision.reason = "DTM cut early because the trade held for " + barsHeld + " bars, closed " + liveNumberText(adverseCloseR) + "R adverse, and structure plus strong market/order-flow evidence confirmed thesis failure.";
 			decision.finalExit = true;
-			decision.detailsJson = dtmDetailsJson(position, bar, flow, favorableR, adverseR, 0, 0.0, 0.0, true, decision.stateName, decision.normalizedAction, state.exitEvidenceCount);
+			decision.detailsJson = dtmDetailsJson(position, bar, flow, favorableR, adverseR, favorableCloseR, adverseCloseR, targetR, barsHeld, 0, 0.0, 0.0, true, decision.stateName, decision.normalizedAction, state.exitEvidenceCount);
 			state.exitRequested = true;
-			recordDynamicTradeDecision(session, snapshot, position, state, decision, bar);
+			recordDynamicTradeDecision(session, snapshot, position, state, decision, bar, publishLiveEvent);
 			return decision;
 		}
-		if (favorableR >= DTM_BREAKEVEN_TRIGGER_R && !state.breakevenMoved) {
+		if (dtmOneContractExtensionEnabled()
+			&& position.contracts == 1
+			&& !state.partialTaken
+			&& !state.targetExtended
+			&& barsHeld >= dtmMinimumBarsBeforeTargetManagement(position)
+			&& favorableCloseR >= extensionAcceptanceR
+			&& continuationAligned) {
+			DynamicTradeDecision extensionDecision = dtmTargetExtensionDecision(
+				session,
+				snapshot,
+				position,
+				state,
+				bar,
+				flow,
+				favorableR,
+				adverseR,
+				favorableCloseR,
+				adverseCloseR,
+				targetR,
+				barsHeld,
+				true,
+				publishLiveEvent
+			);
+			if (extensionDecision != null) {
+				return extensionDecision;
+			}
+		}
+		if (barsHeld >= dtmMinimumBarsBeforeProtect(position) && favorableCloseR >= breakevenTriggerR && !state.breakevenMoved) {
 			double stop = "LONG".equals(position.side)
 				? roundToTick(position.spec, position.entryPrice + position.spec.tickSize)
 				: roundToTick(position.spec, position.entryPrice - position.spec.tickSize);
@@ -15967,8 +14737,8 @@ public class FuturesManager {
 				decision.stateName = "PROTECT";
 				decision.normalizedAction = "MOVE_STOP_BREAKEVEN";
 				decision.stopPrice = stop;
-				decision.reason = "DTM moved stop to breakeven after favorable movement reached " + liveNumberText(favorableR) + "R.";
-				decision.detailsJson = dtmDetailsJson(position, bar, flow, favorableR, adverseR, 0, stop, 0.0, false, decision.stateName, decision.normalizedAction, state.exitEvidenceCount);
+				decision.reason = "DTM moved stop to breakeven after the trade closed " + liveNumberText(favorableCloseR) + "R favorable against a " + liveNumberText(targetR) + "R target.";
+				decision.detailsJson = dtmDetailsJson(position, bar, flow, favorableR, adverseR, favorableCloseR, adverseCloseR, targetR, barsHeld, 0, stop, 0.0, false, decision.stateName, decision.normalizedAction, state.exitEvidenceCount);
 				String brokerJson = dynamicBrokerModifyProtectiveOrdersJson(session, snapshot, position, stop, 0.0, position.contracts);
 				decision.brokerAction = jsonBoolean(brokerJson, "success");
 				decision.detailsJson = mergeSimpleJson(decision.detailsJson, "\"brokerModify\":" + jsonObjectOrDefault(brokerJson, "{}"));
@@ -15977,21 +14747,50 @@ public class FuturesManager {
 					state.lastStopPrice = stop;
 				}
 				state.breakevenMoved = true;
-				recordDynamicTradeDecision(session, snapshot, position, state, decision, bar);
+				recordDynamicTradeDecision(session, snapshot, position, state, decision, bar, publishLiveEvent);
 				return decision;
 			}
 			state.breakevenMoved = true;
 		}
-		if (position.contracts > 1 && favorableR >= DTM_PARTIAL_TRIGGER_R && !state.partialTaken && !state.partialCloseBlocked) {
+		if (position.contracts > 1 && barsHeld >= dtmMinimumBarsBeforeTargetManagement(position) && favorableCloseR >= partialTriggerR && !state.partialTaken && !state.partialCloseBlocked) {
+			boolean experimentalHalfRunner = dtmExperimentalHalfRunnerEnabled() && dtmExperimentalHalfRunnerQualified(position, targetR);
 			int closeContracts = Math.max(1, position.contracts / 2);
 			int remaining = Math.max(1, position.contracts - closeContracts);
+			double experimentalExtensionTriggerR = experimentalHalfRunner
+				? dtmExperimentalHalfRunnerTriggerR(partialTriggerR, targetR, extensionAcceptanceR)
+				: extensionAcceptanceR;
+			boolean extendRunner = dtmDynamicProtectiveOrdersEnabled()
+				&& !state.targetExtended
+				&& favorableCloseR >= experimentalExtensionTriggerR
+				&& (experimentalHalfRunner ? dtmExperimentalRunnerAligned(position, bar, flow, trendAgainst, strongFlowAgainst) : continuationAligned);
+			double runnerStop = extendRunner
+				? (experimentalHalfRunner ? dtmExperimentalRunnerStop(position, favorableCloseR) : dtmProfitLockStop(position, favorableCloseR, targetR, false))
+				: 0.0;
+			double runnerTarget = extendRunner ? dtmExtendedTargetPrice(position, targetR) : 0.0;
+			if (extendRunner && (!stopImprovesRisk(position, runnerStop) || !targetImprovesReward(position, runnerTarget))) {
+				extendRunner = false;
+				runnerStop = 0.0;
+				runnerTarget = 0.0;
+			}
+			if (experimentalHalfRunner && !extendRunner) {
+				return null;
+			}
 			DynamicTradeDecision decision = new DynamicTradeDecision();
-			decision.actionCode = "DTM_PARTIAL_TARGET";
+			decision.actionCode = experimentalHalfRunner ? "DTM_PARTIAL_HALF_RUNNER_EXTENDED" : "DTM_PARTIAL_TARGET";
 			decision.stateName = "TARGET_DECISION";
 			decision.normalizedAction = "PARTIAL_EXIT";
 			decision.partialContracts = closeContracts;
-			decision.reason = "DTM partially sold " + closeContracts + " contract" + (closeContracts == 1 ? "" : "s") + " near the original target zone and kept " + remaining + " runner contract" + (remaining == 1 ? "" : "s") + ".";
-			decision.detailsJson = dtmDetailsJson(position, bar, flow, favorableR, adverseR, closeContracts, 0.0, 0.0, false, decision.stateName, decision.normalizedAction, state.exitEvidenceCount);
+			decision.reason = experimentalHalfRunner
+				? "DTM partially sold half the position, kept " + remaining + " runner contract" + (remaining == 1 ? "" : "s") + ", raised the runner target, and locked a profitable stop because continuation stayed aligned."
+				: "DTM partially sold " + closeContracts + " contract" + (closeContracts == 1 ? "" : "s") + " near the original target zone and kept " + remaining + " runner contract" + (remaining == 1 ? "" : "s") + ".";
+			if (extendRunner) {
+				decision.stopPrice = runnerStop;
+				decision.targetPrice = runnerTarget;
+				if (!experimentalHalfRunner) {
+					decision.reason += " DTM also extended the runner target and locked a profitable stop because continuation stayed aligned.";
+				}
+			}
+			decision.detailsJson = dtmDetailsJson(position, bar, flow, favorableR, adverseR, favorableCloseR, adverseCloseR, targetR, barsHeld, closeContracts, runnerStop, runnerTarget, false, decision.stateName, decision.normalizedAction, state.exitEvidenceCount);
 			String brokerJson = dynamicBrokerPartialCloseJson(session, snapshot, position, closeContracts);
 			decision.brokerAction = jsonBoolean(brokerJson, "success");
 			decision.detailsJson = mergeSimpleJson(decision.detailsJson, "\"brokerPartialClose\":" + jsonObjectOrDefault(brokerJson, "{}"));
@@ -16003,20 +14802,34 @@ public class FuturesManager {
 				state.remainingContracts = remaining;
 				state.partialTaken = true;
 				state.partialDecision = decision.reason;
-				state.runnerDecision = "Runner held after partial using the original target and current protective stop.";
+				state.runnerDecision = experimentalHalfRunner
+					? "Runner held after a single half-partial with an extended target and profitable stop lock."
+					: "Runner held after partial using the original target and current protective stop.";
 				position.contracts = remaining;
 				position.dtmRealizedPnl = state.realizedPnl;
 				position.dtmPartialContractsClosed = state.partialContractsClosed;
 				position.dtmPartialDecision = state.partialDecision;
 				position.dtmRunnerDecision = state.runnerDecision;
-				dynamicBrokerModifyProtectiveOrdersJson(
+				String modifyJson = dynamicBrokerModifyProtectiveOrdersJson(
 					session,
 					snapshot,
 					position,
-					state.lastStopPrice > 0.0 ? state.lastStopPrice : position.activeStopPrice,
-					position.targetPrice,
+					extendRunner ? runnerStop : (state.lastStopPrice > 0.0 ? state.lastStopPrice : position.activeStopPrice),
+					extendRunner ? runnerTarget : position.targetPrice,
 					remaining
 				);
+				decision.detailsJson = mergeSimpleJson(decision.detailsJson, "\"brokerModify\":" + jsonObjectOrDefault(modifyJson, "{}"));
+				if (extendRunner && jsonBoolean(modifyJson, "success")) {
+					position.activeStopPrice = runnerStop;
+					position.targetPrice = runnerTarget;
+					state.lastStopPrice = runnerStop;
+					state.lastTargetPrice = runnerTarget;
+					state.targetExtended = true;
+					state.runnerDecision = experimentalHalfRunner
+						? "Runner target extended with profit lock immediately after the single half-partial."
+						: "Runner target extended with profit lock after partial because continuation evidence stayed aligned.";
+					position.dtmRunnerDecision = state.runnerDecision;
+				}
 			} else {
 				state.partialCloseBlocked = true;
 				state.remainingContracts = Math.max(1, position.contracts);
@@ -16025,10 +14838,36 @@ public class FuturesManager {
 				decision.reason = "DTM attempted a partial close, but broker confirmation failed; DTM kept managing the full position and did not assume a runner.";
 				state.partialDecision = decision.reason;
 			}
-			recordDynamicTradeDecision(session, snapshot, position, state, decision, bar);
+			recordDynamicTradeDecision(session, snapshot, position, state, decision, bar, publishLiveEvent);
 			return decision;
 		}
-		if (favorableR >= DTM_TRAIL_TRIGGER_R) {
+		if (dtmDynamicProtectiveOrdersEnabled()
+			&& state.partialTaken
+			&& !state.targetExtended
+			&& barsHeld >= dtmMinimumBarsBeforeTargetManagement(position)
+			&& favorableCloseR >= extensionAcceptanceR
+			&& continuationAligned) {
+			DynamicTradeDecision extensionDecision = dtmTargetExtensionDecision(
+				session,
+				snapshot,
+				position,
+				state,
+				bar,
+				flow,
+				favorableR,
+				adverseR,
+				favorableCloseR,
+				adverseCloseR,
+				targetR,
+				barsHeld,
+				false,
+				publishLiveEvent
+			);
+			if (extensionDecision != null) {
+				return extensionDecision;
+			}
+		}
+		if (barsHeld >= dtmMinimumBarsBeforeTargetManagement(position) && favorableCloseR >= trailTriggerR) {
 			double trail = updateManagedStop(position.spec, position.side, position.entryPrice, position.activeStopPrice, bar.close, position.initialRisk, position.minTrailDistance);
 			if (stopImprovesRisk(position, trail) && Math.abs(trail - state.lastStopPrice) >= position.spec.tickSize - 0.000001) {
 				DynamicTradeDecision decision = new DynamicTradeDecision();
@@ -16036,8 +14875,8 @@ public class FuturesManager {
 				decision.stateName = "PROTECT";
 				decision.normalizedAction = "TRAIL_STOP";
 				decision.stopPrice = trail;
-				decision.reason = "DTM trailed the protective stop after favorable movement reached " + liveNumberText(favorableR) + "R.";
-				decision.detailsJson = dtmDetailsJson(position, bar, flow, favorableR, adverseR, 0, trail, 0.0, false, decision.stateName, decision.normalizedAction, state.exitEvidenceCount);
+				decision.reason = "DTM trailed the protective stop after the trade closed " + liveNumberText(favorableCloseR) + "R favorable against a " + liveNumberText(targetR) + "R target.";
+				decision.detailsJson = dtmDetailsJson(position, bar, flow, favorableR, adverseR, favorableCloseR, adverseCloseR, targetR, barsHeld, 0, trail, 0.0, false, decision.stateName, decision.normalizedAction, state.exitEvidenceCount);
 				String brokerJson = dynamicBrokerModifyProtectiveOrdersJson(session, snapshot, position, trail, 0.0, position.contracts);
 				decision.brokerAction = jsonBoolean(brokerJson, "success");
 				decision.detailsJson = mergeSimpleJson(decision.detailsJson, "\"brokerModify\":" + jsonObjectOrDefault(brokerJson, "{}"));
@@ -16045,11 +14884,60 @@ public class FuturesManager {
 					position.activeStopPrice = trail;
 					state.lastStopPrice = trail;
 				}
-				recordDynamicTradeDecision(session, snapshot, position, state, decision, bar);
+				recordDynamicTradeDecision(session, snapshot, position, state, decision, bar, publishLiveEvent);
 				return decision;
 			}
 		}
 		return null;
+	}
+
+	private static DynamicTradeDecision dtmTargetExtensionDecision(
+		FuturesLiveSession session,
+		LiveStrategySnapshotRow snapshot,
+		PortfolioPosition position,
+		DynamicTradeState state,
+		Bar bar,
+		LiveRuntimeState.OrderFlowSnapshot flow,
+		double favorableR,
+		double adverseR,
+		double favorableCloseR,
+		double adverseCloseR,
+		double targetR,
+		int barsHeld,
+		boolean oneContractRunner,
+		boolean publishLiveEvent
+	) {
+		double stop = dtmProfitLockStop(position, favorableCloseR, targetR, oneContractRunner);
+		double target = dtmExtendedTargetPrice(position, targetR);
+		if (!stopImprovesRisk(position, stop) || !targetImprovesReward(position, target)) {
+			return null;
+		}
+		DynamicTradeDecision decision = new DynamicTradeDecision();
+		decision.actionCode = oneContractRunner ? "DTM_EXTEND_ONE_CONTRACT_RUNNER" : "DTM_EXTEND_TARGET_CONTINUATION";
+		decision.stateName = "RUNNER";
+		decision.normalizedAction = "EXTEND_TARGET";
+		decision.stopPrice = stop;
+		decision.targetPrice = target;
+		decision.reason = oneContractRunner
+			? "DTM converted the one-contract trade into a protected runner because price closed near the original target and continuation evidence stayed aligned."
+			: "DTM extended the runner target and tightened the stop because price closed near the original target and continuation evidence stayed aligned.";
+		decision.detailsJson = dtmDetailsJson(position, bar, flow, favorableR, adverseR, favorableCloseR, adverseCloseR, targetR, barsHeld, 0, stop, target, false, decision.stateName, decision.normalizedAction, state.exitEvidenceCount);
+		String brokerJson = dynamicBrokerModifyProtectiveOrdersJson(session, snapshot, position, stop, target, position.contracts);
+		decision.brokerAction = jsonBoolean(brokerJson, "success");
+		decision.detailsJson = mergeSimpleJson(decision.detailsJson, "\"brokerModify\":" + jsonObjectOrDefault(brokerJson, "{}"));
+		if (!decision.brokerAction) {
+			return null;
+		}
+		position.activeStopPrice = stop;
+		position.targetPrice = target;
+		state.lastStopPrice = stop;
+		state.lastTargetPrice = target;
+		state.targetExtended = true;
+		state.oneContractExtended = oneContractRunner;
+		state.runnerDecision = decision.reason;
+		position.dtmRunnerDecision = state.runnerDecision;
+		recordDynamicTradeDecision(session, snapshot, position, state, decision, bar, publishLiveEvent);
+		return decision;
 	}
 
 	private static String dynamicBrokerModifyProtectiveOrdersJson(
@@ -16114,6 +15002,18 @@ public class FuturesManager {
 		DynamicTradeDecision decision,
 		Bar bar
 	) {
+		recordDynamicTradeDecision(session, snapshot, position, state, decision, bar, true);
+	}
+
+	private static void recordDynamicTradeDecision(
+		FuturesLiveSession session,
+		LiveStrategySnapshotRow snapshot,
+		PortfolioPosition position,
+		DynamicTradeState state,
+		DynamicTradeDecision decision,
+		Bar bar,
+		boolean publishLiveEvent
+	) {
 		if (session == null || position == null || state == null || decision == null) {
 			return;
 		}
@@ -16131,6 +15031,9 @@ public class FuturesManager {
 		position.dtmFinalAction = state.finalAction;
 		position.dtmPartialDecision = state.partialDecision;
 		position.dtmRunnerDecision = state.runnerDecision;
+		if (!publishLiveEvent) {
+			return;
+		}
 		FuturesTrade logTrade = liveTradeFromPositionForDtm(position, bar);
 		pushLiveDtmDecisionEvent(
 			session.sessionId,
@@ -16223,15 +15126,49 @@ public class FuturesManager {
 		return stop < position.activeStopPrice && stop <= position.stopPrice;
 	}
 
+	private static boolean targetImprovesReward(PortfolioPosition position, double target) {
+		if (position == null || target <= 0.0) {
+			return false;
+		}
+		if ("LONG".equals(position.side)) {
+			return target > position.targetPrice + (position.spec.tickSize - 0.000001);
+		}
+		return target < position.targetPrice - (position.spec.tickSize - 0.000001);
+	}
+
 	private static boolean orderFlowAgainstPosition(String side, LiveRuntimeState.OrderFlowSnapshot flow) {
 		if (flow == null || !flow.available || !flow.fresh) {
 			return false;
 		}
 		String cleanSide = cleanOrDefault(side, "").toUpperCase(Locale.US);
 		if ("LONG".equals(cleanSide)) {
-			return flow.depthImbalance5 <= -0.35 || flow.tapeDelta <= -ENTRY_OPTIMIZER_HARD_OPPOSING_TAPE || "ASK_FLIP".equals(flow.bookFlip);
+			return flow.depthImbalance5 <= -0.35 || flow.tapeDelta <= -ORDER_FLOW_HARD_OPPOSING_TAPE || "ASK_FLIP".equals(flow.bookFlip);
 		}
-		return flow.depthImbalance5 >= 0.35 || flow.tapeDelta >= ENTRY_OPTIMIZER_HARD_OPPOSING_TAPE || "BID_FLIP".equals(flow.bookFlip);
+		return flow.depthImbalance5 >= 0.35 || flow.tapeDelta >= ORDER_FLOW_HARD_OPPOSING_TAPE || "BID_FLIP".equals(flow.bookFlip);
+	}
+
+	private static boolean strongOrderFlowAgainstPosition(String side, LiveRuntimeState.OrderFlowSnapshot flow) {
+		if (flow == null || !flow.available || !flow.fresh) {
+			return false;
+		}
+		String cleanSide = cleanOrDefault(side, "").toUpperCase(Locale.US);
+		if ("LONG".equals(cleanSide)) {
+			return (flow.depthImbalance5 <= -ORDER_FLOW_HARD_OPPOSING_IMBALANCE && flow.tapeDelta <= -ORDER_FLOW_HARD_OPPOSING_TAPE)
+				|| "ASK_FLIP".equals(flow.bookFlip);
+		}
+		return (flow.depthImbalance5 >= ORDER_FLOW_HARD_OPPOSING_IMBALANCE && flow.tapeDelta >= ORDER_FLOW_HARD_OPPOSING_TAPE)
+			|| "BID_FLIP".equals(flow.bookFlip);
+	}
+
+	private static boolean orderFlowSupportsPosition(String side, LiveRuntimeState.OrderFlowSnapshot flow) {
+		if (flow == null || !flow.available || !flow.fresh) {
+			return true;
+		}
+		String cleanSide = cleanOrDefault(side, "").toUpperCase(Locale.US);
+		if ("LONG".equals(cleanSide)) {
+			return flow.depthImbalance5 >= 0.15 || flow.tapeDelta >= ORDER_FLOW_SOFT_CONFIRM_TAPE || "BID_FLIP".equals(flow.bookFlip);
+		}
+		return flow.depthImbalance5 <= -0.15 || flow.tapeDelta <= -ORDER_FLOW_SOFT_CONFIRM_TAPE || "ASK_FLIP".equals(flow.bookFlip);
 	}
 
 	private static boolean trendAgainstPosition(String side, Bar bar) {
@@ -16247,23 +15184,207 @@ public class FuturesManager {
 		return (hasVwap && bar.close > bar.vwap) && (hasEma20 && bar.close > bar.ema20);
 	}
 
-	private static String dtmStateName(PortfolioPosition position, DynamicTradeState state, double favorableR, double adverseR, boolean flowAgainst, boolean trendAgainst) {
+	private static boolean trendWithPosition(String side, Bar bar) {
+		if (bar == null) {
+			return false;
+		}
+		String cleanSide = cleanOrDefault(side, "").toUpperCase(Locale.US);
+		boolean hasVwap = bar.vwap > 0.0;
+		boolean hasEma20 = bar.ema20 > 0.0;
+		if ("LONG".equals(cleanSide)) {
+			return (hasVwap && bar.close > bar.vwap) && (hasEma20 && bar.close > bar.ema20);
+		}
+		return (hasVwap && bar.close < bar.vwap) && (hasEma20 && bar.close < bar.ema20);
+	}
+
+	private static boolean dtmContinuationAligned(PortfolioPosition position, Bar bar, LiveRuntimeState.OrderFlowSnapshot flow, boolean trendAgainst, boolean strongFlowAgainst) {
+		if (position == null || bar == null || trendAgainst || strongFlowAgainst) {
+			return false;
+		}
+		double location = closeLocation(bar);
+		boolean closesStrong = "LONG".equals(position.side) ? location >= 0.58 : location <= 0.42;
+		boolean structureWith = trendWithPosition(position.side, bar) || closesStrong;
+		return structureWith && orderFlowSupportsPosition(position.side, flow);
+	}
+
+	private static boolean dtmExperimentalRunnerAligned(PortfolioPosition position, Bar bar, LiveRuntimeState.OrderFlowSnapshot flow, boolean trendAgainst, boolean strongFlowAgainst) {
+		if (position == null || bar == null || trendAgainst || strongFlowAgainst) {
+			return false;
+		}
+		double location = closeLocation(bar);
+		boolean closesStrong = "LONG".equals(position.side) ? location >= 0.55 : location <= 0.45;
+		boolean structureWith = trendWithPosition(position.side, bar) || closesStrong;
+		boolean flowWith = orderFlowSupportsPosition(position.side, flow);
+		return structureWith || flowWith;
+	}
+
+	private static double dtmExtensionTriggerR(double targetR) {
+		return targetR > 0.0 ? Math.max(DTM_PARTIAL_TRIGGER_R, targetR * DTM_EXTENSION_TARGET_FRACTION) : 1.40;
+	}
+
+	private static double dtmExtensionAcceptanceR(double targetR) {
+		return targetR > 0.0 ? Math.max(dtmExtensionTriggerR(targetR), targetR + DTM_EXTENSION_ACCEPTANCE_R) : 1.40;
+	}
+
+	private static double dtmExtendedTargetPrice(PortfolioPosition position, double targetR) {
+		if (position == null || position.initialRisk <= 0.0 || targetR <= 0.0) {
+			return 0.0;
+		}
+		double extendedR = Math.min(targetR + DTM_DYNAMIC_TARGET_EXTENSION_MAX_ADD_R, Math.max(targetR + 0.50, targetR * DTM_DYNAMIC_TARGET_EXTENSION_MULTIPLE));
+		double target = "LONG".equals(position.side)
+			? position.entryPrice + (position.initialRisk * extendedR)
+			: position.entryPrice - (position.initialRisk * extendedR);
+		return roundToTick(position.spec, target);
+	}
+
+	private static double dtmProfitLockStop(PortfolioPosition position, double favorableCloseR, double targetR, boolean oneContractRunner) {
+		if (position == null || position.initialRisk <= 0.0 || favorableCloseR <= DTM_EXTENSION_PROFIT_LOCK_BUFFER_R) {
+			return 0.0;
+		}
+		double minimumLockR = Math.max(oneContractRunner ? 0.70 : 0.45, targetR - DTM_EXTENSION_MAX_TARGET_GIVEBACK_R);
+		double targetLockR = Math.max(minimumLockR, targetR);
+		double lockR = Math.min(targetLockR, favorableCloseR - DTM_EXTENSION_PROFIT_LOCK_BUFFER_R);
+		if (lockR < minimumLockR) {
+			return 0.0;
+		}
+		double stop = "LONG".equals(position.side)
+			? position.entryPrice + (position.initialRisk * lockR)
+			: position.entryPrice - (position.initialRisk * lockR);
+		return roundToTick(position.spec, stop);
+	}
+
+	private static double dtmExperimentalRunnerStop(PortfolioPosition position, double favorableCloseR) {
+		if (position == null || position.initialRisk <= 0.0 || favorableCloseR <= DTM_EXTENSION_PROFIT_LOCK_BUFFER_R) {
+			return 0.0;
+		}
+		String mode = dtmExperimentalHalfRunnerStopMode();
+		double minimumLockR = 0.45;
+		double givebackR = DTM_EXTENSION_PROFIT_LOCK_BUFFER_R;
+		if ("balanced".equals(mode)) {
+			minimumLockR = 0.35;
+			givebackR = 0.45;
+		} else if ("loose".equals(mode)) {
+			minimumLockR = 0.25;
+			givebackR = 0.60;
+		}
+		double lockR = Math.max(minimumLockR, favorableCloseR - givebackR);
+		double stop = "LONG".equals(position.side)
+			? position.entryPrice + (position.initialRisk * lockR)
+			: position.entryPrice - (position.initialRisk * lockR);
+		return roundToTick(position.spec, stop);
+	}
+
+	private static double dtmTargetR(PortfolioPosition position) {
+		if (position == null || position.initialRisk <= 0.0) {
+			return 0.0;
+		}
+		return Math.max(0.0, favorableMovePoints(position, position.targetPrice) / position.initialRisk);
+	}
+
+	private static double dtmTargetAwareTrigger(double baseTriggerR, double targetR, double targetFraction, double maxTriggerR) {
+		double targetAware = targetR > 0.0 ? targetR * targetFraction : 0.0;
+		return Math.min(Math.max(baseTriggerR, targetAware), Math.max(baseTriggerR, maxTriggerR));
+	}
+
+	private static boolean dtmDynamicProtectiveOrdersEnabled() {
+		return !"false".equalsIgnoreCase(System.getProperty("tradingbot.dtm.dynamicProtectiveOrders", "true"));
+	}
+
+	private static boolean dtmOneContractExtensionEnabled() {
+		return "true".equalsIgnoreCase(System.getProperty("tradingbot.dtm.oneContractExtension", "false"));
+	}
+
+	private static boolean dtmExperimentalHalfRunnerEnabled() {
+		return !"false".equalsIgnoreCase(System.getProperty("tradingbot.dtm.experimentalHalfRunner", "true"));
+	}
+
+	private static double dtmExperimentalHalfRunnerTriggerR(double partialTriggerR, double targetR, double extensionAcceptanceR) {
+		String mode = dtmExperimentalHalfRunnerTriggerMode();
+		if ("acceptance".equals(mode)) {
+			return extensionAcceptanceR;
+		}
+		if ("target".equals(mode)) {
+			return targetR > 0.0 ? Math.max(partialTriggerR, targetR) : partialTriggerR;
+		}
+		return partialTriggerR;
+	}
+
+	private static boolean dtmExperimentalHalfRunnerQualified(PortfolioPosition position, double targetR) {
+		int minContracts = dtmExperimentalHalfRunnerMinContracts();
+		if (position == null || position.contracts < Math.max(2, minContracts)) {
+			return false;
+		}
+		String targetMode = dtmExperimentalHalfRunnerTargetMode();
+		if ("medium".equals(targetMode)) {
+			return targetR >= 1.25 && targetR < 1.60;
+		}
+		return true;
+	}
+
+	private static String dtmExperimentalHalfRunnerTriggerMode() {
+		return cleanOrDefault(System.getProperty("tradingbot.dtm.experimentalHalfRunnerTrigger", "partial"), "partial").toLowerCase(Locale.US);
+	}
+
+	private static String dtmExperimentalHalfRunnerStopMode() {
+		return cleanOrDefault(System.getProperty("tradingbot.dtm.experimentalHalfRunnerStop", "tight"), "tight").toLowerCase(Locale.US);
+	}
+
+	private static int dtmExperimentalHalfRunnerMinContracts() {
+		return ApiRequestUtils.parseIntOrDefault(System.getProperty("tradingbot.dtm.experimentalHalfRunnerMinContracts"), 2);
+	}
+
+	private static String dtmExperimentalHalfRunnerTargetMode() {
+		return cleanOrDefault(System.getProperty("tradingbot.dtm.experimentalHalfRunnerTargetMode", "any"), "any").toLowerCase(Locale.US);
+	}
+
+	private static String dtmStrategyCode(PortfolioPosition position) {
+		return position == null || position.signal == null ? "" : cleanOrDefault(position.signal.strategyCode, "").toUpperCase(Locale.US);
+	}
+
+	private static int dtmMinimumBarsBeforeProtect(PortfolioPosition position) {
+		String code = dtmStrategyCode(position);
+		if ("KREV".equals(code) || "LIQREC".equals(code) || "ORB".equals(code) || "ORB2".equals(code)) {
+			return 2;
+		}
+		return 3;
+	}
+
+	private static int dtmMinimumBarsBeforeTargetManagement(PortfolioPosition position) {
+		String code = dtmStrategyCode(position);
+		if ("KREV".equals(code) || "LIQREC".equals(code) || "ORB".equals(code) || "ORB2".equals(code)) {
+			return 3;
+		}
+		return 4;
+	}
+
+	private static int dtmMinimumBarsBeforeEarlyCut(PortfolioPosition position) {
+		String code = dtmStrategyCode(position);
+		if ("KREV".equals(code) || "LIQREC".equals(code)) {
+			return 3;
+		}
+		if ("OMOM".equals(code) || "ORB".equals(code) || "ORB2".equals(code) || "SWEEP".equals(code)) {
+			return 4;
+		}
+		return 6;
+	}
+
+	private static String dtmStateName(PortfolioPosition position, DynamicTradeState state, double favorableR, double adverseR, boolean flowAgainst, boolean trendAgainst, double breakevenTriggerR, double partialTriggerR) {
 		if (state != null && state.partialTaken) {
 			return "RUNNER";
 		}
-		if (adverseR >= DTM_EARLY_CUT_ADVERSE_R && (flowAgainst || trendAgainst)) {
+		if (adverseR >= DTM_EARLY_CUT_CLOSE_ADVERSE_R && (flowAgainst || trendAgainst)) {
 			return "DEFEND";
 		}
-		if (favorableR >= DTM_PARTIAL_TRIGGER_R) {
+		if (favorableR >= partialTriggerR) {
 			return "TARGET_DECISION";
 		}
-		if (favorableR >= DTM_BREAKEVEN_TRIGGER_R) {
+		if (favorableR >= breakevenTriggerR) {
 			return "PROTECT";
 		}
 		return "PROBE";
 	}
 
-	private static boolean dtmThesisInvalidated(PortfolioPosition position, PortfolioSymbolContext context, Bar bar, boolean flowAgainst, boolean trendAgainst) {
+	private static boolean dtmThesisInvalidated(PortfolioPosition position, PortfolioSymbolContext context, Bar bar, boolean strongFlowAgainst, boolean trendAgainst, double adverseCloseR) {
 		if (position == null || bar == null) {
 			return false;
 		}
@@ -16271,7 +15392,7 @@ public class FuturesManager {
 		if (risk <= 0.0) {
 			return false;
 		}
-		double checkpoint = Math.max(0.25, DTM_EARLY_CUT_ADVERSE_R) * risk;
+		double checkpoint = DTM_EARLY_CUT_CLOSE_ADVERSE_R * risk;
 		boolean structureBreak = false;
 		if ("LONG".equals(position.side)) {
 			double adverseCheckpoint = position.entryPrice - checkpoint;
@@ -16280,7 +15401,7 @@ public class FuturesManager {
 			double adverseCheckpoint = position.entryPrice + checkpoint;
 			structureBreak = bar.close >= adverseCheckpoint;
 		}
-		return structureBreak && (trendAgainst || flowAgainst);
+		return structureBreak && (trendAgainst || (strongFlowAgainst && adverseCloseR >= 0.80));
 	}
 
 	private static String dtmDetailsJson(
@@ -16289,6 +15410,10 @@ public class FuturesManager {
 		LiveRuntimeState.OrderFlowSnapshot flow,
 		double favorableR,
 		double adverseR,
+		double favorableCloseR,
+		double adverseCloseR,
+		double targetR,
+		int barsHeld,
 		int partialContracts,
 		double stopPrice,
 		double targetPrice,
@@ -16303,6 +15428,10 @@ public class FuturesManager {
 			+ "\"exitEvidenceCount\":" + Math.max(0, exitEvidenceCount) + ","
 			+ "\"favorableR\":" + round(favorableR) + ","
 			+ "\"adverseR\":" + round(adverseR) + ","
+			+ "\"favorableCloseR\":" + round(favorableCloseR) + ","
+			+ "\"adverseCloseR\":" + round(adverseCloseR) + ","
+			+ "\"targetR\":" + round(targetR) + ","
+			+ "\"barsHeld\":" + Math.max(0, barsHeld) + ","
 			+ "\"entryPrice\":" + round(position == null ? 0.0 : position.entryPrice) + ","
 			+ "\"currentPrice\":" + round(bar == null ? 0.0 : bar.close) + ","
 			+ "\"activeStop\":" + round(position == null ? 0.0 : position.activeStopPrice) + ","
@@ -16345,7 +15474,10 @@ public class FuturesManager {
 		if ("DTM_MOVE_STOP_BREAKEVEN".equals(code)) return "DTM moved stop to breakeven.";
 		if ("DTM_TRAIL_STOP".equals(code)) return "DTM trailed the stop.";
 		if ("DTM_PARTIAL_TARGET".equals(code)) return "DTM partially sold the position.";
+		if ("DTM_PARTIAL_HALF_RUNNER_EXTENDED".equals(code)) return "DTM partially sold half and extended the runner.";
 		if ("DTM_PARTIAL_BLOCKED".equals(code)) return "DTM partial close was blocked.";
+		if ("DTM_EXTEND_TARGET_CONTINUATION".equals(code)) return "DTM extended the runner target.";
+		if ("DTM_EXTEND_ONE_CONTRACT_RUNNER".equals(code)) return "DTM extended a one-contract runner.";
 		if ("DTM_CUT_EARLY_THESIS_FAILED".equals(code)) return "DTM cut the trade early.";
 		return "DTM trade decision recorded.";
 	}
@@ -16403,14 +15535,6 @@ public class FuturesManager {
 		private PortfolioPosition position;
 	}
 
-	private static class OrderFlowEntryDecision {
-		private boolean enabled;
-		private boolean passed = true;
-		private String actionCode = "ORDER_FLOW_DISABLED";
-		private String reason = "Entry optimizer is off.";
-		private String metricsJson = "{}";
-	}
-
 	private static class DynamicTradeDecision {
 		private String actionCode = "DTM_HOLD_THESIS_INTACT";
 		private String normalizedAction = "HOLD_STATIC";
@@ -16418,6 +15542,7 @@ public class FuturesManager {
 		private String reason = "";
 		private String detailsJson = "{}";
 		private double stopPrice;
+		private double targetPrice;
 		private int partialContracts;
 		private boolean brokerAction;
 		private boolean finalExit;
@@ -16432,7 +15557,11 @@ public class FuturesManager {
 		private boolean partialTaken;
 		private boolean partialCloseBlocked;
 		private double lastStopPrice;
+		private double lastTargetPrice;
+		private boolean targetExtended;
+		private boolean oneContractExtended;
 		private int exitEvidenceCount;
+		private int lastExitEvidenceIndex = -1;
 		private boolean exitRequested;
 		private double realizedPnl;
 		private String stateName = "PROBE";
@@ -16829,151 +15958,6 @@ public class FuturesManager {
 		return 0.50;
 	}
 
-	private static LiveRuntimeState.OrderFlowSnapshot emptyOrderFlowSnapshot(String symbol) {
-		LiveRuntimeState.OrderFlowSnapshot snapshot = new LiveRuntimeState.OrderFlowSnapshot();
-		snapshot.symbol = normalizeSymbol(symbol);
-		return snapshot;
-	}
-
-	private static OrderFlowEntryDecision evaluateLiveEntryOrderFlow(FuturesLiveSession session, LivePortfolioSignalCandidate candidate) {
-		boolean optimizerEnabled = session != null && session.entryOptimizerEnabled;
-		LiveRuntimeState.OrderFlowSnapshot flow = candidate == null ? null : LiveRuntimeState.orderFlowSnapshot(candidate.symbol);
-		return evaluateEntryOrderFlow(candidate, flow, optimizerEnabled);
-	}
-
-	private static OrderFlowEntryDecision evaluateEntryOrderFlow(LivePortfolioSignalCandidate candidate, LiveRuntimeState.OrderFlowSnapshot flow, boolean optimizerEnabled) {
-		OrderFlowEntryDecision decision = new OrderFlowEntryDecision();
-		if (candidate == null || candidate.event == null || candidate.event.signal == null) {
-			decision.passed = false;
-			decision.actionCode = "ORDER_FLOW_BLOCK_INCOMPLETE";
-			decision.reason = "Entry optimizer blocked because the candidate was incomplete.";
-			return decision;
-		}
-		Signal signal = candidate.event.signal;
-		decision.enabled = optimizerEnabled;
-		if (!decision.enabled) {
-			return decision;
-		}
-		String side = cleanOrDefault(signal.side, "").toUpperCase(Locale.US);
-		if (flow == null) {
-			flow = emptyOrderFlowSnapshot(candidate.symbol);
-		}
-		decision.metricsJson = flow.toJson();
-		if (!flow.available || !flow.fresh) {
-			decision.passed = true;
-			decision.actionCode = "ORDER_FLOW_PASS_FALLBACK";
-			decision.reason = "Entry optimizer passed in fallback mode because fresh Level 2 depth was not available; base strategy and Risk Config remain in control.";
-			return decision;
-		}
-		if (flow.spreadTicks >= ENTRY_OPTIMIZER_MAX_SPREAD_TICKS) {
-			decision.passed = false;
-			decision.actionCode = "ORDER_FLOW_BLOCK_SPREAD";
-			decision.reason = "Entry optimizer blocked because spread widened to " + liveNumberText(flow.spreadTicks) + " ticks.";
-			return decision;
-		}
-			boolean longSide = "LONG".equals(side);
-			boolean shortSide = "SHORT".equals(side);
-			boolean keltnerReversion = "KREV".equals(cleanOrDefault(signal.strategyCode, "").toUpperCase(Locale.US));
-			boolean hardAgainstLong = longSide
-				&& flow.depthImbalance5 <= -ENTRY_OPTIMIZER_HARD_OPPOSING_IMBALANCE
-				&& flow.tapeDelta <= -ENTRY_OPTIMIZER_HARD_OPPOSING_TAPE;
-		boolean hardAgainstShort = shortSide
-			&& flow.depthImbalance5 >= ENTRY_OPTIMIZER_HARD_OPPOSING_IMBALANCE
-			&& flow.tapeDelta >= ENTRY_OPTIMIZER_HARD_OPPOSING_TAPE;
-		if (hardAgainstLong || hardAgainstShort) {
-			decision.passed = false;
-			decision.actionCode = "ORDER_FLOW_BLOCK_BOOK_TAPE_AGAINST";
-			decision.reason = "Entry optimizer blocked because depth imbalance and aggressive tape were both against the setup.";
-			return decision;
-		}
-		if ((longSide && "ASK_FLIP".equals(flow.bookFlip)) || (shortSide && "BID_FLIP".equals(flow.bookFlip))) {
-			decision.passed = false;
-			decision.actionCode = "ORDER_FLOW_BLOCK_BOOK_FLIP";
-			decision.reason = "Entry optimizer blocked because the book flipped against the candidate.";
-			return decision;
-		}
-		if (flow.liquidityVacuum && flow.spreadTicks >= 3.0) {
-			decision.passed = false;
-			decision.actionCode = "ORDER_FLOW_BLOCK_LIQUIDITY_VACUUM";
-				decision.reason = "Entry optimizer blocked because nearby liquidity thinned out while spread was elevated.";
-				return decision;
-			}
-			if (keltnerReversion) {
-				boolean confirmedReversionLong = longSide
-					&& (flow.depthImbalance5 >= ENTRY_OPTIMIZER_KREV_MIN_DEPTH_CONFIRMATION || flow.tapeDelta >= ENTRY_OPTIMIZER_KREV_MIN_TAPE_CONFIRMATION || "BID_ABSORPTION".equals(flow.absorption));
-				boolean confirmedReversionShort = shortSide
-					&& (flow.depthImbalance5 <= -ENTRY_OPTIMIZER_KREV_MIN_DEPTH_CONFIRMATION || flow.tapeDelta <= -ENTRY_OPTIMIZER_KREV_MIN_TAPE_CONFIRMATION || "ASK_ABSORPTION".equals(flow.absorption));
-				if ((longSide && !confirmedReversionLong) || (shortSide && !confirmedReversionShort)) {
-					decision.passed = false;
-					decision.actionCode = "ORDER_FLOW_BLOCK_KREV_UNCONFIRMED";
-					decision.reason = "Entry optimizer blocked KREV because the reclaim did not have enough fresh tape/depth confirmation for a live mean-reversion entry.";
-					return decision;
-				}
-			}
-			boolean confirmingLong = longSide && (flow.depthImbalance5 >= 0.15 || flow.tapeDelta > 0.0 || "BID_ABSORPTION".equals(flow.absorption));
-			boolean confirmingShort = shortSide && (flow.depthImbalance5 <= -0.15 || flow.tapeDelta < 0.0 || "ASK_ABSORPTION".equals(flow.absorption));
-			boolean weakAgainstLong = longSide && (flow.depthImbalance5 <= -0.10 || flow.tapeDelta < 0.0 || "ASK_FLIP".equals(flow.bookFlip));
-			boolean weakAgainstShort = shortSide && (flow.depthImbalance5 >= 0.10 || flow.tapeDelta > 0.0 || "BID_FLIP".equals(flow.bookFlip));
-			if (fragileOpeningMomentumOpposed(candidate, flow, weakAgainstLong, weakAgainstShort) && !(confirmingLong || confirmingShort)) {
-				decision.passed = false;
-				decision.actionCode = "ORDER_FLOW_BLOCK_FRAGILE_OMOM_UNCONFIRMED";
-				decision.reason = "Entry optimizer blocked OMOM because the stop geometry was tight and fresh tape/CVD leaned against the live entry.";
-				return decision;
-			}
-			if (entryOptimizerRequiresFreshConfirmation(signal.strategyCode) && !(confirmingLong || confirmingShort) && (weakAgainstLong || weakAgainstShort)) {
-				decision.passed = false;
-				decision.actionCode = "ORDER_FLOW_BLOCK_WEAK_CONFIRMATION";
-				decision.reason = "Entry optimizer blocked because fresh order flow was not confirming a fragile pattern entry and showed weak opposing evidence.";
-				return decision;
-			}
-			decision.passed = true;
-		decision.actionCode = (confirmingLong || confirmingShort) ? "ORDER_FLOW_PASS_CONFIRMED" : "ORDER_FLOW_PASS_NEUTRAL";
-		decision.reason = (confirmingLong || confirmingShort)
-			? "Entry optimizer passed because Level 2/tape did not fight the setup and at least one order-flow confirmation aligned."
-			: "Entry optimizer passed because order flow was neutral and showed no hard adverse condition.";
-		return decision;
-	}
-
-	private static boolean fragileOpeningMomentumOpposed(LivePortfolioSignalCandidate candidate, LiveRuntimeState.OrderFlowSnapshot flow, boolean weakAgainstLong, boolean weakAgainstShort) {
-		if (candidate == null || candidate.event == null || candidate.event.signal == null || flow == null) {
-			return false;
-		}
-		Signal signal = candidate.event.signal;
-		String code = cleanOrDefault(signal.strategyCode, "").toUpperCase(Locale.US);
-		if (!"OMOM".equals(code)) {
-			return false;
-		}
-		InstrumentSpec spec = candidate.context != null && candidate.context.spec != null
-			? candidate.context.spec
-			: instrumentFor(candidate.symbol);
-		double tick = spec == null ? 0.0 : spec.tickSize;
-		if (tick <= 0.0) {
-			return false;
-		}
-		double riskTicks = Math.abs(signal.entryPrice - signal.stopPrice) / tick;
-		if (riskTicks > 32.0) {
-			return false;
-		}
-		String side = cleanOrDefault(signal.side, "").toUpperCase(Locale.US);
-		boolean cvdAgainstLong = "LONG".equals(side) && flow.cvd < 0.0;
-		boolean cvdAgainstShort = "SHORT".equals(side) && flow.cvd > 0.0;
-		return ("LONG".equals(side) && (weakAgainstLong || cvdAgainstLong))
-			|| ("SHORT".equals(side) && (weakAgainstShort || cvdAgainstShort));
-	}
-
-	private static boolean entryOptimizerRequiresFreshConfirmation(String strategyCode) {
-		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
-		return "FVG".equals(code)
-			|| "IFVG".equals(code)
-			|| "VWAP".equals(code)
-			|| "VRCL".equals(code)
-			|| "KREV".equals(code)
-			|| "LIQREC".equals(code)
-			|| "MRVWAP".equals(code)
-			|| "SWEEP".equals(code)
-			|| "PDB".equals(code);
-	}
-
 	private static LiveSignalOrder validateLivePortfolioSignal(
 		FuturesLiveSession session,
 		PortfolioBacktestConfig portfolioConfig,
@@ -17204,7 +16188,7 @@ public class FuturesManager {
 			Signal signal = event.signal;
 			FuturesStrategySettings settings = context.config == null || context.config.strategySettings == null ? defaultFuturesStrategySettings() : context.config.strategySettings;
 			snapshot.maxInitialRiskTicks = liveInitialRiskLimitTicks(settings, signal.strategyCode);
-		snapshot.maxContracts = context.config == null ? 0 : context.config.maxContracts;
+		snapshot.maxContracts = context.config == null ? 0 : strategySpecificMaxContracts(context.symbol, signal.strategyCode, settings, context.config.maxContracts);
 		snapshot.entryPrice = acceptedPosition != null && acceptedPosition.entryPrice > 0.0
 			? acceptedPosition.entryPrice
 			: applySlippage(context.spec, entryBar.open > 0.0 ? entryBar.open : entryBar.close, signal.side, context.config.slippageTicks, true);
@@ -17358,6 +16342,8 @@ public class FuturesManager {
 		FundedRuleProfile profile = accountSizing.profile;
 		double maxRisk = positiveOrDefault(accountSizing.maxRiskPerTrade, config.maxRiskPerTrade);
 		int maxContracts = Math.min(profileMaxContractsForSymbol(profile, symbol), Math.max(1, Math.min(accountSizing.maxContracts, config.maxContracts)));
+		FuturesStrategySettings strategySettings = config.strategySettings == null ? defaultFuturesStrategySettings() : config.strategySettings;
+		maxContracts = strategySpecificMaxContracts(symbol, signal.strategyCode, strategySettings, maxContracts);
 		if (accountSizing.maxAggregateMiniUnits > 0.0) {
 			maxContracts = Math.min(maxContracts, contractsAllowedByMiniUnitRoom(symbol, accountSizing.maxAggregateMiniUnits));
 		}
@@ -17812,7 +16798,7 @@ public class FuturesManager {
 	}
 
 	private static void resetDynamicTradeStatesForSession(int sessionId) {
-		if (sessionId <= 0) {
+		if (sessionId == 0) {
 			return;
 		}
 		synchronized (FuturesManager.class) {
@@ -17882,6 +16868,9 @@ public class FuturesManager {
 			if (state.lastStopPrice > 0.0) {
 				position.activeStopPrice = state.lastStopPrice;
 			}
+		if (state.lastTargetPrice > 0.0) {
+			position.targetPrice = state.lastTargetPrice;
+		}
 		position.dtmPartialContractsClosed = state.partialContractsClosed;
 		position.dtmRealizedPnl = state.realizedPnl;
 		position.dtmTimelineJson = state.timelineJson;
@@ -17902,6 +16891,7 @@ public class FuturesManager {
 					state.originalContracts = Math.max(1, position.originalContracts > 0 ? position.originalContracts : position.contracts);
 					state.remainingContracts = Math.max(1, position.contracts);
 					state.lastStopPrice = position.activeStopPrice > 0.0 ? position.activeStopPrice : position.stopPrice;
+					state.lastTargetPrice = position.targetPrice;
 					LIVE_DTM_STATES.put(key, state);
 				}
 			return state;
@@ -18126,7 +17116,6 @@ public class FuturesManager {
 		copy.maxOpenPositions = source.maxOpenPositions;
 		copy.maxAggregateContracts = source.maxAggregateContracts;
 		copy.maxAggregateMiniUnits = source.maxAggregateMiniUnits;
-		copy.entryOptimizerEnabled = source.entryOptimizerEnabled;
 		copy.dtmEnabled = source.dtmEnabled;
 		copy.decisionCount = source.decisionCount;
 		copy.acceptedDecisionCount = source.acceptedDecisionCount;
@@ -18159,7 +17148,6 @@ public class FuturesManager {
 		double maxAggregateMiniUnits,
 		String symbols,
 		String strategyPreset,
-		boolean entryOptimizerEnabled,
 		boolean dtmEnabled
 		) {
 			initializeStore();
@@ -18176,8 +17164,7 @@ public class FuturesManager {
 		String cleanLiveSymbols = cleanSymbolsCsv(cleanOrDefault(symbols, DEFAULT_LIVE_SYMBOLS));
 		String strategyPresetName = normalizeStrategyPresetName(strategyPreset);
 		String strategySlot = strategyPresetSlot(strategyPresetName);
-		boolean effectiveEntryOptimizerEnabled = entryOptimizerEnabled;
-		boolean orderFlowFeaturesEnabled = effectiveEntryOptimizerEnabled || dtmEnabled;
+		boolean orderFlowFeaturesEnabled = dtmEnabled;
 		String configuredAccountId = FuturesConnectionManager.getTopstepxConfiguredAccountId();
 		String requestedAccountId = cleanOrDefault(topstepAccountId, "");
 		String executionAccountId = requestedAccountId.length() > 0
@@ -18251,7 +17238,6 @@ public class FuturesManager {
 				liveSession.maxOpenPositions = sessionMaxOpenPositions;
 				liveSession.maxAggregateContracts = sessionMaxAggregateContracts;
 				liveSession.maxAggregateMiniUnits = sessionMaxAggregateMiniUnits;
-				liveSession.entryOptimizerEnabled = effectiveEntryOptimizerEnabled;
 				liveSession.dtmEnabled = dtmEnabled;
 				liveSession.startedAt = startedAt;
 				liveSession.lastUpdatedAt = liveSession.startedAt;
@@ -18339,7 +17325,6 @@ public class FuturesManager {
 							+ "\"strategyConfig\":" + jsonString(strategyPresetName) + ","
 							+ "\"strategyPreset\":" + jsonString(strategyPresetName) + ","
 						+ "\"riskConfig\":" + jsonString(profile.name) + ","
-							+ "\"entryOptimizerEnabled\":" + effectiveEntryOptimizerEnabled + ","
 						+ "\"dtmEnabled\":" + dtmEnabled + ","
 						+ "\"includeDepth\":" + orderFlowFeaturesEnabled + ","
 						+ "\"mode\":" + jsonString(normalizedMode) + ","
@@ -18391,7 +17376,6 @@ public class FuturesManager {
 			liveSession.maxOpenPositions = sessionMaxOpenPositions;
 			liveSession.maxAggregateContracts = sessionMaxAggregateContracts;
 			liveSession.maxAggregateMiniUnits = sessionMaxAggregateMiniUnits;
-			liveSession.entryOptimizerEnabled = effectiveEntryOptimizerEnabled;
 			liveSession.dtmEnabled = dtmEnabled;
 			liveSession.startedAt = startedAt;
 			liveSession.lastUpdatedAt = liveSession.startedAt;
@@ -18428,7 +17412,7 @@ public class FuturesManager {
 						+ "\"strategyConfig\":" + jsonString(strategyPresetName) + ","
 						+ "\"strategyPreset\":" + jsonString(strategyPresetName) + ","
 					+ "\"riskConfig\":" + jsonString(profile.name) + ","
-					+ "\"entryOptimizerEnabled\":" + effectiveEntryOptimizerEnabled + ","
+					+ "\"dtmEnabled\":" + dtmEnabled + ","
 					+ "\"includeDepth\":" + orderFlowFeaturesEnabled + ","
 					+ "\"mode\":" + jsonString(normalizedMode) + ","
 					+ "\"profile\":" + jsonString(profile.name) + ","
@@ -18600,7 +17584,6 @@ public class FuturesManager {
 			+ "\"maxOpenPositions\":" + copy.maxOpenPositions + ","
 			+ "\"maxAggregateContracts\":" + copy.maxAggregateContracts + ","
 			+ "\"maxAggregateMiniUnits\":" + round(copy.maxAggregateMiniUnits) + ","
-			+ "\"entryOptimizerEnabled\":" + copy.entryOptimizerEnabled + ","
 			+ "\"dtmEnabled\":" + copy.dtmEnabled + ","
 			+ "\"includeDepth\":" + ProjectXRealtimeManager.isDepthIncluded() + ","
 			+ "\"decisionCount\":" + copy.decisionCount + ","
@@ -19102,6 +18085,9 @@ public class FuturesManager {
 		List<PortfolioPosition> openPositions = new ArrayList<PortfolioPosition>();
 		boolean endOfDayTrailing = usesEndOfDayTrailing(config.trailingDrawdownMode);
 		double maeRuleBuffer = Math.max(0.0, PORTFOLIO_BACKTEST_MAE_RULE_BUFFER);
+		int backtestDtmSessionId = -Math.max(1, (int) (System.nanoTime() & 0x7fffffff));
+		FuturesLiveSession backtestDtmSession = simulatedBacktestDtmSession(config, backtestDtmSessionId);
+		LiveStrategySnapshotRow backtestDtmSnapshot = simulatedBacktestSnapshot(config, backtestDtmSessionId);
 
 		for (int dayIndex = 0; dayIndex < days.size(); dayIndex++) {
 			LocalDate day = days.get(dayIndex);
@@ -19133,6 +18119,7 @@ public class FuturesManager {
 						if (context == null || entryBar == null) {
 							continue;
 						}
+						LivePortfolioSignalCandidate candidate = portfolioSignalCandidate(context, event, entryBar);
 						if (hasOpenSymbol(openPositions, event.symbol) || openPositions.size() >= config.maxOpenPositions) {
 							result.overlapRejections++;
 							continue;
@@ -19240,7 +18227,7 @@ public class FuturesManager {
 					}
 				}
 
-				List<FuturesTrade> closedTrades = closeTriggeredPortfolioPositions(openPositions, contexts, currentBars, day, time);
+				List<FuturesTrade> closedTrades = closeTriggeredPortfolioPositions(openPositions, contexts, currentBars, day, time, config.dtmEnabled, backtestDtmSession, backtestDtmSnapshot, result);
 				for (int closedIndex = 0; closedIndex < closedTrades.size(); closedIndex++) {
 					FuturesTrade trade = closedTrades.get(closedIndex);
 					balance = round(balance + trade.pnl);
@@ -19340,6 +18327,7 @@ public class FuturesManager {
 		} else if (result.continuedAfterRuleViolation) {
 			result.ruleMessage = result.ruleMessage + " Backtest continued after breach for full-trade analysis.";
 		}
+		resetDynamicTradeStatesForSession(backtestDtmSessionId);
 		return result;
 	}
 
@@ -19351,6 +18339,28 @@ public class FuturesManager {
 			result.ruleMessage = cleanOrDefault(message, "Portfolio funded rule violation.");
 		}
 		result.ruleViolation = true;
+	}
+
+	private static FuturesLiveSession simulatedBacktestDtmSession(PortfolioBacktestConfig config, int sessionId) {
+		FuturesLiveSession session = new FuturesLiveSession();
+		session.sessionId = sessionId;
+		session.executionMode = "SIMULATED_BACKTEST";
+		session.fundedProfile = config == null ? "CUSTOM" : cleanOrDefault(config.fundedProfile, "CUSTOM");
+		session.strategyPreset = config == null ? DEFAULT_STRATEGY_PRESET : cleanOrDefault(config.strategyPreset, DEFAULT_STRATEGY_PRESET);
+		session.strategySlot = config == null ? STRATEGY_SLOT_BACKTEST : cleanOrDefault(config.strategySlot, STRATEGY_SLOT_BACKTEST);
+		session.symbols = config == null || config.symbols == null ? "" : String.join(",", config.symbols);
+		session.dtmEnabled = config != null && config.dtmEnabled;
+		return session;
+	}
+
+	private static LiveStrategySnapshotRow simulatedBacktestSnapshot(PortfolioBacktestConfig config, int snapshotId) {
+		LiveStrategySnapshotRow snapshot = new LiveStrategySnapshotRow();
+		snapshot.snapshotId = snapshotId;
+		snapshot.sourcePortfolioBacktestId = config == null ? 0 : config.sourcePortfolioBacktestId;
+		snapshot.symbols = config == null || config.symbols == null ? "" : String.join(",", config.symbols);
+		snapshot.fundedProfile = config == null ? "CUSTOM" : cleanOrDefault(config.fundedProfile, "CUSTOM");
+		snapshot.accountMode = "BACKTEST";
+		return snapshot;
 	}
 
 	private static Map<String, PortfolioSymbolContext> buildPortfolioContexts(PortfolioBacktestConfig config) {
@@ -19409,6 +18419,9 @@ public class FuturesManager {
 			context.fifteenMinuteByDay = groupByDay(loadNativeFuturesBars(symbol, config.startDate, config.endDate, "15min").bars);
 			context.oneHourByDay = groupByDay(loadNativeFuturesBars(symbol, config.startDate, config.endDate, "1hour").bars);
 			context.indexByDayTime = indexBarsByDayTime(context.byDay);
+			if (config.dtmEnabled) {
+				context.orderFlowByDayTime = loadSyntheticOrderFlowSnapshots(symbol, config.startDate, config.endDate);
+			}
 			preparePortfolioSignalEvents(context);
 			contexts.put(symbol, context);
 		}
@@ -20188,6 +19201,26 @@ public class FuturesManager {
 		return byTime == null ? null : byTime.get(time);
 	}
 
+	private static LiveRuntimeState.OrderFlowSnapshot orderFlowAt(PortfolioSymbolContext context, LocalDate day, LocalTime time) {
+		if (context == null || context.orderFlowByDayTime == null || day == null || time == null) {
+			return null;
+		}
+		Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot> byTime = context.orderFlowByDayTime.get(day);
+		return byTime == null ? null : byTime.get(time);
+	}
+
+	private static LivePortfolioSignalCandidate portfolioSignalCandidate(PortfolioSymbolContext context, SignalEvent event, Bar entryBar) {
+		LivePortfolioSignalCandidate candidate = new LivePortfolioSignalCandidate();
+		candidate.symbol = event == null ? "" : event.symbol;
+		candidate.context = context;
+		candidate.event = event;
+		candidate.entryBar = entryBar;
+		LocalTime signalTime = signalBarTime(context, event);
+		candidate.signalTime = displayTime(event == null ? null : event.day, signalTime);
+		candidate.entryTime = displayTime(event == null ? null : event.day, event == null ? null : event.entryTime);
+		return candidate;
+	}
+
 	private static List<SignalEvent> signalEventsAt(Map<String, PortfolioSymbolContext> contexts, LocalDate day, LocalTime time) {
 		List<SignalEvent> events = new ArrayList<SignalEvent>();
 		for (PortfolioSymbolContext context : contexts.values()) {
@@ -20485,6 +19518,16 @@ public class FuturesManager {
 		return isMicroFuturesSymbol(symbol) ? 0.1 : 1.0;
 	}
 
+	private static int strategySpecificMaxContracts(String symbol, String strategyCode, FuturesStrategySettings settings, int configuredMaxContracts) {
+		int maxContracts = Math.max(0, configuredMaxContracts);
+		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
+		FuturesStrategySettings safe = settings == null ? defaultFuturesStrategySettings() : settings;
+		if ("LIQREC".equals(code) && safe.liquidityReclaimMaxContracts > 0) {
+			maxContracts = maxContracts <= 0 ? safe.liquidityReclaimMaxContracts : Math.min(maxContracts, safe.liquidityReclaimMaxContracts);
+		}
+		return maxContracts;
+	}
+
 	private static PortfolioPosition openPortfolioPosition(
 		PortfolioSymbolContext context,
 		SignalEvent event,
@@ -20561,7 +19604,8 @@ public class FuturesManager {
 		double riskPerContract = (Math.abs(entryPrice - stopFillForRisk) / context.spec.tickSize * context.spec.tickValue) + (context.config.commissionPerContract * 2.0);
 		double sizingRiskPerContract = riskPerContract * settings.openMaeRiskMultiplier;
 		double effectiveRiskBudget = Math.max(0.0, riskBudget);
-		int contracts = Math.min(context.config.maxContracts, Math.min(aggregateRoom, (int) Math.floor(effectiveRiskBudget / Math.max(1.0, riskPerContract))));
+		int maxContracts = strategySpecificMaxContracts(context.symbol, signal.strategyCode, settings, context.config.maxContracts);
+		int contracts = Math.min(maxContracts, Math.min(aggregateRoom, (int) Math.floor(effectiveRiskBudget / Math.max(1.0, riskPerContract))));
 		while (contracts > 0 && (sizingRiskPerContract * contracts) > Math.max(0.0, aggregateGuardBudget)) {
 			contracts--;
 		}
@@ -20676,6 +19720,33 @@ public class FuturesManager {
 		LocalDate day,
 		LocalTime time
 	) {
+		return closeTriggeredPortfolioPositions(positions, contexts, currentBars, day, time, false, null, null);
+	}
+
+	private static List<FuturesTrade> closeTriggeredPortfolioPositions(
+		List<PortfolioPosition> positions,
+		Map<String, PortfolioSymbolContext> contexts,
+		Map<String, Bar> currentBars,
+		LocalDate day,
+		LocalTime time,
+		boolean dtmEnabled,
+		FuturesLiveSession dtmSession,
+		LiveStrategySnapshotRow dtmSnapshot
+	) {
+		return closeTriggeredPortfolioPositions(positions, contexts, currentBars, day, time, dtmEnabled, dtmSession, dtmSnapshot, null);
+	}
+
+	private static List<FuturesTrade> closeTriggeredPortfolioPositions(
+		List<PortfolioPosition> positions,
+		Map<String, PortfolioSymbolContext> contexts,
+		Map<String, Bar> currentBars,
+		LocalDate day,
+		LocalTime time,
+		boolean dtmEnabled,
+		FuturesLiveSession dtmSession,
+		LiveStrategySnapshotRow dtmSnapshot,
+		PortfolioBacktestResult result
+	) {
 		List<FuturesTrade> trades = new ArrayList<FuturesTrade>();
 		for (int index = positions.size() - 1; index >= 0; index--) {
 			PortfolioPosition position = positions.get(index);
@@ -20684,10 +19755,68 @@ public class FuturesManager {
 			if (context == null || bar == null) {
 				continue;
 			}
-			FuturesTrade trade = closePortfolioPositionIfTriggered(position, context, bar, day, time);
-			if (trade != null) {
-				trades.add(0, trade);
+			FuturesTrade triggeredTrade = dtmEnabled
+				? closePortfolioPositionIfStopTriggered(position, context, bar, day, time)
+				: closePortfolioPositionIfTriggered(position, context, bar, day, time);
+			if (triggeredTrade != null) {
+				if (dtmEnabled) {
+					applyDynamicTradeStateToTrade(
+						dtmSession == null ? 0 : dtmSession.sessionId,
+						dtmSnapshot == null ? 0 : dtmSnapshot.snapshotId,
+						position,
+						triggeredTrade,
+						""
+					);
+				}
+				trades.add(0, triggeredTrade);
 				positions.remove(index);
+				continue;
+			}
+			if (dtmEnabled) {
+				LiveRuntimeState.OrderFlowSnapshot flow = orderFlowAt(context, day, time);
+				position.dtmEvaluationCount++;
+				if (flow != null && flow.available && flow.fresh) {
+					position.dtmOrderFlowAvailableCount++;
+				}
+				if (result != null) {
+					result.dtmEvaluations++;
+					if (flow != null && flow.available && flow.fresh) {
+						result.dtmOrderFlowAvailable++;
+					} else {
+						result.dtmOrderFlowMissing++;
+					}
+				}
+				double preDtmTargetPrice = position.targetPrice;
+				DynamicTradeDecision dtmDecision = evaluateDynamicTradeManager(dtmSession, dtmSnapshot, position, context, bar, flow, false);
+				if (dtmDecision != null) {
+					position.dtmDecisionCount++;
+					recordPortfolioDtmDecision(result, dtmDecision);
+				}
+				if (dtmDecision != null && dtmDecision.finalExit) {
+					FuturesTrade dtmTrade = buildPortfolioTrade(position, context, bar, currentIndexOrEntry(position, context, bar), bar.close, dtmDecision.exitReason);
+					applyDynamicTradeStateToTrade(
+						dtmSession == null ? 0 : dtmSession.sessionId,
+						dtmSnapshot == null ? 0 : dtmSnapshot.snapshotId,
+						position,
+						dtmTrade,
+						dtmDecision.actionCode
+					);
+					trades.add(0, dtmTrade);
+					positions.remove(index);
+					continue;
+				}
+				FuturesTrade postDtmTrade = closePortfolioPositionAfterDtmDecision(position, context, bar, day, time, dtmDecision, preDtmTargetPrice);
+				if (postDtmTrade != null) {
+					applyDynamicTradeStateToTrade(
+						dtmSession == null ? 0 : dtmSession.sessionId,
+						dtmSnapshot == null ? 0 : dtmSnapshot.snapshotId,
+						position,
+						postDtmTrade,
+						""
+					);
+					trades.add(0, postDtmTrade);
+					positions.remove(index);
+				}
 			}
 		}
 		return trades;
@@ -20754,6 +19883,81 @@ public class FuturesManager {
 		return buildPortfolioTrade(position, context, bar, currentIndex, exitPrice, exitReason);
 	}
 
+	private static FuturesTrade closePortfolioPositionAfterDtmDecision(
+		PortfolioPosition position,
+		PortfolioSymbolContext context,
+		Bar bar,
+		LocalDate day,
+		LocalTime time,
+		DynamicTradeDecision decision,
+		double preDtmTargetPrice
+	) {
+		if (decision == null) {
+			return closePortfolioPositionIfTriggered(position, context, bar, day, time);
+		}
+		String code = cleanOrDefault(decision.actionCode, "");
+		if ("DTM_MOVE_STOP_BREAKEVEN".equals(code) || "DTM_TRAIL_STOP".equals(code) || "DTM_PARTIAL_BLOCKED".equals(code)) {
+			return closePortfolioPositionIfTargetTriggered(position, context, bar, day, time, preDtmTargetPrice);
+		}
+		return null;
+	}
+
+	private static FuturesTrade closePortfolioPositionIfTargetTriggered(
+		PortfolioPosition position,
+		PortfolioSymbolContext context,
+		Bar bar,
+		LocalDate day,
+		LocalTime time,
+		double targetPrice
+	) {
+		Integer currentIndexValue = barIndex(context, day, time);
+		if (currentIndexValue == null || currentIndexValue < position.entryIndex || targetPrice <= 0.0) {
+			return null;
+		}
+		if ("LONG".equals(position.side)) {
+			if (bar.high >= targetPrice) {
+				return buildPortfolioTrade(position, context, bar, currentIndexValue.intValue(), targetPrice, "Target reached");
+			}
+		} else if (bar.low <= targetPrice) {
+			return buildPortfolioTrade(position, context, bar, currentIndexValue.intValue(), targetPrice, "Target reached");
+		}
+		return null;
+	}
+
+	private static FuturesTrade closePortfolioPositionIfStopTriggered(
+		PortfolioPosition position,
+		PortfolioSymbolContext context,
+		Bar bar,
+		LocalDate day,
+		LocalTime time
+	) {
+		Integer currentIndexValue = barIndex(context, day, time);
+		if (currentIndexValue == null || currentIndexValue < position.entryIndex) {
+			return null;
+		}
+		int currentIndex = currentIndexValue.intValue();
+		double exitPrice = 0.0;
+		String exitReason = null;
+		if ("LONG".equals(position.side)) {
+			if (bar.low <= position.activeStopPrice && bar.high >= position.targetPrice) {
+				exitPrice = position.activeStopPrice;
+				exitReason = "Stop and target touched; stop assumed first";
+			} else if (bar.low <= position.activeStopPrice) {
+				exitPrice = position.activeStopPrice;
+				exitReason = position.activeStopPrice == position.stopPrice ? "Stop loss hit" : "Managed stop hit";
+			}
+		} else {
+			if (bar.high >= position.activeStopPrice && bar.low <= position.targetPrice) {
+				exitPrice = position.activeStopPrice;
+				exitReason = "Stop and target touched; stop assumed first";
+			} else if (bar.high >= position.activeStopPrice) {
+				exitPrice = position.activeStopPrice;
+				exitReason = position.activeStopPrice == position.stopPrice ? "Stop loss hit" : "Managed stop hit";
+			}
+		}
+		return exitReason == null ? null : buildPortfolioTrade(position, context, bar, currentIndex, exitPrice, exitReason);
+	}
+
 	private static List<FuturesTrade> forceClosePortfolioPositions(
 		List<PortfolioPosition> positions,
 		Map<String, PortfolioSymbolContext> contexts,
@@ -20776,6 +19980,34 @@ public class FuturesManager {
 		}
 		positions.clear();
 		return trades;
+	}
+
+	private static void recordPortfolioDtmDecision(PortfolioBacktestResult result, DynamicTradeDecision decision) {
+		if (result == null) {
+			return;
+		}
+		String actionCode = decision == null ? "" : decision.actionCode;
+		String code = cleanOrDefault(actionCode, "");
+		if (code.length() == 0) {
+			return;
+		}
+		result.dtmDecisions++;
+		if ("DTM_MOVE_STOP_BREAKEVEN".equals(code)) {
+			result.dtmBreakevenMoves++;
+		} else if ("DTM_PARTIAL_TARGET".equals(code) || "DTM_PARTIAL_HALF_RUNNER_EXTENDED".equals(code) || "DTM_PARTIAL_BLOCKED".equals(code)) {
+			result.dtmPartialActions++;
+			if (("DTM_PARTIAL_TARGET".equals(code) || "DTM_PARTIAL_HALF_RUNNER_EXTENDED".equals(code)) && decision != null && decision.targetPrice > 0.0 && decision.stopPrice > 0.0) {
+				result.dtmTargetExtensions++;
+			}
+		} else if ("DTM_TRAIL_STOP".equals(code)) {
+			result.dtmTrailActions++;
+		} else if ("DTM_CUT_EARLY_THESIS_FAILED".equals(code)) {
+			result.dtmEarlyCuts++;
+		} else if ("DTM_EXTEND_TARGET_CONTINUATION".equals(code)) {
+			result.dtmTargetExtensions++;
+		} else if ("DTM_EXTEND_ONE_CONTRACT_RUNNER".equals(code)) {
+			result.dtmOneContractExtensions++;
+		}
 	}
 
 	private static FuturesTrade buildPortfolioTrade(
@@ -20814,10 +20046,17 @@ public class FuturesManager {
 		trade.exitIndex = exitIndex;
 		trade.openedMarketTime = position.openedMarketTime;
 		trade.closedMarketTime = bar.marketTime;
+		String dtmNote = position.dtmEvaluationCount <= 0
+			? ""
+			: ", DTM evals " + position.dtmEvaluationCount
+				+ ", DTM L2 available " + position.dtmOrderFlowAvailableCount
+				+ ", DTM decisions " + position.dtmDecisionCount
+				+ ", DTM final action " + cleanOrDefault(position.dtmFinalAction, "DTM_NO_OVERRIDE");
 		trade.notes = position.signal.notes
 			+ " Portfolio event-driven entry; concurrent positions " + position.concurrentPositionsAtEntry
 			+ ", concurrent contracts " + position.concurrentContractsAtEntry
 			+ ", entered next bar open"
+			+ dtmNote
 			+ ", risk/contract $" + round(position.riskPerContract)
 			+ ", MAE sizing multiplier " + round(context.config.strategySettings.openMaeRiskMultiplier)
 			+ ", commission $" + round(commissions)
@@ -21017,7 +20256,8 @@ public class FuturesManager {
 		double riskPerContract = (Math.abs(entryPrice - stopFillForRisk) / spec.tickSize * spec.tickValue) + (config.commissionPerContract * 2.0);
 		double sizingRiskPerContract = riskPerContract * settings.openMaeRiskMultiplier;
 		double effectiveRiskBudget = Math.max(0.0, Math.min(config.maxRiskPerTrade, riskBudget));
-		int contracts = Math.min(config.maxContracts, (int) Math.floor(effectiveRiskBudget / Math.max(1.0, riskPerContract)));
+		int maxContracts = strategySpecificMaxContracts(spec.symbol, signal.strategyCode, settings, config.maxContracts);
+		int contracts = Math.min(maxContracts, (int) Math.floor(effectiveRiskBudget / Math.max(1.0, riskPerContract)));
 		while (contracts > 0 && (sizingRiskPerContract * contracts) > Math.max(0.0, aggregateGuardBudget)) {
 			contracts--;
 		}
@@ -21265,20 +20505,58 @@ public class FuturesManager {
 			|| "MCL".equals(normalized);
 	}
 
+	private static FuturesStrategySettings liquidityReclaimSource2268Settings(String symbol, FuturesStrategySettings fallback) {
+		ensureLiquidityReclaimSource2268SettingsLoaded();
+		FuturesStrategySettings source = LIQREC_SOURCE_2268_SETTINGS.get(normalizeSymbol(symbol));
+		return source == null ? (fallback == null ? defaultFuturesStrategySettings() : fallback) : source;
+	}
+
+	private static synchronized void ensureLiquidityReclaimSource2268SettingsLoaded() {
+		if (liqrecSource2268SettingsLoaded) {
+			return;
+		}
+		Properties props = new Properties();
+		try (InputStream input = FuturesManager.class.getClassLoader().getResourceAsStream(LIQREC_SOURCE_2268_RESOURCE)) {
+			if (input != null) {
+				props.load(input);
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		for (String symbol : supportedInstrumentSymbols()) {
+			String normalized = normalizeSymbol(symbol);
+			String prefix = normalized + ".";
+			FuturesStrategySettings settings = defaultFuturesStrategySettings();
+			boolean found = false;
+			for (String key : props.stringPropertyNames()) {
+				if (!key.startsWith(prefix)) {
+					continue;
+				}
+				found = true;
+				applyFuturesSetting(settings, key.substring(prefix.length()), props.getProperty(key));
+			}
+			if (found) {
+				clampFuturesStrategySettings(settings);
+				LIQREC_SOURCE_2268_SETTINGS.put(normalized, settings);
+			}
+		}
+		liqrecSource2268SettingsLoaded = true;
+	}
+
 	private static boolean liquidityReclaimOwnsComponent(String symbol, String strategyCode) {
 		String normalized = normalizeSymbol(symbol);
 		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
 		if ("AFT".equals(code)) {
-			return isLiquidityReclaimSourceSymbol(normalized);
+			return "MCL".equals(normalized) || "MES".equals(normalized) || "MNQ".equals(normalized);
 		}
 		if ("MES".equals(normalized)) {
 			return "SHDW".equals(code);
 		}
 		if ("MNQ".equals(normalized) || "NQ".equals(normalized)) {
-			return "FVG".equals(code) || "KREV".equals(code);
+			return "FVG".equals(code) || "KREV".equals(code) || "PDB".equals(code) || "SWEEP".equals(code) || "VWAP".equals(code);
 		}
 		if ("MGC".equals(normalized)) {
-			return "KREV".equals(code);
+			return "KREV".equals(code) || "PDB".equals(code) || "SWEEP".equals(code) || "VWAP".equals(code);
 		}
 		if ("ES".equals(normalized)) {
 			return "SWEEP".equals(code) || "VWAP".equals(code);
@@ -21322,22 +20600,31 @@ public class FuturesManager {
 			return signals;
 		}
 		String symbol = normalizeSymbol(spec.symbol);
+		FuturesStrategySettings sourceSettings = liquidityReclaimSource2268Settings(symbol, safe);
 		List<Signal> candidates = new ArrayList<Signal>();
-		candidates.addAll(findAfternoonContinuationSignals(spec, bars, fifteenMinuteBars, oneHourBars, safe));
+		if (liquidityReclaimOwnsComponent(symbol, "AFT")) {
+			candidates.addAll(findAfternoonContinuationSignals(spec, bars, fifteenMinuteBars, oneHourBars, sourceSettings));
+		}
 		if ("MNQ".equals(symbol) || "NQ".equals(symbol)) {
-			candidates.addAll(findFvgSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, safe));
-			candidates.addAll(findKeltnerReversionSignals(spec, bars, fifteenMinuteBars, oneHourBars, safe));
+			candidates.addAll(findFvgSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, sourceSettings));
+			candidates.addAll(findKeltnerReversionSignals(spec, bars, fifteenMinuteBars, oneHourBars, sourceSettings));
+			candidates.addAll(findPriorDayBreakoutSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, sourceSettings));
+			candidates.addAll(findSweepSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, sourceSettings));
+			candidates.addAll(findVwapPullbackSignals(spec, bars, fifteenMinuteBars, oneHourBars, sourceSettings));
 		} else if ("MGC".equals(symbol)) {
-			candidates.addAll(findKeltnerReversionSignals(spec, bars, fifteenMinuteBars, oneHourBars, safe));
+			candidates.addAll(findKeltnerReversionSignals(spec, bars, fifteenMinuteBars, oneHourBars, sourceSettings));
+			candidates.addAll(findPriorDayBreakoutSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, sourceSettings));
+			candidates.addAll(findSweepSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, sourceSettings));
+			candidates.addAll(findVwapPullbackSignals(spec, bars, fifteenMinuteBars, oneHourBars, sourceSettings));
 		} else if ("ES".equals(symbol)) {
-			candidates.addAll(findVwapPullbackSignals(spec, bars, fifteenMinuteBars, oneHourBars, safe));
-			candidates.addAll(findSweepSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, safe));
+			candidates.addAll(findVwapPullbackSignals(spec, bars, fifteenMinuteBars, oneHourBars, sourceSettings));
+			candidates.addAll(findSweepSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, sourceSettings));
 		} else if ("M2K".equals(symbol)) {
-			candidates.addAll(findValueAreaReclaimSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, safe));
+			candidates.addAll(findValueAreaReclaimSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, sourceSettings));
 		} else if ("MYM".equals(symbol)) {
-			candidates.addAll(findSweepSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, safe));
+			candidates.addAll(findSweepSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, sourceSettings));
 		} else if ("MCL".equals(symbol)) {
-			candidates.addAll(findPriorDayBreakoutSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, safe));
+			candidates.addAll(findPriorDayBreakoutSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, sourceSettings));
 		}
 		for (int index = 0; index < candidates.size(); index++) {
 			Signal candidate = candidates.get(index);
@@ -21357,7 +20644,7 @@ public class FuturesManager {
 			relabelLiquidityReclaimSignal(candidate);
 			signals.add(candidate);
 		}
-		return dedupeByHour(signals, safe.liquidityReclaim.maxTradesPerDay);
+		return limitSignalsByDailyCount(signals, safe.liquidityReclaim.maxTradesPerDay);
 	}
 
 	private static Bar signalBarForIndex(List<Bar> bars, int index) {
@@ -24217,6 +23504,28 @@ public class FuturesManager {
 		return filtered;
 	}
 
+	private static List<Signal> limitSignalsByDailyCount(List<Signal> signals, int maxPerStrategy) {
+		Collections.sort(signals, new Comparator<Signal>() {
+			@Override
+			public int compare(Signal first, Signal second) {
+				return first.entryIndex - second.entryIndex;
+			}
+		});
+		List<Signal> filtered = new ArrayList<Signal>();
+		Map<String, Integer> counts = new HashMap<String, Integer>();
+		for (int index = 0; index < signals.size(); index++) {
+			Signal signal = signals.get(index);
+			String strategyKey = dailyLimitStrategyCode(signal.strategyCode);
+			int count = countFor(counts, strategyKey);
+			if (count >= maxPerStrategy) {
+				continue;
+			}
+			filtered.add(signal);
+			counts.put(strategyKey, count + 1);
+		}
+		return filtered;
+	}
+
 	private static int saveBacktest(BacktestResult result, BacktestConfig config) {
 		String insertBacktest = "INSERT INTO FuturesBacktests (symbol, contractName, startDate, endDate, startingBalance, endingBalance, totalProfit, returnPct, winRate, numTrades, profitFactor, maxDrawdownPct, maxTrailingDrawdown, dailyLossLimit, maxRiskPerTrade, maxContracts, trailingThreshold, ruleViolation, ruleMessage, dataSource, createdAt) "
 			+ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
@@ -24406,6 +23715,105 @@ public class FuturesManager {
 	private static DataBundle loadNativeFuturesBars(String symbol, LocalDate startDate, LocalDate endDate, String timeframeFolder) {
 		InstrumentSpec spec = instrumentFor(symbol);
 		return loadCsv(new File(futuresDataDir() + "/" + timeframeFolder + "/" + spec.symbol + ".csv"), startDate, endDate, 1.0, "native futures csv " + timeframeFolder);
+	}
+
+	private static Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> loadSyntheticOrderFlowSnapshots(String symbol, LocalDate startDate, LocalDate endDate) {
+		Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> snapshots = new HashMap<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>>();
+		InstrumentSpec spec = instrumentFor(symbol);
+		File file = new File(futuresDataDir() + "/" + SYNTHETIC_LEVEL2_FOLDER + "/" + spec.symbol + ".csv");
+		if (!file.exists()) {
+			return snapshots;
+		}
+		double previousImbalance5 = 0.0;
+		try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+			String header = reader.readLine();
+			if (header == null) {
+				return snapshots;
+			}
+			String line;
+			while ((line = reader.readLine()) != null) {
+				String[] parts = line.split(",", -1);
+				if (parts.length < 14) {
+					continue;
+				}
+				ZonedDateTime timestamp = parseMarketTimestamp(parts[0]);
+				if (timestamp == null) {
+					continue;
+				}
+				LocalDate day = timestamp.toLocalDate();
+				LocalTime time = timestamp.toLocalTime().withSecond(0).withNano(0);
+				if (day.isBefore(startDate) || day.isAfter(endDate) || time.isBefore(RTH_START) || !time.isBefore(RTH_END)) {
+					continue;
+				}
+				LiveRuntimeState.OrderFlowSnapshot snapshot = new LiveRuntimeState.OrderFlowSnapshot();
+				snapshot.symbol = spec.symbol;
+				snapshot.available = true;
+				snapshot.fresh = true;
+				snapshot.ageSeconds = 0L;
+				snapshot.lastUpdatedAt = displayTime(day, time);
+				snapshot.bestBid = parseCsvDouble(parts, 1, 0.0);
+				snapshot.bestAsk = parseCsvDouble(parts, 2, 0.0);
+				snapshot.spreadTicks = parseCsvDouble(parts, 3, 0.0);
+				snapshot.spread = Math.max(0.0, snapshot.spreadTicks * spec.tickSize);
+				snapshot.depthImbalance5 = parseCsvDouble(parts, 4, 0.0);
+				snapshot.depthImbalance3 = snapshot.depthImbalance5;
+				snapshot.depthImbalance10 = snapshot.depthImbalance5;
+				snapshot.topBookImbalance = snapshot.depthImbalance5;
+				snapshot.tapeDelta = parseCsvDouble(parts, 5, 0.0);
+				if (snapshot.tapeDelta >= 0.0) {
+					snapshot.aggressiveBuyVolume = snapshot.tapeDelta;
+				} else {
+					snapshot.aggressiveSellVolume = Math.abs(snapshot.tapeDelta);
+				}
+				snapshot.cvd = parseCsvDouble(parts, 6, 0.0);
+				snapshot.bidWallDistanceTicks = parseCsvDouble(parts, 7, 0.0);
+				snapshot.askWallDistanceTicks = parseCsvDouble(parts, 8, 0.0);
+				snapshot.liquidityWallDistanceTicks = minPositive(snapshot.bidWallDistanceTicks, snapshot.askWallDistanceTicks);
+				snapshot.bidStacking = parseCsvDouble(parts, 9, 0.0);
+				snapshot.askStacking = parseCsvDouble(parts, 10, 0.0);
+				snapshot.absorption = cleanOrDefault(parts[11], "NONE");
+				snapshot.liquidityVacuum = parseBoolean(parts[12], false);
+				snapshot.flowState = cleanOrDefault(parts[13], "BALANCED");
+				if (previousImbalance5 < -0.20 && snapshot.depthImbalance5 > 0.20) {
+					snapshot.bookFlip = "BID_FLIP";
+				} else if (previousImbalance5 > 0.20 && snapshot.depthImbalance5 < -0.20) {
+					snapshot.bookFlip = "ASK_FLIP";
+				}
+				previousImbalance5 = snapshot.depthImbalance5;
+				Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot> byTime = snapshots.get(day);
+				if (byTime == null) {
+					byTime = new HashMap<LocalTime, LiveRuntimeState.OrderFlowSnapshot>();
+					snapshots.put(day, byTime);
+				}
+				byTime.put(time, snapshot);
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return snapshots;
+	}
+
+	private static double parseCsvDouble(String[] parts, int index, double defaultValue) {
+		if (parts == null || index < 0 || index >= parts.length) {
+			return defaultValue;
+		}
+		try {
+			return Double.parseDouble(cleanOrDefault(parts[index], "").trim());
+		} catch (Exception ignored) {
+			return defaultValue;
+		}
+	}
+
+	private static double minPositive(double first, double second) {
+		boolean firstPositive = first > 0.0;
+		boolean secondPositive = second > 0.0;
+		if (firstPositive && secondPositive) {
+			return Math.min(first, second);
+		}
+		if (firstPositive) {
+			return first;
+		}
+		return secondPositive ? second : 0.0;
 	}
 
 	private static ZonedDateTime parseMarketTimestamp(String rawTimestamp) {
@@ -25440,6 +24848,17 @@ public class FuturesManager {
 			index++;
 		}
 		return index + 4 <= json.length() && "true".equalsIgnoreCase(json.substring(index, index + 4));
+	}
+
+	private static boolean jsonBooleanOrDefault(String json, String key, boolean defaultValue) {
+		if (json == null || key == null || key.trim().isEmpty()) {
+			return defaultValue;
+		}
+		String needle = "\"" + key + "\":";
+		if (json.indexOf(needle) < 0) {
+			return defaultValue;
+		}
+		return jsonBoolean(json, key);
 	}
 
 	private static boolean usesEndOfDayTrailing(String trailingDrawdownMode) {
