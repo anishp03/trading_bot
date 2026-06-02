@@ -149,7 +149,7 @@ export default function AppLayout({ accountEmail, accountRole, backendMode = "on
           <div className="app-brand-pill d-flex align-items-center justify-content-center">
             TB
           </div>
-          <div className="app-brand-name">trading_bot</div>
+          <div className="app-brand-name">Trading Bot</div>
         </div>
 
         <nav className="app-nav-sections">

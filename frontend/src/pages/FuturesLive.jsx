@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useOutletContext } from "react-router-dom";
+import TradeAnalysisModal from "../components/TradeAnalysisModal.jsx";
 import { apiFetch, isApiNetworkError } from "../utils/api.js";
 import { EASTERN_TIME_LABEL, formatEstTime } from "../utils/time.js";
 
@@ -166,6 +167,7 @@ export default function FuturesLive() {
   const [allTradePage, setAllTradePage] = useState(1);
   const [cachedAllTradeRows, setCachedAllTradeRows] = useState([]);
   const [tradeCacheReady, setTradeCacheReady] = useState(false);
+  const [selectedAnalysisTrade, setSelectedAnalysisTrade] = useState(null);
   const chartTransitionTimer = useRef(null);
   const botStartedRef = useRef(false);
   const observedThinkingSession = useRef(0);
@@ -1231,8 +1233,14 @@ export default function FuturesLive() {
           onPrev={() => setAllTradePage((current) => Math.max(1, current - 1))}
           onNext={() => setAllTradePage((current) => Math.min(allTradeTotalPages, current + 1))}
         />
-        <TradesTable trades={pagedAllTradeRows} mode="all" />
+        <TradesTable trades={pagedAllTradeRows} mode="all" onOpenTrade={(trade) => setSelectedAnalysisTrade(toTradeAnalysisRow(trade))} />
       </section>
+
+      <TradeAnalysisModal
+        trade={selectedAnalysisTrade}
+        source="live"
+        onClose={() => setSelectedAnalysisTrade(null)}
+      />
 
       <FuturesLiveLogDrawer
         open={logDrawerOpen}
@@ -1846,12 +1854,14 @@ function FuturesMarketChart({
   const [displayedPriceDomain, setDisplayedPriceDomain] = useState(null);
   const [displayedVolumeMax, setDisplayedVolumeMax] = useState(null);
   const chartShellRef = useRef(null);
-  const wheelAccumulatorRef = useRef({ x: 0, y: 0 });
+  const wheelDraftRef = useRef({ offset: 0, visibleBars: 96 });
+  const wheelFrameRef = useRef(null);
   const touchGestureRef = useRef(null);
   const touchPanFrameRef = useRef(null);
   const touchInertiaFrameRef = useRef(null);
   const touchPanOffsetRef = useRef(0);
   const scrollOffsetRef = useRef(0);
+  const visibleBarsRef = useRef(visibleBars);
   const displayedDomainRef = useRef(null);
   const domainAnimationFrameRef = useRef(null);
   const domainResetSymbolRef = useRef("");
@@ -1875,10 +1885,13 @@ function FuturesMarketChart({
   const safeVisibleBars = Math.max(minVisibleBars, Math.min(visibleBars, maxVisibleBars));
   const maxOffset = Math.max(0, candleSeries.length - safeVisibleBars);
   const offset = Math.min(scrollOffset, maxOffset);
-  const endIndex = Math.max(0, candleSeries.length - offset);
-  const startIndex = Math.max(0, endIndex - safeVisibleBars);
+  const windowEndIndex = Math.max(0, candleSeries.length - offset);
+  const windowStartIndex = Math.max(0, windowEndIndex - safeVisibleBars);
+  const startIndex = Math.max(0, Math.floor(windowStartIndex));
+  const endIndex = Math.min(candleSeries.length, Math.ceil(windowEndIndex));
   const visibleCandles = candleSeries.slice(startIndex, endIndex);
-  const leadingSlots = Math.max(0, safeVisibleBars - visibleCandles.length);
+  const visibleWindowSpan = Math.max(0, windowEndIndex - windowStartIndex);
+  const leadingSlots = Math.max(0, safeVisibleBars - visibleWindowSpan);
   const slotWidth = plotWidth / safeVisibleBars;
   const latestCandle = candleSeries[candleSeries.length - 1];
   const latestPrice = Number(latestCandle?.close || 0);
@@ -1911,12 +1924,19 @@ function FuturesMarketChart({
   const lastFeedEventLabel = lastRealtimeEventAt ? `Last event ${formatEstTime(lastRealtimeEventAt)}` : "Last event unavailable";
 
   const toY = (price) => priceBottom - (((Number(price || 0) - min) / range) * (priceBottom - priceTop));
-  const toX = (index) => (leadingSlots + index) * slotWidth + slotWidth / 2;
+  const toX = (index) => (leadingSlots + ((startIndex + index) - windowStartIndex)) * slotWidth + slotWidth / 2;
   const findVisibleIndex = (time) => findNearestCandleIndex(visibleCandles, time, visibleCandleToleranceMs);
   const setClampedOffset = (next) => setScrollOffset(Math.max(0, Math.min(maxOffset, next)));
   const panBy = (steps) => setClampedOffset(offset + steps);
-  const zoomBy = (delta) => setVisibleBars((value) => Math.max(minVisibleBars, Math.min(220, value + delta)));
+  const clampVisibleBarsValue = useCallback((value) => Math.max(minVisibleBars, Math.min(maxVisibleBars, value)), [maxVisibleBars, minVisibleBars]);
+  const zoomBy = (delta) => setVisibleBars((value) => clampVisibleBarsValue(value + delta));
   const clampOffsetValue = useCallback((value) => Math.max(0, Math.min(maxOffset, value)), [maxOffset]);
+  const applyWheelDraft = useCallback(() => {
+    wheelFrameRef.current = null;
+    const draft = wheelDraftRef.current;
+    setVisibleBars(clampVisibleBarsValue(draft.visibleBars));
+    setScrollOffset(clampOffsetValue(draft.offset));
+  }, [clampOffsetValue, clampVisibleBarsValue]);
   const queueTouchPanOffset = useCallback((nextOffset) => {
     touchPanOffsetRef.current = clampOffsetValue(nextOffset);
     if (touchPanFrameRef.current) return;
@@ -1928,43 +1948,59 @@ function FuturesMarketChart({
   }, [clampOffsetValue]);
   const handleWheel = useCallback((event) => {
     if (!hasCandles) return;
+    if (event.target?.closest?.(".futures-chart-actionbar, .futures-chart-range-row")) return;
     event.preventDefault();
     event.stopPropagation();
     const deltaScale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 160 : 1;
     const deltaX = event.deltaX * deltaScale;
     const deltaY = event.deltaY * deltaScale;
+    const currentVisibleBars = wheelFrameRef.current ? wheelDraftRef.current.visibleBars : visibleBarsRef.current;
+    const currentOffset = wheelFrameRef.current ? wheelDraftRef.current.offset : scrollOffsetRef.current;
 
     if (event.altKey || event.ctrlKey || event.metaKey) {
-      const threshold = 78;
-      wheelAccumulatorRef.current.y += Math.abs(deltaY) > Math.abs(deltaX) ? deltaY : deltaX;
-      const units = Math.max(-1, Math.min(1, Math.trunc(wheelAccumulatorRef.current.y / threshold)));
-      if (units !== 0) {
-        wheelAccumulatorRef.current.y -= units * threshold;
-        setVisibleBars((value) => Math.max(minVisibleBars, Math.min(220, value + units * 2)));
-      }
+      const rect = chartShellRef.current?.getBoundingClientRect();
+      const chartRatio = rect?.width ? Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) : 0.5;
+      const zoomSource = Math.abs(deltaY) >= Math.abs(deltaX) ? deltaY : deltaX;
+      const zoomDelta = Math.max(-18, Math.min(18, zoomSource * 0.08));
+      const nextVisibleBars = clampVisibleBarsValue(currentVisibleBars + zoomDelta);
+      const rightIndex = candleSeries.length - currentOffset;
+      const anchorIndex = rightIndex - (currentVisibleBars * (1 - chartRatio));
+      const nextRightIndex = anchorIndex + (nextVisibleBars * (1 - chartRatio));
+      const nextOffset = clampOffsetValue(candleSeries.length - nextRightIndex);
+      wheelDraftRef.current = { offset: nextOffset, visibleBars: nextVisibleBars };
+      if (!wheelFrameRef.current) wheelFrameRef.current = requestAnimationFrame(applyWheelDraft);
       return;
     }
 
-    const panDelta = event.shiftKey || Math.abs(deltaX) > Math.abs(deltaY) ? (Math.abs(deltaX) > Math.abs(deltaY) ? deltaX : deltaY) : deltaY;
-    const threshold = 36;
-    wheelAccumulatorRef.current.x += panDelta;
-    const units = Math.max(-5, Math.min(5, Math.trunc(wheelAccumulatorRef.current.x / threshold)));
-    if (units !== 0) {
-      wheelAccumulatorRef.current.x -= units * threshold;
-      setScrollOffset((value) => Math.max(0, Math.min(maxOffset, value + units)));
-    }
-  }, [hasCandles, maxOffset, minVisibleBars]);
+    const dominantDelta = Math.abs(deltaX) > Math.abs(deltaY) ? deltaX : deltaY;
+    const panDelta = event.shiftKey ? deltaY : dominantDelta;
+    const barsPerPixel = Math.max(0.018, Math.min(0.08, currentVisibleBars / Math.max(480, chartShellRef.current?.clientWidth || 1)));
+    const nextOffset = clampOffsetValue(currentOffset + (panDelta * barsPerPixel));
+    wheelDraftRef.current = { offset: nextOffset, visibleBars: currentVisibleBars };
+    if (!wheelFrameRef.current) wheelFrameRef.current = requestAnimationFrame(applyWheelDraft);
+  }, [applyWheelDraft, candleSeries.length, clampOffsetValue, clampVisibleBarsValue, hasCandles]);
 
   useEffect(() => {
     const node = chartShellRef.current;
     if (!node) return undefined;
     node.addEventListener("wheel", handleWheel, { passive: false });
-    return () => node.removeEventListener("wheel", handleWheel);
+    return () => {
+      node.removeEventListener("wheel", handleWheel);
+      if (wheelFrameRef.current) {
+        cancelAnimationFrame(wheelFrameRef.current);
+        wheelFrameRef.current = null;
+      }
+    };
   }, [handleWheel, hasCandles, symbol, timeframe]);
 
   useEffect(() => {
     scrollOffsetRef.current = offset;
   }, [offset]);
+
+  useEffect(() => {
+    visibleBarsRef.current = safeVisibleBars;
+    wheelDraftRef.current = { offset, visibleBars: safeVisibleBars };
+  }, [offset, safeVisibleBars]);
 
   useEffect(() => {
     const node = chartShellRef.current;
@@ -2120,7 +2156,11 @@ function FuturesMarketChart({
   }, [clampOffsetValue, hasCandles, maxOffset, minVisibleBars, queueTouchPanOffset, safeVisibleBars, symbol, timeframe]);
 
   useEffect(() => {
-    wheelAccumulatorRef.current = { x: 0, y: 0 };
+    wheelDraftRef.current = { offset: 0, visibleBars: defaultChartVisibleBars(chartShellRef.current) };
+    if (wheelFrameRef.current) {
+      cancelAnimationFrame(wheelFrameRef.current);
+      wheelFrameRef.current = null;
+    }
     touchGestureRef.current = null;
     touchPanOffsetRef.current = 0;
     if (touchPanFrameRef.current) {
@@ -2654,6 +2694,7 @@ function FuturesMarketChart({
           type="range"
           min="0"
           max={maxOffset}
+          step="0.01"
           value={maxOffset - offset}
           onChange={(event) => setClampedOffset(maxOffset - Number(event.target.value || 0))}
           disabled={maxOffset <= 0}
@@ -4571,6 +4612,31 @@ function displayTradeStrategyLabel(trade) {
   return String(trade?.strategyName || code || "").trim() || "--";
 }
 
+function toTradeAnalysisRow(trade) {
+  if (!trade) return trade;
+  const openedAt = trade.entryTime || trade.openedAt || trade.signalTime || trade.time || trade.createdAt || "";
+  const closedAt = trade.exitTime || trade.closedAt || trade.updatedAt || trade.createdAt || "";
+  const entry = finiteNumberOrNull(trade.entry ?? trade.entryPrice) ?? 0;
+  const exit = finiteNumberOrNull(trade.exit ?? trade.exitPrice) ?? 0;
+  return {
+    ...trade,
+    strategyCode: trade.strategyCode || trade.strategy || "",
+    strategyName: trade.strategyName || displayTradeStrategyLabel(trade),
+    openedAt,
+    closedAt,
+    entry,
+    exit,
+    qty: trade.qty ?? trade.contracts ?? 0,
+    contracts: trade.contracts ?? trade.qty ?? 0,
+    stop: finiteNumberOrNull(trade.stop ?? trade.stopPrice) ?? 0,
+    target: finiteNumberOrNull(trade.target ?? trade.targetPrice) ?? 0,
+    entryPrice: entry,
+    exitPrice: exit,
+    stopPrice: finiteNumberOrNull(trade.stopPrice ?? trade.stop) ?? 0,
+    targetPrice: finiteNumberOrNull(trade.targetPrice ?? trade.target) ?? 0,
+  };
+}
+
 function normalizeTradeSideForFilter(side) {
   const value = String(side || "").toLowerCase();
   if (value === "short" || value === "sell") return "short";
@@ -4756,15 +4822,27 @@ function TradeFilters({ trades, filteredTrades, filters, onChange, summaryText =
   );
 }
 
-function TradesTable({ trades, mode }) {
+function TradesTable({ trades, mode, onOpenTrade = null }) {
   const gridClass = mode === "live" ? "futures-live-trades-grid" : "futures-live-all-trades-grid";
   const emptyText = mode === "live" ? "No live trade intents yet." : "No live bot trade records yet.";
+  const rowClickable = mode === "all" && typeof onOpenTrade === "function";
   return (
     <>
       <div className="mobile-trade-card-list">
         {trades.length ? (
           trades.map((trade, index) => (
-            <article className="mobile-trade-card" key={`${mode}-${trade.id || trade.entryTime || trade.createdAt || index}`}>
+            <article
+              className={rowClickable ? "mobile-trade-card trade-analysis-clickable" : "mobile-trade-card"}
+              key={`${mode}-${trade.id || trade.entryTime || trade.createdAt || index}`}
+              role={rowClickable ? "button" : undefined}
+              tabIndex={rowClickable ? 0 : undefined}
+              onClick={rowClickable ? () => onOpenTrade(trade) : undefined}
+              onKeyDown={rowClickable ? (event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                onOpenTrade(trade);
+              } : undefined}
+            >
               <div className="mobile-trade-card-head">
                 <div>
                   <span className="app-label">{trade.symbol || "--"} / {displayTradeStrategyLabel(trade)}</span>
@@ -4835,7 +4913,18 @@ function TradesTable({ trades, mode }) {
         </div>
         {trades.length ? (
           trades.map((trade) => (
-            <div className={`app-grid-row ${gridClass}`} key={trade.id}>
+            <div
+              className={rowClickable ? `app-grid-row ${gridClass} trade-analysis-clickable` : `app-grid-row ${gridClass}`}
+              key={trade.id}
+              role={rowClickable ? "button" : undefined}
+              tabIndex={rowClickable ? 0 : undefined}
+              onClick={rowClickable ? () => onOpenTrade(trade) : undefined}
+              onKeyDown={rowClickable ? (event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                onOpenTrade(trade);
+              } : undefined}
+            >
               <div className="app-time-cell">{formatEstTime(trade.entryTime || trade.signalTime || trade.createdAt || "--")}</div>
               <div>{formatLiveTradeDuration(trade)}</div>
               <div>{trade.symbol || "--"}</div>

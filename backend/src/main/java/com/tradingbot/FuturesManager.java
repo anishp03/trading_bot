@@ -23691,6 +23691,578 @@ public class FuturesManager {
 		}
 	}
 
+	public static String getTradeAnalysisJson(
+		String symbol,
+		String strategyCode,
+		String strategyName,
+		String side,
+		String openedAt,
+		String closedAt,
+		String entryPrice,
+		String exitPrice,
+		String stopPrice,
+		String targetPrice
+	) {
+		initializeStore();
+		String normalizedSymbol = normalizeSymbol(symbol);
+		if (normalizedSymbol.length() == 0) {
+			return "{\"success\":false,\"message\":\"Trade analysis needs a symbol.\",\"candles\":[],\"annotations\":[]}";
+		}
+		LocalDateTime entryTime = parseTradeAnalysisTime(openedAt);
+		if (entryTime == null) {
+			return "{\"success\":false,\"message\":\"Trade analysis needs a valid entry time.\",\"candles\":[],\"annotations\":[]}";
+		}
+		LocalDateTime exitTime = parseTradeAnalysisTime(closedAt);
+		if (exitTime == null || exitTime.isBefore(entryTime)) {
+			exitTime = entryTime.plusMinutes(60);
+		}
+
+		InstrumentSpec spec = instrumentFor(normalizedSymbol);
+		LocalDate startDate = entryTime.toLocalDate().minusDays(3);
+		LocalDate endDate = exitTime.toLocalDate().plusDays(1);
+		DataBundle bundle = loadNativeFuturesBars(normalizedSymbol, startDate, endDate, TIMEFRAME_FOLDER);
+		List<Bar> allBars = bundle.bars == null ? Collections.<Bar>emptyList() : bundle.bars;
+		List<Bar> dayBars = barsForDate(allBars, entryTime.toLocalDate());
+		List<Bar> previousBars = previousSessionBars(allBars, entryTime.toLocalDate());
+
+		LocalDateTime windowStart = entryTime.minusMinutes(55);
+		LocalDateTime windowEnd = exitTime.plusMinutes(30);
+		if (isOpeningStructureStrategy(strategyCode) && !entryTime.toLocalTime().isAfter(RTH_START.plusMinutes(75))) {
+			windowStart = minDateTime(windowStart, LocalDateTime.of(entryTime.toLocalDate(), RTH_START.minusMinutes(5)));
+		}
+		List<Bar> windowBars = barsBetween(allBars, windowStart, windowEnd);
+		if (!windowBars.isEmpty()) {
+			windowBars = focusTradeAnalysisWindow(windowBars, entryTime, exitTime);
+		}
+		Bar entryBar = nearestBar(dayBars, entryTime);
+		double parsedEntry = parseDouble(cleanOrDefault(entryPrice, "0"));
+		double parsedExit = parseDouble(cleanOrDefault(exitPrice, "0"));
+		double parsedStop = parseDouble(cleanOrDefault(stopPrice, "0"));
+		double parsedTarget = parseDouble(cleanOrDefault(targetPrice, "0"));
+		TradeAnalysisContext context = buildTradeAnalysisContext(spec, dayBars, previousBars, entryBar);
+
+		StringBuilder annotations = new StringBuilder("[");
+		appendTradePriceAnnotation(annotations, "Entry", parsedEntry, "#7dd3fc");
+		appendTradePriceAnnotation(annotations, "Exit", parsedExit, "#fbbf24");
+		appendTradePriceAnnotation(annotations, "Stop", parsedStop, "#fb7185");
+		appendTradePriceAnnotation(annotations, "Target", parsedTarget, "#34d399");
+		appendOpeningStructureAnnotations(annotations, dayBars, strategyCode);
+		appendFvgStructureAnnotation(annotations, spec, dayBars, strategyCode, side, entryTime);
+		appendPriorSessionAnnotations(annotations, context, strategyCode);
+		appendRangeStructureAnnotation(annotations, dayBars, strategyCode, entryTime);
+		appendEntryContextStructureAnnotations(annotations, dayBars, entryBar, strategyCode, entryTime);
+		appendKeltnerStructureAnnotation(annotations, entryBar, strategyCode);
+		annotations.append("]");
+
+		return "{"
+			+ "\"success\":true,"
+			+ "\"symbol\":" + jsonString(normalizedSymbol) + ","
+			+ "\"strategyCode\":" + jsonString(cleanOrDefault(strategyCode, "")) + ","
+			+ "\"strategyName\":" + jsonString(cleanOrDefault(strategyName, "")) + ","
+			+ "\"side\":" + jsonString(cleanOrDefault(side, "")) + ","
+			+ "\"openedAt\":" + jsonString(openedAt) + ","
+			+ "\"closedAt\":" + jsonString(closedAt) + ","
+			+ "\"entryTime\":" + jsonString(displayTime(entryTime.toLocalDate(), entryTime.toLocalTime())) + ","
+			+ "\"exitTime\":" + jsonString(displayTime(exitTime.toLocalDate(), exitTime.toLocalTime())) + ","
+			+ "\"dataSource\":" + jsonString(bundle.source) + ","
+			+ "\"tickSize\":" + spec.tickSize + ","
+			+ "\"candles\":" + tradeAnalysisCandlesJson(windowBars) + ","
+			+ "\"marketContext\":" + tradeAnalysisContextJson(context, entryBar) + ","
+			+ "\"annotations\":" + annotations
+			+ "}";
+	}
+
+	private static LocalDateTime parseTradeAnalysisTime(String value) {
+		String clean = cleanOrDefault(value, "").trim();
+		if (clean.length() == 0 || "--".equals(clean)) {
+			return null;
+		}
+		ZonedDateTime zoned = parseMarketTimestamp(clean);
+		if (zoned != null) {
+			return zoned.toLocalDateTime().withSecond(0).withNano(0);
+		}
+		try {
+			return LocalDateTime.parse(clean.replace(" ", "T")).withSecond(0).withNano(0);
+		} catch (Exception ignored) {
+			return null;
+		}
+	}
+
+	private static List<Bar> barsForDate(List<Bar> bars, LocalDate day) {
+		List<Bar> result = new ArrayList<Bar>();
+		if (bars == null || day == null) {
+			return result;
+		}
+		for (Bar bar : bars) {
+			if (bar != null && day.equals(bar.marketDate)) {
+				result.add(bar);
+			}
+		}
+		return result;
+	}
+
+	private static List<Bar> previousSessionBars(List<Bar> bars, LocalDate day) {
+		LocalDate previousDate = null;
+		for (Bar bar : bars == null ? Collections.<Bar>emptyList() : bars) {
+			if (bar == null || bar.marketDate == null || !bar.marketDate.isBefore(day)) {
+				continue;
+			}
+			if (previousDate == null || bar.marketDate.isAfter(previousDate)) {
+				previousDate = bar.marketDate;
+			}
+		}
+		return previousDate == null ? Collections.<Bar>emptyList() : barsForDate(bars, previousDate);
+	}
+
+	private static List<Bar> barsBetween(List<Bar> bars, LocalDateTime start, LocalDateTime end) {
+		List<Bar> result = new ArrayList<Bar>();
+		if (bars == null || start == null || end == null) {
+			return result;
+		}
+		for (Bar bar : bars) {
+			if (bar == null || bar.marketDate == null || bar.marketTime == null) {
+				continue;
+			}
+			LocalDateTime timestamp = LocalDateTime.of(bar.marketDate, bar.marketTime.withSecond(0).withNano(0));
+			if (!timestamp.isBefore(start) && !timestamp.isAfter(end)) {
+				result.add(bar);
+			}
+		}
+		return result;
+	}
+
+	private static List<Bar> focusTradeAnalysisWindow(List<Bar> bars, LocalDateTime entryTime, LocalDateTime exitTime) {
+		if (bars == null || bars.size() <= 80 || entryTime == null) {
+			return bars;
+		}
+		int entryIndex = nearestBarIndex(bars, entryTime);
+		if (entryIndex < 0) {
+			return bars;
+		}
+		int exitIndex = nearestBarIndex(bars, exitTime);
+		if (exitIndex < entryIndex) {
+			exitIndex = entryIndex;
+		}
+		int start = Math.max(0, entryIndex - 28);
+		int end = Math.min(bars.size(), exitIndex + 29);
+		if (end - start > 80) {
+			int midpoint = (entryIndex + exitIndex) / 2;
+			start = Math.max(0, midpoint - 40);
+			end = Math.min(bars.size(), start + 80);
+			start = Math.max(0, end - 80);
+		}
+		return new ArrayList<Bar>(bars.subList(start, end));
+	}
+
+	private static Bar nearestBar(List<Bar> bars, LocalDateTime timestamp) {
+		int index = nearestBarIndex(bars, timestamp);
+		return index < 0 ? null : bars.get(index);
+	}
+
+	private static LocalDateTime minDateTime(LocalDateTime first, LocalDateTime second) {
+		if (first == null) return second;
+		if (second == null) return first;
+		return first.isBefore(second) ? first : second;
+	}
+
+	private static String tradeAnalysisCandlesJson(List<Bar> bars) {
+		StringBuilder json = new StringBuilder("[");
+		for (Bar bar : bars == null ? Collections.<Bar>emptyList() : bars) {
+			if (bar == null) {
+				continue;
+			}
+			if (json.length() > 1) {
+				json.append(",");
+			}
+			json.append("{")
+				.append("\"time\":").append(jsonString(bar.displayTime)).append(",")
+				.append("\"open\":").append(round(bar.open)).append(",")
+				.append("\"high\":").append(round(bar.high)).append(",")
+				.append("\"low\":").append(round(bar.low)).append(",")
+				.append("\"close\":").append(round(bar.close)).append(",")
+				.append("\"volume\":").append(round(bar.volume)).append(",")
+				.append("\"vwap\":").append(round(bar.vwap)).append(",")
+				.append("\"ema9\":").append(round(bar.ema9)).append(",")
+				.append("\"ema20\":").append(round(bar.ema20)).append(",")
+				.append("\"ema50\":").append(round(bar.ema50)).append(",")
+				.append("\"atr14\":").append(round(bar.atr14)).append(",")
+				.append("\"rsi14\":").append(round(bar.rsi14)).append(",")
+				.append("\"volumeSma20\":").append(round(bar.volumeSma20)).append(",")
+				.append("\"rangeTicks\":").append(round(bar.rangeTicks)).append(",")
+				.append("\"bodyPct\":").append(round(bar.bodyPct))
+				.append("}");
+		}
+		json.append("]");
+		return json.toString();
+	}
+
+	private static TradeAnalysisContext buildTradeAnalysisContext(InstrumentSpec spec, List<Bar> dayBars, List<Bar> previousBars, Bar entryBar) {
+		TradeAnalysisContext context = new TradeAnalysisContext();
+		for (Bar bar : dayBars == null ? Collections.<Bar>emptyList() : dayBars) {
+			if (bar == null || bar.marketTime == null) {
+				continue;
+			}
+			if (!bar.marketTime.isBefore(RTH_START) && bar.marketTime.isBefore(ORB_END)) {
+				context.orbHigh = context.orbHigh == 0.0 ? bar.high : Math.max(context.orbHigh, bar.high);
+				context.orbLow = context.orbLow == 0.0 ? bar.low : Math.min(context.orbLow, bar.low);
+				context.orbVolume += Math.max(0.0, bar.volume);
+				context.orbBars++;
+			}
+		}
+		for (Bar bar : previousBars == null ? Collections.<Bar>emptyList() : previousBars) {
+			if (bar == null) {
+				continue;
+			}
+			context.previousHigh = context.previousHigh == 0.0 ? bar.high : Math.max(context.previousHigh, bar.high);
+			context.previousLow = context.previousLow == 0.0 ? bar.low : Math.min(context.previousLow, bar.low);
+			context.previousClose = bar.close;
+		}
+		VolumeProfile profile = previousSessionVolumeProfile(spec, previousBars, defaultFuturesStrategySettings());
+		if (profile != null && profile.valid) {
+			context.valueAreaHigh = profile.valueAreaHigh;
+			context.valueAreaLow = profile.valueAreaLow;
+			context.pointOfControl = profile.pointOfControl;
+		}
+		if (entryBar != null) {
+			context.entryVolumeRatio = entryBar.volumeSma20 <= 0.0 ? 0.0 : entryBar.volume / entryBar.volumeSma20;
+		}
+		return context;
+	}
+
+	private static String tradeAnalysisContextJson(TradeAnalysisContext context, Bar entryBar) {
+		TradeAnalysisContext safe = context == null ? new TradeAnalysisContext() : context;
+		return "{"
+			+ "\"entryVolume\":" + round(entryBar == null ? 0.0 : entryBar.volume) + ","
+			+ "\"entryVolumeRatio\":" + round(safe.entryVolumeRatio) + ","
+			+ "\"entryRsi14\":" + round(entryBar == null ? 0.0 : entryBar.rsi14) + ","
+			+ "\"entryVwap\":" + round(entryBar == null ? 0.0 : entryBar.vwap) + ","
+			+ "\"entryEma9\":" + round(entryBar == null ? 0.0 : entryBar.ema9) + ","
+			+ "\"entryEma20\":" + round(entryBar == null ? 0.0 : entryBar.ema20) + ","
+			+ "\"entryEma50\":" + round(entryBar == null ? 0.0 : entryBar.ema50) + ","
+			+ "\"entryAtr14\":" + round(entryBar == null ? 0.0 : entryBar.atr14) + ","
+			+ "\"entryRangeTicks\":" + round(entryBar == null ? 0.0 : entryBar.rangeTicks) + ","
+			+ "\"entryBodyPct\":" + round(entryBar == null ? 0.0 : entryBar.bodyPct) + ","
+			+ "\"orbHigh\":" + round(safe.orbHigh) + ","
+			+ "\"orbLow\":" + round(safe.orbLow) + ","
+			+ "\"orbAverageVolume\":" + round(safe.orbBars <= 0 ? 0.0 : safe.orbVolume / safe.orbBars) + ","
+			+ "\"previousHigh\":" + round(safe.previousHigh) + ","
+			+ "\"previousLow\":" + round(safe.previousLow) + ","
+			+ "\"previousClose\":" + round(safe.previousClose) + ","
+			+ "\"valueAreaHigh\":" + round(safe.valueAreaHigh) + ","
+			+ "\"valueAreaLow\":" + round(safe.valueAreaLow) + ","
+			+ "\"pointOfControl\":" + round(safe.pointOfControl)
+			+ "}";
+	}
+
+	private static void appendTradePriceAnnotation(StringBuilder json, String label, double price, String color) {
+		if (price <= 0.0) {
+			return;
+		}
+		appendAnnotationSeparator(json);
+		json.append("{\"type\":\"priceLine\",\"label\":").append(jsonString(label))
+			.append(",\"price\":").append(round(price))
+			.append(",\"color\":").append(jsonString(color))
+			.append("}");
+	}
+
+	private static void appendOpeningStructureAnnotations(StringBuilder json, List<Bar> dayBars, String strategyCode) {
+		if (!isOpeningStructureStrategy(strategyCode)) {
+			return;
+		}
+		List<Bar> openingBars = new ArrayList<Bar>();
+		for (Bar bar : dayBars == null ? Collections.<Bar>emptyList() : dayBars) {
+			if (bar != null && bar.marketTime != null && !bar.marketTime.isBefore(RTH_START) && bar.marketTime.isBefore(ORB_END)) {
+				openingBars.add(bar);
+			}
+		}
+		if (openingBars.isEmpty()) {
+			return;
+		}
+		double high = Double.NEGATIVE_INFINITY;
+		double low = Double.POSITIVE_INFINITY;
+		for (Bar bar : openingBars) {
+			high = Math.max(high, bar.high);
+			low = Math.min(low, bar.low);
+		}
+		Bar first = openingBars.get(0);
+		Bar last = openingBars.get(openingBars.size() - 1);
+		appendAnnotationSeparator(json);
+		json.append("{\"type\":\"range\",\"label\":\"Opening Range\",\"startTime\":").append(jsonString(first.displayTime))
+			.append(",\"endTime\":").append(jsonString(last.displayTime))
+			.append(",\"high\":").append(round(high))
+			.append(",\"low\":").append(round(low))
+			.append(",\"color\":\"#60a5fa\"}");
+		appendTradePriceAnnotation(json, "ORB High", high, "#f97316");
+		appendTradePriceAnnotation(json, "ORB Low", low, "#fb923c");
+		appendAnnotationSeparator(json);
+		json.append("{\"type\":\"candle\",\"label\":\"9:30 Open Candle\",\"time\":").append(jsonString(first.displayTime))
+			.append(",\"color\":\"#fbbf24\"}");
+	}
+
+	private static boolean isOpeningStructureStrategy(String strategyCode) {
+		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
+		return "ORB".equals(code) || "ORB2".equals(code) || "LORB".equals(code) || "OMOM".equals(code) || "IPB".equals(code) || "MYMORB2".equals(code);
+	}
+
+	private static void appendFvgStructureAnnotation(StringBuilder json, InstrumentSpec spec, List<Bar> dayBars, String strategyCode, String side, LocalDateTime entryTime) {
+		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
+		if (!"FVG".equals(code) && !"IFVG".equals(code) && !"LIQREC".equals(code)) {
+			return;
+		}
+		int entryIndex = nearestBarIndex(dayBars, entryTime);
+		if (entryIndex < 0) {
+			return;
+		}
+		boolean preferLong = !"SHORT".equalsIgnoreCase(cleanOrDefault(side, ""));
+		FvgStructure best = null;
+		int start = Math.max(2, entryIndex - 60);
+		for (int index = start; index <= entryIndex && index < dayBars.size(); index++) {
+			Bar first = dayBars.get(index - 2);
+			Bar middle = dayBars.get(index - 1);
+			Bar third = dayBars.get(index);
+			boolean bullish = first.high < third.low && middle.close > middle.open;
+			boolean bearish = first.low > third.high && middle.close < middle.open;
+			if (!bullish && !bearish) {
+				continue;
+			}
+			double gapLow = bullish ? first.high : third.high;
+			double gapHigh = bullish ? third.low : first.low;
+			double widthTicks = spec == null || spec.tickSize <= 0.0 ? gapHigh - gapLow : (gapHigh - gapLow) / spec.tickSize;
+			if (widthTicks <= 0.0) {
+				continue;
+			}
+			boolean directionMatches = preferLong == bullish;
+			int score = (directionMatches ? 0 : 30) + Math.abs(entryIndex - index);
+			if (best == null || score < best.score) {
+				best = new FvgStructure();
+				best.score = score;
+				best.index = index;
+				best.bullish = bullish;
+				best.gapLow = gapLow;
+				best.gapHigh = gapHigh;
+				best.widthTicks = widthTicks;
+			}
+		}
+		if (best == null) {
+			return;
+		}
+		Bar first = dayBars.get(best.index - 2);
+		Bar third = dayBars.get(best.index);
+		appendAnnotationSeparator(json);
+		json.append("{\"type\":\"gap\",\"label\":").append(jsonString("IFVG".equals(code) ? "Inversion FVG Structure" : "Fair Value Gap Structure"))
+			.append(",\"startTime\":").append(jsonString(first.displayTime))
+			.append(",\"endTime\":").append(jsonString(third.displayTime))
+			.append(",\"gapLow\":").append(round(best.gapLow))
+			.append(",\"gapHigh\":").append(round(best.gapHigh))
+			.append(",\"bias\":").append(jsonString(best.bullish ? "Bullish" : "Bearish"))
+			.append(",\"widthTicks\":").append(round(best.widthTicks))
+			.append(",\"color\":\"#a78bfa\"}");
+	}
+
+	private static int nearestBarIndex(List<Bar> bars, LocalDateTime timestamp) {
+		int bestIndex = -1;
+		long bestSeconds = Long.MAX_VALUE;
+		for (int index = 0; index < (bars == null ? 0 : bars.size()); index++) {
+			Bar bar = bars.get(index);
+			if (bar == null || bar.marketDate == null || bar.marketTime == null) {
+				continue;
+			}
+			long seconds = Math.abs(Duration.between(LocalDateTime.of(bar.marketDate, bar.marketTime.withSecond(0).withNano(0)), timestamp).getSeconds());
+			if (seconds < bestSeconds) {
+				bestIndex = index;
+				bestSeconds = seconds;
+			}
+		}
+		return bestSeconds <= 300 ? bestIndex : -1;
+	}
+
+	private static void appendPriorSessionAnnotations(StringBuilder json, TradeAnalysisContext context, String strategyCode) {
+		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
+		if (!("PDB".equals(code) || "SWEEP".equals(code) || "SWEEP2".equals(code) || "VPB".equals(code) || "LIQREC".equals(code))) {
+			return;
+		}
+		if (context == null) {
+			return;
+		}
+		appendTradePriceAnnotation(json, "Prior High", context.previousHigh, "#38bdf8");
+		appendTradePriceAnnotation(json, "Prior Low", context.previousLow, "#38bdf8");
+		if ("VPB".equals(code) || "LIQREC".equals(code)) {
+			appendTradePriceAnnotation(json, "Value Area High", context.valueAreaHigh, "#c084fc");
+			appendTradePriceAnnotation(json, "Value Area Low", context.valueAreaLow, "#c084fc");
+			appendTradePriceAnnotation(json, "Prior POC", context.pointOfControl, "#f472b6");
+		}
+	}
+
+	private static void appendRangeStructureAnnotation(StringBuilder json, List<Bar> dayBars, String strategyCode, LocalDateTime entryTime) {
+		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
+		if (!("RCB".equals(code) || "AFT".equals(code) || "CMOM".equals(code) || "MIM".equals(code) || "IPB".equals(code))) {
+			return;
+		}
+		int entryIndex = nearestBarIndex(dayBars, entryTime);
+		if (entryIndex < 3) {
+			return;
+		}
+		int lookback = "RCB".equals(code) ? 8 : 20;
+		int start = Math.max(0, entryIndex - lookback);
+		int end = Math.max(start, entryIndex - 1);
+		double high = Double.NEGATIVE_INFINITY;
+		double low = Double.POSITIVE_INFINITY;
+		for (int index = start; index <= end; index++) {
+			Bar bar = dayBars.get(index);
+			high = Math.max(high, bar.high);
+			low = Math.min(low, bar.low);
+		}
+		if (high <= low) {
+			return;
+		}
+		appendAnnotationSeparator(json);
+		json.append("{\"type\":\"range\",\"label\":").append(jsonString("RCB".equals(code) ? "Compression Box" : "Local Decision Range"))
+			.append(",\"startTime\":").append(jsonString(dayBars.get(start).displayTime))
+			.append(",\"endTime\":").append(jsonString(dayBars.get(end).displayTime))
+			.append(",\"high\":").append(round(high))
+			.append(",\"low\":").append(round(low))
+			.append(",\"color\":\"#f59e0b\"}");
+	}
+
+	private static void appendEntryContextStructureAnnotations(StringBuilder json, List<Bar> dayBars, Bar entryBar, String strategyCode, LocalDateTime entryTime) {
+		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
+		if (!isVwapEmaStructureStrategy(code) || entryBar == null) {
+			return;
+		}
+		appendTradePriceAnnotation(json, "VWAP", entryBar.vwap, "#facc15");
+		appendTradePriceAnnotation(json, "EMA 20", entryBar.ema20, "#38bdf8");
+		appendTradePriceAnnotation(json, "EMA 50", entryBar.ema50, "#a78bfa");
+
+		if (usesSessionOpenStructure(code)) {
+			Bar openBar = firstRthBar(dayBars);
+			if (openBar != null) {
+				appendTradePriceAnnotation(json, "Session Open", openBar.open, "#e879f9");
+			}
+		}
+		if ("EIA".equals(code)) {
+			appendCrudeInventoryRangeAnnotation(json, dayBars, entryTime);
+		}
+	}
+
+	private static boolean isVwapEmaStructureStrategy(String code) {
+		String safeCode = cleanOrDefault(code, "").toUpperCase(Locale.US);
+		return "VWAP".equals(safeCode)
+			|| "VRCL".equals(safeCode)
+			|| "MRVWAP".equals(safeCode)
+			|| "MSCALP".equals(safeCode)
+			|| "TLAD".equals(safeCode)
+			|| "RCB".equals(safeCode)
+			|| "AFT".equals(safeCode)
+			|| "CMOM".equals(safeCode)
+			|| "MIM".equals(safeCode)
+			|| "IPB".equals(safeCode)
+			|| "KELT".equals(safeCode)
+			|| "KREV".equals(safeCode)
+			|| "SHDW".equals(safeCode)
+			|| "ECHO".equals(safeCode)
+			|| "WFT".equals(safeCode)
+			|| "EIA".equals(safeCode)
+			|| "COPEN".equals(safeCode)
+			|| "IDXCONF".equals(safeCode)
+			|| "MYMBR".equals(safeCode)
+			|| "MCLTC".equals(safeCode)
+			|| "LIQREC".equals(safeCode);
+	}
+
+	private static boolean usesSessionOpenStructure(String code) {
+		String safeCode = cleanOrDefault(code, "").toUpperCase(Locale.US);
+		return "COPEN".equals(safeCode)
+			|| "IDXCONF".equals(safeCode)
+			|| "MYMBR".equals(safeCode)
+			|| "MCLTC".equals(safeCode)
+			|| "MIM".equals(safeCode)
+			|| "IPB".equals(safeCode);
+	}
+
+	private static Bar firstRthBar(List<Bar> dayBars) {
+		for (Bar bar : dayBars == null ? Collections.<Bar>emptyList() : dayBars) {
+			if (bar != null && bar.marketTime != null && !bar.marketTime.isBefore(RTH_START)) {
+				return bar;
+			}
+		}
+		return null;
+	}
+
+	private static void appendCrudeInventoryRangeAnnotation(StringBuilder json, List<Bar> dayBars, LocalDateTime entryTime) {
+		if (dayBars == null || dayBars.isEmpty()) {
+			return;
+		}
+		LocalTime rangeEnd = LocalTime.of(10, 30);
+		LocalTime rangeStart = rangeEnd.minusMinutes(5);
+		if (entryTime != null && entryTime.toLocalTime().isBefore(rangeEnd)) {
+			rangeEnd = entryTime.toLocalTime();
+			rangeStart = rangeEnd.minusMinutes(5);
+		}
+		List<Bar> releaseBars = new ArrayList<Bar>();
+		for (Bar bar : dayBars) {
+			if (bar != null && bar.marketTime != null && !bar.marketTime.isBefore(rangeStart) && !bar.marketTime.isAfter(rangeEnd)) {
+				releaseBars.add(bar);
+			}
+		}
+		if (releaseBars.isEmpty()) {
+			return;
+		}
+		double high = Double.NEGATIVE_INFINITY;
+		double low = Double.POSITIVE_INFINITY;
+		for (Bar bar : releaseBars) {
+			high = Math.max(high, bar.high);
+			low = Math.min(low, bar.low);
+		}
+		if (high <= low) {
+			return;
+		}
+		appendAnnotationSeparator(json);
+		json.append("{\"type\":\"range\",\"label\":\"Inventory Release Range\",\"startTime\":").append(jsonString(releaseBars.get(0).displayTime))
+			.append(",\"endTime\":").append(jsonString(releaseBars.get(releaseBars.size() - 1).displayTime))
+			.append(",\"high\":").append(round(high))
+			.append(",\"low\":").append(round(low))
+			.append(",\"color\":\"#eab308\"}");
+	}
+
+	private static void appendKeltnerStructureAnnotation(StringBuilder json, Bar entryBar, String strategyCode) {
+		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
+		if (!("KELT".equals(code) || "KREV".equals(code)) || entryBar == null || entryBar.ema20 <= 0.0 || entryBar.atr14 <= 0.0) {
+			return;
+		}
+		double multiplier = defaultFuturesStrategySettings().keltnerAtrMultiplier;
+		appendTradePriceAnnotation(json, "Keltner Upper", entryBar.ema20 + (entryBar.atr14 * multiplier), "#f97316");
+		appendTradePriceAnnotation(json, "Keltner Lower", entryBar.ema20 - (entryBar.atr14 * multiplier), "#f97316");
+	}
+
+	private static void appendAnnotationSeparator(StringBuilder json) {
+		if (json.length() > 1) {
+			json.append(",");
+		}
+	}
+
+	private static class TradeAnalysisContext {
+		private double orbHigh;
+		private double orbLow;
+		private double orbVolume;
+		private int orbBars;
+		private double previousHigh;
+		private double previousLow;
+		private double previousClose;
+		private double valueAreaHigh;
+		private double valueAreaLow;
+		private double pointOfControl;
+		private double entryVolumeRatio;
+	}
+
+	private static class FvgStructure {
+		private int score;
+		private int index;
+		private boolean bullish;
+		private double gapLow;
+		private double gapHigh;
+		private double widthTicks;
+	}
+
 	private static class DataBundle {
 		private List<Bar> bars = new ArrayList<Bar>();
 		private String source = "none";

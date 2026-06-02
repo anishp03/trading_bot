@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import RunPreview from "../components/RunPreview.jsx";
+import TradeAnalysisModal from "../components/TradeAnalysisModal.jsx";
 import { apiFetch } from "../utils/api.js";
 import { formatEstTime } from "../utils/time.js";
 
@@ -14,6 +15,7 @@ export default function FuturesBacktestHistory() {
   const [selectedSegments, setSelectedSegments] = useState(EMPTY_SEGMENTS);
   const [selectedSymbols, setSelectedSymbols] = useState([]);
   const [isClearing, setIsClearing] = useState(false);
+  const [selectedTrade, setSelectedTrade] = useState(null);
 
   const loadRuns = useCallback((preferredId = null) => {
     apiFetch("/api/futures/portfolio-backtests")
@@ -293,9 +295,16 @@ export default function FuturesBacktestHistory() {
             loadTradesPage={loadSelectedTradesPage}
             showCapitalCards={true}
             showTradeLogs={true}
+            onOpenTrade={setSelectedTrade}
           />
         </>
       )}
+
+      <TradeAnalysisModal
+        trade={selectedTrade}
+        source="backtest"
+        onClose={() => setSelectedTrade(null)}
+      />
     </div>
   );
 }

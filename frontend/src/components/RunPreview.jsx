@@ -335,7 +335,18 @@ export default function RunPreview({
             ) : (
               <>
                 {renderedTrades.map((trade, index) => (
-                  <article className="mobile-trade-card" key={`preview-${trade.id ?? trade.time ?? "t"}-${index}`}>
+                  <article
+                    className={onOpenTrade ? "mobile-trade-card trade-analysis-clickable" : "mobile-trade-card"}
+                    key={`preview-${trade.id ?? trade.time ?? "t"}-${index}`}
+                    role={onOpenTrade ? "button" : undefined}
+                    tabIndex={onOpenTrade ? 0 : undefined}
+                    onClick={onOpenTrade ? () => onOpenTrade(trade) : undefined}
+                    onKeyDown={onOpenTrade ? (event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      onOpenTrade(trade);
+                    } : undefined}
+                  >
                     <div className="mobile-trade-card-head">
                       <div>
                         <span className="app-label">{trade.contractName || trade.symbol || "--"} / {trade.strategyName || trade.strategyCode || "--"}</span>
@@ -383,11 +394,6 @@ export default function RunPreview({
                           <p>{formatEstTime(trade.closedAt)}</p>
                         </div>
                       )}
-                      {onOpenTrade && (
-                        <button type="button" className="app-btn app-btn-small px-3" onClick={() => onOpenTrade(trade)}>
-                          Open
-                        </button>
-                      )}
                     </details>
                   </article>
                 ))}
@@ -421,7 +427,15 @@ export default function RunPreview({
                 {renderedTrades.map((trade, index) => (
                   <div
                     key={`${trade.id ?? trade.time ?? "t"}-${index}`}
-                    className={onOpenTrade ? "app-grid-row trades-grid has-action" : "app-grid-row trades-grid"}
+                    className={onOpenTrade ? "app-grid-row trades-grid has-action trade-analysis-clickable" : "app-grid-row trades-grid"}
+                    role={onOpenTrade ? "button" : undefined}
+                    tabIndex={onOpenTrade ? 0 : undefined}
+                    onClick={onOpenTrade ? () => onOpenTrade(trade) : undefined}
+                    onKeyDown={onOpenTrade ? (event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      onOpenTrade(trade);
+                    } : undefined}
                   >
                     <div className="app-time-cell">
                       <strong>{formatEstTime(trade.time ?? "--")}</strong>
@@ -447,7 +461,10 @@ export default function RunPreview({
                     <div className="app-trade-notes">{trade?.tradeNotes?.trim() ? trade.tradeNotes : "--"}</div>
                     {onOpenTrade && (
                       <div>
-                        <button type="button" className="app-btn app-btn-small px-3" onClick={() => onOpenTrade(trade)}>
+                        <button type="button" className="app-btn app-btn-small px-3" onClick={(event) => {
+                          event.stopPropagation();
+                          onOpenTrade(trade);
+                        }}>
                           Open
                         </button>
                       </div>
