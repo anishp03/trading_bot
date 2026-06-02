@@ -20,26 +20,17 @@ frontend/.env.*
 /.env.example
 !frontend/.env.example
 
-# Backend/dev artifacts kept local, not in the frontend GitHub repo
-backend/
+# Backend/dev artifacts kept local, but keep backend source in Git
 release/
 scripts/
 docker-compose.yml
 CONTAINER_DEPLOYMENT.md
 
-# Required backend resources that must survive strategy merges.
-!backend/
-backend/*
-!backend/src/
-backend/src/*
-!backend/src/main/
-backend/src/main/*
-!backend/src/main/resources/
-backend/src/main/resources/*
-!backend/src/main/resources/liqrec-source2268.properties
-
 # Backend runtime output
+backend/target/
 backend/logs/
+backend/data/
+backend/backups/
 release/**/tradingbot-backend.jar
 
 # Local databases and broker/account state
@@ -63,6 +54,7 @@ release/**/*.sqlite
 release/**/*.sqlite3
 
 # Large generated or staged market-data backups
+backend/market_data/
 backend/market_data/**/*.csv
 backend/market_data/status.properties
 backend/market_data/futures/backups/
