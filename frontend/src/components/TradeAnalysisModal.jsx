@@ -735,15 +735,17 @@ function tradeAnalysisParams(trade) {
 
 function tradeMetricTiles(trade, analysis) {
   const pnl = Number(trade?.pnl || 0);
+  const entry = reasonSection(trade?.entryReasoning || trade?.tradeReason?.entry);
+  const exit = reasonSection(trade?.exitReasoning || trade?.tradeReason?.exit);
   return [
     { label: "Entry", value: formatPrice(tradeEntryPrice(trade)) },
     { label: "Exit", value: formatPrice(tradeExitPrice(trade)) },
     { label: "Contracts", value: formatNumber(trade?.qty ?? trade?.contracts ?? 0) },
     { label: "P/L", value: formatCurrency(pnl), accent: pnl },
-    { label: "Stop", value: formatPrice(trade?.stop ?? trade?.stopPrice) },
-    { label: "Target", value: formatPrice(trade?.target ?? trade?.targetPrice) },
-    { label: "MFE", value: formatCurrency(trade?.mfe) },
-    { label: "MAE", value: formatCurrency(trade?.mae) },
+    { label: "Stop", value: formatPrice(firstNumber(trade?.stop, trade?.stopPrice, entry.initialStop, entry.stopPrice)) },
+    { label: "Target", value: formatPrice(firstNumber(trade?.target, trade?.targetPrice, entry.initialTarget, entry.targetPrice)) },
+    { label: "MFE", value: formatCurrency(firstNumber(trade?.mfe, exit.mfe)) },
+    { label: "MAE", value: formatCurrency(firstNumber(trade?.mae, exit.mae)) },
     { label: "Opened", value: formatEstTime(tradeOpenedAt(trade) || analysis?.entryTime || "--") },
     { label: "Closed", value: formatEstTime(tradeClosedAt(trade) || analysis?.exitTime || "--") },
   ];
@@ -767,30 +769,119 @@ function marketContextTiles(context = {}) {
 }
 
 function tradeDetailSections(trade) {
-  const entry = firstText(
-    trade?.entryReason,
-    trade?.reason,
-    trade?.tradeReason?.entry?.strategyText,
-    trade?.tradeReason?.entry?.strategyReason
-  );
-  const exit = firstText(
-    trade?.exitReason,
-    trade?.structuredExitReason,
-    trade?.tradeReason?.exit?.finalExitTrigger,
-    trade?.tradeReason?.exit?.exitText
-  );
-  const dtm = firstText(
-    trade?.tradeReason?.exit?.dtmSummary,
-    trade?.exitReasoning?.dtmSummary,
-    trade?.dtmDetails,
-    textContaining(trade?.tradeNotes, "DTM")
-  );
+  const entry = entryDetailText(trade);
+  const exit = exitDetailText(trade);
+  const dtm = dtmDetailText(trade);
+  const tableDetails = tableDetailText(trade);
   return [
-    { label: "Entry Reason", text: entry || "Entry reason is not attached to this trade row." },
-    { label: "Exit Reason", text: exit || "Exit reason is not attached to this trade row." },
-    { label: "DTM Decisions", text: dtm || "No DTM decision details were attached to this row." },
-    { label: "Table Details", text: trade?.tradeNotes || trade?.reason || "No additional table notes." },
+    { label: "Entry Reason", text: entry },
+    { label: "Exit Reason", text: exit },
+    { label: "DTM Decisions", text: dtm },
+    { label: "Table Details", text: tableDetails },
   ];
+}
+
+function entryDetailText(trade) {
+  const entry = reasonSection(trade?.entryReasoning || trade?.tradeReason?.entry);
+  return firstText(
+    trade?.entryReason,
+    entry.strategyText,
+    entry.strategyReason,
+    entry.strategyThesis,
+    trade?.reason,
+    `${displayStrategy(trade)} ${String(trade?.side || "").toLowerCase()} entry at ${formatPrice(tradeEntryPrice(trade))}.`
+  );
+}
+
+function exitDetailText(trade) {
+  const exit = reasonSection(trade?.exitReasoning || trade?.tradeReason?.exit);
+  const finalTrigger = firstText(
+    exit.finalExitTrigger,
+    trade?.structuredExitReason,
+    stripDtmPrefix(trade?.exitReason),
+    stripDtmPrefix(exit.exitText)
+  );
+  const pieces = [
+    finalTrigger,
+    tradeExitPrice(trade) > 0 ? `Price ${formatPrice(tradeExitPrice(trade))}` : "",
+    Number(trade?.contracts || trade?.qty || 0) > 0 ? `${formatNumber(trade?.contracts || trade?.qty, 0)} contract${Number(trade?.contracts || trade?.qty) === 1 ? "" : "s"}` : "",
+    Number.isFinite(Number(trade?.pnl)) ? `P/L ${formatCurrency(trade.pnl)}` : "",
+  ];
+  return pieces.filter(Boolean).join("; ") || "Final exit details are waiting on broker reconciliation.";
+}
+
+function dtmDetailText(trade) {
+  const exit = reasonSection(trade?.exitReasoning || trade?.tradeReason?.exit);
+  const timeline = Array.isArray(exit.dtmDecisionTimeline) ? exit.dtmDecisionTimeline : [];
+  if (timeline.length) {
+    return timeline
+      .map((event) => {
+        const details = reasonSection(event?.details);
+        const action = humanizeCode(firstText(event?.actionCode, event?.action, event?.normalizedAction));
+        const reason = firstText(event?.reason);
+        const movement = [
+          Number.isFinite(Number(details.favorableR)) ? `+${formatNumber(details.favorableR)}R favorable` : "",
+          Number.isFinite(Number(details.adverseR)) ? `-${formatNumber(details.adverseR)}R adverse` : "",
+          Number.isFinite(Number(details.barsHeld)) ? `${formatNumber(details.barsHeld, 0)} bars held` : "",
+        ].filter(Boolean).join(", ");
+        return [action, reason, movement].filter(Boolean).join(": ");
+      })
+      .filter(Boolean)
+      .join(" | ");
+  }
+  const action = humanizeCode(firstText(exit.dtmFinalAction, trade?.dtmAction));
+  const summary = firstText(trade?.dtmDetails, exit.dtmSummary, textContaining(trade?.tradeNotes, "DTM"));
+  const runner = firstText(exit.runnerDecision);
+  const partial = firstText(exit.partialDecision);
+  const normalized = `${action} ${summary}`.toLowerCase();
+  if (summary && !normalized.includes("no dtm decisions") && !normalized.includes("dtm_no_override")) {
+    return [action, summary, partial, runner].filter(Boolean).join("; ");
+  }
+  if (action && !action.toLowerCase().includes("no override")) {
+    return [action, partial, runner].filter(Boolean).join("; ");
+  }
+  return "DTM evaluated this trade but did not attach an override action to the final row.";
+}
+
+function tableDetailText(trade) {
+  const pieces = [
+    trade?.accountId ? `Account ${trade.accountId}` : "",
+    trade?.cacheSource ? `Source ${trade.cacheSource}` : "",
+    trade?.status ? `Status ${trade.status}` : "",
+    trade?.brokerOrderId || trade?.orderId ? `Order ${trade.brokerOrderId || trade.orderId}` : "",
+    trade?.customTag ? `Tag ${trade.customTag}` : "",
+    trade?.reason || trade?.tradeNotes || "",
+  ];
+  return pieces.filter(Boolean).join("; ") || "Broker/live table row was paired from available entry and close data.";
+}
+
+function reasonSection(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function firstNumber(...values) {
+  for (const value of values) {
+    const number = Number(value);
+    if (Number.isFinite(number) && number !== 0) return number;
+  }
+  return 0;
+}
+
+function stripDtmPrefix(value) {
+  return String(value || "")
+    .replace(/^\s*DTM:\s*[^.]+\.?\s*/i, "")
+    .replace(/^\s*DTM:\s*[^;]+;\s*/i, "")
+    .trim();
+}
+
+function humanizeCode(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return text
+    .replace(/^DTM[_\s-]*/i, "")
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function indicatorPath(series, toX, toY, key) {

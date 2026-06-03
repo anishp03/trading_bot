@@ -2995,8 +2995,7 @@ textarea {
   display: inline-block;
 }
 
-.futures-live-trades-grid,
-.futures-live-all-trades-grid {
+.futures-live-trades-grid {
   grid-template-columns:
     minmax(112px, 0.82fr)
     minmax(46px, 0.32fr)
@@ -3011,6 +3010,21 @@ textarea {
     minmax(148px, 1fr)
     minmax(50px, 0.28fr);
   min-width: min(1120px, 100%);
+}
+
+.futures-live-all-trades-grid {
+  grid-template-columns:
+    minmax(120px, 1fr)
+    minmax(58px, 0.42fr)
+    minmax(58px, 0.42fr)
+    minmax(132px, 0.95fr)
+    minmax(58px, 0.38fr)
+    minmax(40px, 0.28fr)
+    minmax(76px, 0.54fr)
+    minmax(76px, 0.54fr)
+    minmax(86px, 0.6fr)
+    minmax(58px, 0.34fr);
+  min-width: min(940px, 100%);
 }
 
 .app-grid-head.futures-live-trades-grid,

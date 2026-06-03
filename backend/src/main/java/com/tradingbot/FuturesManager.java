@@ -11818,9 +11818,7 @@ public class FuturesManager {
 		FuturesTrade safeTrade = trade == null ? new FuturesTrade() : trade;
 		String finalCode = liveExitReasonCode(status, safeTrade.exitReason, brokerCloseJson);
 		String dtmAction = firstNonBlank(safeTrade.dtmFinalAction, liveDtmActionForExitReason(safeTrade.exitReason));
-		String dtmSummary = safeTrade.dtmTimelineJson != null && safeTrade.dtmTimelineJson.length() > 2
-			? "DTM decision: " + liveReasonCodeText(dtmAction) + "."
-			: liveDtmSummaryForExit(safeTrade.exitReason);
+		String dtmSummary = liveDtmSummaryForTrade(safeTrade, dtmAction);
 		String trigger = compactExitTrigger(firstNonBlank(safeTrade.exitReason, reason, "Close reason not available."), finalCode, safeTrade);
 		String exitPriceText = safeTrade.exitPrice > 0.0 ? livePriceText(safeTrade.exitPrice) : "not available";
 		String review = liveExitReview(safeTrade);
@@ -11991,6 +11989,35 @@ public class FuturesManager {
 			return "Managed stop protected the trade after favorable movement.";
 		}
 		return "No DTM decisions.";
+	}
+
+	private static String liveDtmSummaryForTrade(FuturesTrade trade, String dtmAction) {
+		FuturesTrade safeTrade = trade == null ? new FuturesTrade() : trade;
+		List<String> timeline = jsonArrayObjects("{\"events\":" + jsonObjectOrDefault(safeTrade.dtmTimelineJson, "[]") + "}", "events");
+		if (!timeline.isEmpty()) {
+			String lastEvent = timeline.get(timeline.size() - 1);
+			String actionCode = firstNonBlank(jsonText(lastEvent, "actionCode", ""), dtmAction);
+			String reason = jsonText(lastEvent, "reason", "");
+			String details = jsonObjectForKey(lastEvent, "details");
+			double favorableR = jsonNumber(details, "favorableR", 0.0);
+			double adverseR = jsonNumber(details, "adverseR", 0.0);
+			StringBuilder summary = new StringBuilder();
+			summary.append("DTM recorded ").append(liveReasonCodeText(actionCode));
+			if (reason.length() > 0) {
+				summary.append(": ").append(compactReasonPhrase(reason));
+			}
+			if (favorableR > 0.0 || adverseR > 0.0) {
+				summary.append(" Movement: +").append(liveNumberText(favorableR)).append("R / -").append(liveNumberText(adverseR)).append("R.");
+			}
+			if (safeTrade.dtmPartialDecision != null && safeTrade.dtmPartialDecision.trim().length() > 0) {
+				summary.append(" Partial: ").append(compactReasonPhrase(safeTrade.dtmPartialDecision)).append(".");
+			}
+			if (safeTrade.dtmRunnerDecision != null && safeTrade.dtmRunnerDecision.trim().length() > 0) {
+				summary.append(" Runner: ").append(compactReasonPhrase(safeTrade.dtmRunnerDecision)).append(".");
+			}
+			return summary.toString();
+		}
+		return liveDtmSummaryForExit(safeTrade.exitReason);
 	}
 
 	private static String liveExitReview(FuturesTrade trade) {
@@ -16900,7 +16927,6 @@ public class FuturesManager {
 
 	private static String dynamicTradeStateKey(int sessionId, int snapshotId, PortfolioPosition position) {
 		return sessionId
-			+ "|" + snapshotId
 			+ "|" + normalizeSymbol(position == null ? "" : position.symbol)
 			+ "|" + cleanOrDefault(position == null || position.signal == null ? "" : position.signal.strategyCode, "")
 			+ "|" + cleanOrDefault(position == null ? "" : position.side, "")
@@ -17200,15 +17226,18 @@ public class FuturesManager {
 			if (!requiredAccountId.equals(configuredAccountId)) {
 				return "{\"success\":false,\"message\":" + jsonString("Select Topstep account " + requiredAccountId + " before starting the live bot.") + ",\"status\":" + getLiveStatusJson() + "}";
 			}
-			if (!FuturesConnectionManager.isExecutionProviderReady(normalizedMode)) {
-				return "{\"success\":false,\"message\":"
-					+ jsonString("Live futures execution is not ready for " + normalizedMode + ". Save and test that connection first.")
-					+ ",\"status\":" + getLiveStatusJson() + "}";
+				if (!FuturesConnectionManager.isExecutionProviderReady(normalizedMode)) {
+					return "{\"success\":false,\"message\":"
+						+ jsonString("Live futures execution is not ready for " + normalizedMode + ". Save and test that connection first.")
+						+ ",\"status\":" + getLiveStatusJson() + "}";
 				}
-				if (!ProjectXRealtimeManager.isRunning() || (orderFlowFeaturesEnabled && !ProjectXRealtimeManager.isDepthIncluded())) {
+				boolean realtimeAccountMismatch = ProjectXRealtimeManager.isRunning()
+					&& !requiredAccountId.equals(ProjectXRealtimeManager.currentAccountId());
+				if (realtimeAccountMismatch || !ProjectXRealtimeManager.isRunning() || (orderFlowFeaturesEnabled && !ProjectXRealtimeManager.isDepthIncluded())) {
+					boolean includeDepth = orderFlowFeaturesEnabled || (ProjectXRealtimeManager.isRunning() && !ProjectXRealtimeManager.isDepthIncluded());
 					String realtimeStart = ProjectXRealtimeManager.isRunning()
-						? ProjectXRealtimeManager.restartReadOnly(cleanLiveSymbols, true, true)
-						: ProjectXRealtimeManager.startReadOnly(cleanLiveSymbols, orderFlowFeaturesEnabled, true);
+						? ProjectXRealtimeManager.restartReadOnly(cleanLiveSymbols, includeDepth, true)
+						: ProjectXRealtimeManager.startReadOnly(cleanLiveSymbols, includeDepth, true);
 				if (!jsonBoolean(realtimeStart, "success")) {
 					return "{\"success\":false,\"message\":"
 						+ jsonString("ProjectX realtime start failed before Topstep order automation: " + jsonStringSummary(realtimeStart))
@@ -17343,10 +17372,14 @@ public class FuturesManager {
 				+ jsonString("Live futures bot started. ProjectX prices are live and " + profile.name + " order automation is enabled.")
 				+ ",\"status\":" + getLiveStatusJson() + "}";
 		}
-		if (!ProjectXRealtimeManager.isRunning() || (orderFlowFeaturesEnabled && !ProjectXRealtimeManager.isDepthIncluded())) {
+		boolean realtimeAccountMismatch = ProjectXRealtimeManager.isRunning()
+			&& requiredAccountId.length() > 0
+			&& !requiredAccountId.equals(ProjectXRealtimeManager.currentAccountId());
+		if (realtimeAccountMismatch || !ProjectXRealtimeManager.isRunning() || (orderFlowFeaturesEnabled && !ProjectXRealtimeManager.isDepthIncluded())) {
+			boolean includeDepth = orderFlowFeaturesEnabled || (ProjectXRealtimeManager.isRunning() && !ProjectXRealtimeManager.isDepthIncluded());
 			String realtimeStart = ProjectXRealtimeManager.isRunning()
-				? ProjectXRealtimeManager.restartReadOnly(cleanLiveSymbols, true, true)
-				: ProjectXRealtimeManager.startReadOnly(cleanLiveSymbols, orderFlowFeaturesEnabled, true);
+				? ProjectXRealtimeManager.restartReadOnly(cleanLiveSymbols, includeDepth, true)
+				: ProjectXRealtimeManager.startReadOnly(cleanLiveSymbols, includeDepth, true);
 			if (!jsonBoolean(realtimeStart, "success")) {
 				return "{\"success\":false,\"message\":"
 					+ jsonString("ProjectX realtime start failed before simulated automation: " + jsonStringSummary(realtimeStart))
@@ -18195,7 +18228,7 @@ public class FuturesManager {
 						openPositions.add(position);
 						takenByStrategy.put(strategyKey, taken + 1);
 						updatePortfolioExposureMetrics(result, openPositions);
-					}
+				}
 				}
 
 				updateOpenPositionExcursions(openPositions, currentBars);

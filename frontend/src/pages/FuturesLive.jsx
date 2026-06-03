@@ -286,13 +286,17 @@ export default function FuturesLive() {
       : allClosedTradeCacheRows,
     [accountScopeId, allClosedTradeCacheRows, brokerHistoryDataActive, hydratedTradeCacheRows]
   );
+  const dtmThinkingEvents = useMemo(
+    () => extractDtmThinkingEvents(liveThinking),
+    [liveThinking]
+  );
   const liveTrades = useMemo(
     () => botAccountDataActive ? brokerOpenTradeRows : [],
     [botAccountDataActive, brokerOpenTradeRows]
   );
   const allTradeRows = useMemo(
-    () => enrichedClosedTradeRows,
-    [enrichedClosedTradeRows]
+    () => attachDtmThinkingToTrades(enrichedClosedTradeRows, dtmThinkingEvents),
+    [dtmThinkingEvents, enrichedClosedTradeRows]
   );
   const filteredLiveTrades = useMemo(
     () => filterTradeRows(liveTrades, liveTradeFilters),
@@ -3292,10 +3296,18 @@ function buildBrokerOpenTradeRows(positions, provenance = []) {
           fallback: unmatchedBrokerEntryReason("open position"),
         }),
         exitReason: "",
+        structuredExitReason: matchedDecision?.structuredExitReason || tradeReasonExitText(matchedDecision?.tradeReason),
+        dtmDetails: tradeDtmDetailsText(matchedDecision),
         fees: null,
+        stopPrice: finiteNumberOrNull(matchedDecision?.stopPrice),
+        targetPrice: finiteNumberOrNull(matchedDecision?.targetPrice),
+        signalTime: matchedDecision?.signalTime || position.createdAt,
         reason: "Open position from Topstep Position/searchOpen; mark PnL updates from live ProjectX price.",
         entryTime: position.createdAt,
         createdAt: position.createdAt,
+        brokerOrderId: position.brokerOrderId || position.orderId || "",
+        orderId: position.orderId || position.brokerOrderId || "",
+        customTag: position.customTag || "",
       };
     });
 }
@@ -3404,10 +3416,18 @@ function buildBrokerClosedTradeRows(trades, provenance = []) {
           ? "Broker close fill matched the saved strategy entry, but the local close reason is still syncing."
           : "Topstep closed this trade, but no local strategy exit provenance matched this account.",
       }),
+      structuredExitReason: matchedDecision?.structuredExitReason || tradeReasonExitText(matchedDecision?.tradeReason),
+      dtmDetails: tradeDtmDetailsText(matchedDecision),
       fees,
+      stopPrice: finiteNumberOrNull(matchedDecision?.stopPrice),
+      targetPrice: finiteNumberOrNull(matchedDecision?.targetPrice),
+      signalTime: matchedDecision?.signalTime || entryTime,
       reason,
       entryTime: entryTime || trade.createdAt,
       createdAt: trade.createdAt,
+      brokerOrderId: entryOrderId || trade.orderId || trade.brokerOrderId || "",
+      orderId: trade.orderId || trade.brokerOrderId || entryOrderId || "",
+      customTag: trade.customTag || "",
     });
   });
   return rows.sort((first, second) => (parseChartTime(second.createdAt) || 0) - (parseChartTime(first.createdAt) || 0));
@@ -3447,6 +3467,7 @@ function buildLocalClosedTradeCacheRows(trades, accountId = "") {
         entryReason: tradeReasonEntryText(trade.tradeReason) || trade.entryReason || trade.reason || "Saved live strategy entry.",
         exitReason: tradeReasonExitText(trade.tradeReason) || trade.structuredExitReason || trade.exitReason || trade.reason || "Saved live strategy close.",
         structuredExitReason: trade.structuredExitReason || tradeReasonExitText(trade.tradeReason),
+        dtmDetails: tradeDtmDetailsText(trade),
         reason: trade.reason || "Saved from local live strategy decision history.",
         fees: finiteNumberOrNull(trade.fees),
         stopPrice: finiteNumberOrNull(trade.stopPrice),
@@ -3539,6 +3560,7 @@ function normalizeCachedBrokerTradeRow(row, accountId = "") {
     entryReason: row?.entryReason || "",
     exitReason: row?.exitReason || "",
     structuredExitReason: row?.structuredExitReason || "",
+    dtmDetails: row?.dtmDetails || tradeDtmDetailsText(row),
     tradeReason: normalizeTradeReasonPayload(row?.tradeReason),
     entryReasoning: normalizeReasonSection(row?.entryReasoning || row?.tradeReason?.entry),
     exitReasoning: normalizeReasonSection(row?.exitReasoning || row?.tradeReason?.exit),
@@ -3593,6 +3615,7 @@ function hydrateBrokerTradeRow(row, cachedRow) {
     entryReason,
     exitReason,
     structuredExitReason: row?.structuredExitReason || cachedRow?.structuredExitReason || tradeReasonExitText(mergedTradeReason),
+    dtmDetails: row?.dtmDetails || cachedRow?.dtmDetails || tradeDtmDetailsText({ ...row, tradeReason: mergedTradeReason }),
     reason: useCachedStrategy && cachedRow.reason ? cachedRow.reason : row?.reason || cachedRow.reason,
     stopPrice: finiteNumberOrNull(row?.stopPrice) ?? cachedRow.stopPrice,
     targetPrice: finiteNumberOrNull(row?.targetPrice) ?? cachedRow.targetPrice,
@@ -4407,11 +4430,12 @@ function buildChartTrades(decisions, symbol, latestPrice) {
       unrealizedPnl: closed && realizedPnl !== 0 ? realizedPnl : livePnl,
       entryReason: trade.entryReason,
       exitReason: trade.exitReason,
-      structuredExitReason: trade.structuredExitReason,
-      tradeReason: trade.tradeReason,
-      entryReasoning: trade.entryReasoning,
-      exitReasoning: trade.exitReasoning,
-      fees: trade.fees,
+    structuredExitReason: trade.structuredExitReason,
+    tradeReason: trade.tradeReason,
+    entryReasoning: trade.entryReasoning,
+    exitReasoning: trade.exitReasoning,
+    dtmDetails: trade.dtmDetails || tradeDtmDetailsText(trade),
+    fees: trade.fees,
     };
   });
 }
@@ -4634,6 +4658,12 @@ function toTradeAnalysisRow(trade) {
     exitPrice: exit,
     stopPrice: finiteNumberOrNull(trade.stopPrice ?? trade.stop) ?? 0,
     targetPrice: finiteNumberOrNull(trade.targetPrice ?? trade.target) ?? 0,
+    entryReasoning: normalizeReasonSection(trade.entryReasoning || trade.tradeReason?.entry),
+    exitReasoning: normalizeReasonSection(trade.exitReasoning || trade.tradeReason?.exit),
+    entryReason: trade.entryReason || tradeReasonEntryText(trade.tradeReason),
+    exitReason: trade.exitReason || tradeReasonExitText(trade.tradeReason),
+    structuredExitReason: trade.structuredExitReason || tradeReasonExitText(trade.tradeReason),
+    dtmDetails: trade.dtmDetails || tradeDtmDetailsText(trade),
   };
 }
 
@@ -4826,6 +4856,7 @@ function TradesTable({ trades, mode, onOpenTrade = null }) {
   const gridClass = mode === "live" ? "futures-live-trades-grid" : "futures-live-all-trades-grid";
   const emptyText = mode === "live" ? "No live trade intents yet." : "No live bot trade records yet.";
   const rowClickable = mode === "all" && typeof onOpenTrade === "function";
+  const showReasonColumns = mode !== "all";
   return (
     <>
       <div className="mobile-trade-card-list">
@@ -4907,8 +4938,8 @@ function TradesTable({ trades, mode, onOpenTrade = null }) {
           <div>Entry</div>
           <div>Exit</div>
           <div>PnL</div>
-          <div>Entry Reason</div>
-          <div>Exit Reason</div>
+          {showReasonColumns && <div>Entry Reason</div>}
+          {showReasonColumns && <div>Exit Reason</div>}
           <div>Fees</div>
         </div>
         {trades.length ? (
@@ -4934,8 +4965,8 @@ function TradesTable({ trades, mode, onOpenTrade = null }) {
               <div>{formatPrice(trade.entryPrice)}</div>
               <div>{formatPrice(trade.exitPrice)}</div>
               <div className={Number(trade.pnl || 0) > 0 ? "app-pnl-pos" : Number(trade.pnl || 0) < 0 ? "app-pnl-neg" : ""}>{formatCurrency(trade.pnl)}</div>
-              <div className="app-trade-notes"><TradeReasonStack trade={trade} kind="entry" /></div>
-              <div className="app-trade-notes"><TradeReasonStack trade={trade} kind="exit" emptyText={mode === "live" ? "--" : "not available"} /></div>
+              {showReasonColumns && <div className="app-trade-notes"><TradeReasonStack trade={trade} kind="entry" /></div>}
+              {showReasonColumns && <div className="app-trade-notes"><TradeReasonStack trade={trade} kind="exit" emptyText={mode === "live" ? "--" : "not available"} /></div>}
               <div className="app-trade-fees">{mode === "live" ? "--" : formatFees(trade.fees)}</div>
             </div>
           ))
@@ -5129,6 +5160,8 @@ function compactEntryRiskText(entry, source) {
 
 function compactDtmText(exit) {
   const section = normalizeReasonSection(exit);
+  const timelineText = compactDtmTimelineText(section.dtmDecisionTimeline);
+  if (timelineText) return timelineText;
   const action = cleanDisplayText(section.dtmFinalAction);
   const actionText = humanizeReasonCode(action);
   const summary = compactReasonClause(section.dtmSummary || "");
@@ -5141,6 +5174,130 @@ function compactDtmText(exit) {
     actionText ? `Action: ${actionText}` : "",
     summary ? summary : "",
   ].filter(Boolean).join("; ");
+}
+
+function tradeDtmDetailsText(trade) {
+  const exit = normalizeReasonSection(trade?.exitReasoning || trade?.tradeReason?.exit);
+  return compactDtmText(exit)
+    || cleanDisplayText(trade?.dtmDetails)
+    || cleanDisplayText(exit.dtmSummary)
+    || "";
+}
+
+function extractDtmThinkingEvents(entries) {
+  return (Array.isArray(entries) ? entries : [])
+    .filter((entry) => eventLogCode(entry) === "DTM_DECISION")
+    .map((entry) => {
+      const details = normalizeReasonSection(entry?.details);
+      const dtmDetails = normalizeReasonSection(details.dtmDetails);
+      return {
+        sessionId: entry?.sessionId || 0,
+        symbol: String(entry?.symbol || details.symbol || "").toUpperCase(),
+        strategyCode: String(details.strategy || details.strategyCode || "").toUpperCase(),
+        side: String(details.side || "").toUpperCase(),
+        time: entry?.barTime || entry?.createdAt || details.time || "",
+        actionCode: cleanDisplayText(details.action || details.actionCode || details.dtmAction),
+        reason: cleanDisplayText(details.reason || entry?.detail || entry?.summary),
+        details: dtmDetails,
+      };
+    })
+    .filter((event) => event.symbol && event.actionCode);
+}
+
+function attachDtmThinkingToTrades(trades, dtmEvents) {
+  const events = Array.isArray(dtmEvents) ? dtmEvents : [];
+  if (!events.length) return Array.isArray(trades) ? trades : [];
+  return (Array.isArray(trades) ? trades : []).map((trade) => {
+    const existingDtm = tradeDtmDetailsText(trade);
+    if (existingDtm && !isNoDtmText(existingDtm)) return trade;
+    const matchedEvents = events.filter((event) => dtmEventMatchesTrade(event, trade));
+    if (!matchedEvents.length) return trade;
+    const timeline = matchedEvents.map((event) => ({
+      time: event.time,
+      actionCode: event.actionCode,
+      reason: event.reason,
+      details: event.details,
+    }));
+    const last = matchedEvents[matchedEvents.length - 1];
+    const dtmSummary = matchedEvents.map(dtmThinkingEventText).filter(Boolean).join(" | ");
+    const currentReason = normalizeTradeReasonPayload(trade?.tradeReason);
+    const currentExit = normalizeReasonSection(trade?.exitReasoning || currentReason.exit);
+    const exitReasoning = {
+      ...currentExit,
+      dtmSummary,
+      dtmDecisionTimeline: timeline,
+      dtmFinalAction: last.actionCode,
+    };
+    const tradeReason = {
+      ...currentReason,
+      exit: exitReasoning,
+      exitReasonText: currentReason.exitReasonText || trade?.structuredExitReason || trade?.exitReason || "",
+    };
+    return {
+      ...trade,
+      tradeReason,
+      exitReasoning,
+      dtmDetails: dtmSummary,
+    };
+  });
+}
+
+function dtmEventMatchesTrade(event, trade) {
+  if (!event || !trade) return false;
+  const symbol = String(trade.symbol || "").toUpperCase();
+  const strategy = String(trade.strategyCode || "").toUpperCase();
+  const side = String(trade.side || "").toUpperCase();
+  if (event.symbol && symbol && event.symbol !== symbol) return false;
+  if (event.strategyCode && strategy && event.strategyCode !== strategy) return false;
+  if (event.side && side && event.side !== side) return false;
+  const eventTime = parseChartTime(event.time);
+  const entryTime = parseChartTime(trade.entryTime || trade.signalTime || trade.openedAt || trade.createdAt);
+  const exitTime = parseChartTime(trade.exitTime || trade.closedAt || trade.updatedAt || trade.createdAt);
+  if (!eventTime || !entryTime) return true;
+  if (eventTime < entryTime - 60_000) return false;
+  if (exitTime && eventTime > exitTime + 5 * 60_000) return false;
+  return true;
+}
+
+function dtmThinkingEventText(event) {
+  const details = normalizeReasonSection(event?.details);
+  const favorableR = firstFiniteNumber(details.favorableR, details.favorableCloseR);
+  const adverseR = firstFiniteNumber(details.adverseR, details.adverseCloseR);
+  const movement = favorableR > 0 || adverseR > 0
+    ? `move +${formatNumber(favorableR, 2)}R / -${formatNumber(adverseR, 2)}R`
+    : "";
+  return [
+    humanizeReasonCode(event?.actionCode),
+    cleanDisplayText(event?.reason),
+    movement,
+  ].filter(Boolean).join(": ");
+}
+
+function isNoDtmText(value) {
+  const normalized = cleanDisplayText(value).toLowerCase();
+  return !normalized
+    || normalized.includes("no dtm decisions")
+    || normalized.includes("dtm_no_override")
+    || normalized.includes("original bracket");
+}
+
+function compactDtmTimelineText(timeline) {
+  const events = Array.isArray(timeline) ? timeline : [];
+  if (!events.length) return "";
+  return events
+    .map((event) => {
+      const action = humanizeReasonCode(cleanDisplayText(event?.actionCode || event?.action || event?.normalizedAction));
+      const reason = compactReasonClause(event?.reason || "");
+      const details = normalizeReasonSection(event?.details);
+      const favorableR = firstFiniteNumber(details.favorableR, details.favorableCloseR);
+      const adverseR = firstFiniteNumber(details.adverseR, details.adverseCloseR);
+      const movement = favorableR > 0 || adverseR > 0
+        ? `move +${formatNumber(favorableR, 2)}R / -${formatNumber(adverseR, 2)}R`
+        : "";
+      return [action, reason, movement].filter(Boolean).join(": ");
+    })
+    .filter(Boolean)
+    .join(" | ");
 }
 
 function compactFinalExitText(exit, source, options = {}) {

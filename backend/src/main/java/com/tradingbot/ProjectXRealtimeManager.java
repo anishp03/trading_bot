@@ -23,7 +23,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 public class ProjectXRealtimeManager {
-	private static final String REQUIRED_PRACTICE_ACCOUNT_ID = "22539378";
 	private static final DateTimeFormatter DISPLAY_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
 	private static HubConnection userConnection;
@@ -124,7 +123,7 @@ public class ProjectXRealtimeManager {
 			+ "\"running\":" + copy.running + ","
 			+ "\"dataMode\":" + jsonString(copy.dataMode) + ","
 			+ "\"accountId\":" + jsonString(copy.accountId) + ","
-			+ "\"requiredAccountId\":" + jsonString(REQUIRED_PRACTICE_ACCOUNT_ID) + ","
+			+ "\"configuredAccountId\":" + jsonString(FuturesConnectionManager.getTopstepxConfiguredAccountId()) + ","
 			+ "\"symbols\":" + jsonString(copy.symbols) + ","
 			+ "\"startedAt\":" + jsonString(copy.startedAt) + ","
 			+ "\"lastEventAt\":" + jsonString(copy.lastEventAt) + ","
@@ -157,6 +156,12 @@ public class ProjectXRealtimeManager {
 	public static String currentDataMode() {
 		synchronized (ProjectXRealtimeManager.class) {
 			return cleanOrDefault(runtime.dataMode, "IDLE");
+		}
+	}
+
+	public static String currentAccountId() {
+		synchronized (ProjectXRealtimeManager.class) {
+			return cleanOrDefault(runtime.accountId, "");
 		}
 	}
 
@@ -203,8 +208,8 @@ public class ProjectXRealtimeManager {
 		return "{"
 			+ "\"provider\":\"TOPSTEPX\","
 			+ "\"accountId\":" + jsonString(configuredAccountId) + ","
-			+ "\"requiredAccountId\":" + jsonString(REQUIRED_PRACTICE_ACCOUNT_ID) + ","
-			+ "\"accountOk\":" + REQUIRED_PRACTICE_ACCOUNT_ID.equals(configuredAccountId) + ","
+			+ "\"configuredAccountId\":" + jsonString(configuredAccountId) + ","
+			+ "\"accountOk\":" + (configuredAccountId.length() > 0) + ","
 			+ "\"includeDepth\":" + includeDepth + ","
 			+ "\"userSubscriptions\":[\"SubscribeAccounts\",\"SubscribeOrders\",\"SubscribePositions\",\"SubscribeTrades\"],"
 			+ "\"marketSubscriptions\":" + subscriptions + ","
@@ -238,10 +243,6 @@ public class ProjectXRealtimeManager {
 		List<FuturesConnectionManager.TopstepxContractInfo> contracts;
 		try {
 			config = FuturesConnectionManager.createTopstepxRealtimeConfig();
-			if (!REQUIRED_PRACTICE_ACCOUNT_ID.equals(config.accountId)) {
-				return "{\"success\":false,\"message\":\"ProjectX realtime is locked to TopstepX practice account "
-					+ REQUIRED_PRACTICE_ACCOUNT_ID + ".\",\"status\":" + getStatusJson() + "}";
-			}
 			contracts = FuturesConnectionManager.resolveTopstepxRealtimeContracts(config, symbols);
 			if (contracts.isEmpty()) {
 				return "{\"success\":false,\"message\":\"No ProjectX contracts resolved for realtime subscriptions.\",\"status\":" + getStatusJson() + "}";
@@ -541,9 +542,6 @@ public class ProjectXRealtimeManager {
 		RealtimeHubSession hubs = null;
 		try {
 			FuturesConnectionManager.TopstepxRealtimeConfig config = FuturesConnectionManager.createTopstepxRealtimeConfig();
-			if (!REQUIRED_PRACTICE_ACCOUNT_ID.equals(config.accountId)) {
-				throw new IllegalStateException("ProjectX realtime is locked to TopstepX practice account " + REQUIRED_PRACTICE_ACCOUNT_ID + ".");
-			}
 			List<FuturesConnectionManager.TopstepxContractInfo> contracts = FuturesConnectionManager.resolveTopstepxRealtimeContracts(config, symbols);
 			if (contracts.isEmpty()) {
 				throw new IllegalStateException("No ProjectX contracts resolved for realtime subscriptions.");

@@ -1,6 +1,7 @@
 package com.tradingbot;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
@@ -18,6 +19,7 @@ public class FuturesConnectionManagerTest {
 	@AfterEach
 	public void tearDown() {
 		System.clearProperty("tradingbot.futuresDataDir");
+		TestDatabaseSupport.clearTempDatabase();
 	}
 
 	@Test
@@ -26,6 +28,37 @@ public class FuturesConnectionManagerTest {
 		assertEquals(125, FuturesConnectionManager.bracketTicksFromEntry(29614.0, 29645.25, 0.25));
 		assertEquals(34, FuturesConnectionManager.bracketTicksFromEntry(29664.25, 29672.75, 0.25));
 		assertEquals(-41, FuturesConnectionManager.bracketTicksFromEntry(29664.25, 29654.0, 0.25));
+	}
+
+	@Test
+	public void projectxRealtimePlanAllowsConfiguredEvalAccount() {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		FuturesConnectionManager.saveConnection(
+			"TOPSTEPX",
+			true,
+			"https://api.topstepx.com/api",
+			"DEMO",
+			"test-user",
+			"test-api-key",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"22529998",
+			"",
+			"",
+			"",
+			"",
+			"",
+			""
+		);
+
+		String plan = ProjectXRealtimeManager.getPlanJson("MES,MNQ", true);
+
+		assertTrue(plan.contains("\"accountId\":\"22529998\""), plan);
+		assertTrue(plan.contains("\"accountOk\":true"), plan);
+		assertFalse(plan.contains("22539378"), plan);
 	}
 
 	@Test
