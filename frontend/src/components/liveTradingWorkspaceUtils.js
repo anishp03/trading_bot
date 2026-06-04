@@ -41,6 +41,12 @@ export function shouldApplyProgrammaticRange({
     || Number(rangeRevision) !== Number(previousRangeRevision);
 }
 
+export function shouldApplyChartSeriesSync({ incomingChartKey, activeChartKey }) {
+  const incoming = String(incomingChartKey || "").trim().toUpperCase();
+  const active = String(activeChartKey || "").trim().toUpperCase();
+  return !incoming || !active || incoming === active;
+}
+
 export function visibleRangeForCandles(candles, range, timeframe) {
   if (!Array.isArray(candles) || candles.length === 0) return null;
   const bars = rangeBarsForTimeframe(range, timeframe);

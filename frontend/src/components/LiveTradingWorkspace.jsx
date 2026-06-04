@@ -14,6 +14,7 @@ import {
   formatChartTickMark,
   formatChartTimeLabel,
   liveWorkspacePropsAreEqual,
+  shouldApplyChartSeriesSync,
   shouldApplyProgrammaticRange,
   visibleRangeForCandles,
   volumeHistogramData,
@@ -82,6 +83,9 @@ function LiveTradingWorkspaceComponent({
     if (!candleSeriesRef.current || !volumeSeriesRef.current) return;
     const normalizedCandles = normalizeCandles(nextCandles);
     const nextChartDataKey = options.chartDataKey || chartDataKey;
+    if (!shouldApplyChartSeriesSync({ incomingChartKey: nextChartDataKey, activeChartKey: chartDataKey })) {
+      return;
+    }
     const nextTimeframe = options.timeframe || timeframe;
     const previousViewport = lastViewportRef.current;
     const previousSeriesUpdate = lastSeriesUpdateRef.current;

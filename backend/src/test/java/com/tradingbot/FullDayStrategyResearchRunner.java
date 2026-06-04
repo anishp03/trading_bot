@@ -28,6 +28,7 @@ public class FullDayStrategyResearchRunner {
 	private static final String WIP_PRESET = "wip";
 	private static final String WIP_SLOT = FuturesManager.strategyPresetSlot(WIP_PRESET);
 	private static final String RUN_TAG = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+	private static boolean additiveOverlayMode = false;
 
 	private interface ScenarioConfig {
 		void apply(String symbol, FuturesManager.FuturesStrategySettings settings);
@@ -56,6 +57,8 @@ public class FullDayStrategyResearchRunner {
 		String mode;
 		String rationale;
 		String[] codes;
+		String effectiveStartDate;
+		String effectiveEndDate;
 		int trades;
 		double pnl;
 		double winRate;
@@ -109,7 +112,7 @@ public class FullDayStrategyResearchRunner {
 
 		List<Scenario> scenarios = buildScenarios();
 		for (Scenario scenario : scenarios) {
-			if (!shouldRunFamily(scenario.family)) {
+			if (!shouldRunFamily(scenario.family) || !shouldRunScenario(scenario.name)) {
 				continue;
 			}
 			resetWipFromBase();
@@ -215,6 +218,39 @@ public class FullDayStrategyResearchRunner {
 					configureVwapTrend(settings, 0.50, 0.45, 14.0, 0.8, false);
 					settings.trendLadder.maxTradesPerDay = 18;
 					settings.microScalp.maxTradesPerDay = 14;
+				}
+			}
+		}));
+
+		scenarios.add(new Scenario("FVG_QUALITY", "fvg_quality_core_all", "Focused fair-value-gap reclaim: displacement gap, bounded retest, reclaim candle, EMA/VWAP quality.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				configureFocusedFvg(settings, 0.75, 48.0, 1.15, "NONE", false);
+			}
+		}));
+		scenarios.add(new Scenario("FVG_QUALITY", "fvg_quality_source_context", "Require the FVG to originate from a real structure event instead of any isolated three-candle gap.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				configureFocusedFvg(settings, 0.75, 48.0, 1.10, "ANY_CONTEXT", false);
+			}
+		}));
+		scenarios.add(new Scenario("FVG_QUALITY", "fvg_quality_htf_context", "Higher-timeframe breakout context for stronger continuation days.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				configureFocusedFvg(settings, 0.70, 52.0, 1.20, "HTF_BREAKOUT", true);
+			}
+		}));
+		scenarios.add(new Scenario("FVG_QUALITY", "fvg_quality_high_participation", "Tighter high-participation FVG reclaim to reduce failed retests and late weak gaps.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if (!"M2K".equals(symbol) && !"MYM".equals(symbol)) {
+					configureFocusedFvg(settings, 0.95, 42.0, 1.15, "ANY_CONTEXT", false);
+					settings.fvgMaxRetestDepthPct = 0.70;
+					settings.fvgMaxEntryExtensionTicks = 18.0;
 				}
 			}
 		}));
@@ -346,6 +382,46 @@ public class FullDayStrategyResearchRunner {
 		settings.microScalpMaxHoldBars = 10;
 	}
 
+	private static void configureFocusedFvg(FuturesManager.FuturesStrategySettings settings, double volumeRatio, double maxRiskTicks, double rewardRisk, String sourceMode, boolean htfGuard) {
+		settings.requireHigherTimeframeGuard = htfGuard;
+		settings.fvg.enabled = true;
+		settings.fvg.maxTradesPerDay = 8;
+		settings.allowShorts = true;
+		settings.allowFvgLongs = true;
+		settings.allowFvgShorts = true;
+		settings.fvgStartMinute = 570;
+		settings.fvgEndMinute = 920;
+		settings.fvgSkipStartMinute = 0;
+		settings.fvgSkipEndMinute = 0;
+		settings.fvgLongSkipDowMask = 0;
+		settings.fvgShortSkipDowMask = 0;
+		settings.fvgMinWidthTicks = 4.0;
+		settings.fvgMinVolumeRatio = volumeRatio;
+		settings.fvgMinRiskTicks = 12.0;
+		settings.fvgMaxRiskTicks = maxRiskTicks;
+		settings.fvgRewardRisk = rewardRisk;
+		settings.fvgMaxHoldBars = 24;
+		settings.fvgRetestBars = 10;
+		settings.fvgRequireCoreQuality = true;
+		settings.fvgRequireEmaStack = true;
+		settings.fvgRequireHigherTimeframeGuard = htfGuard;
+		settings.fvgMinImpulseBodyPct = 45.0;
+		settings.fvgMinReclaimBodyPct = 0.0;
+		settings.fvgMinReclaimTicks = 0.0;
+		settings.fvgMaxRetestDepthPct = 0.85;
+		settings.fvgMinReclaimCloseLocation = 0.72;
+		settings.fvgMaxPriorMoveTicks = 0.0;
+		settings.fvgSourceMode = sourceMode;
+		settings.fvgSourceRangeBars = 24;
+		settings.fvgMinSourceBreakTicks = "NONE".equals(sourceMode) ? 0.0 : 3.0;
+		settings.fvgAcceptanceBars = 0;
+		settings.fvgAcceptanceMinCloseLocation = 0.0;
+		settings.fvgAcceptanceRequireReclaimExtremeBreak = false;
+		settings.fvgMinTrendSlopeTicks = 0.75;
+		settings.fvgMaxVwapDistanceTicks = 96.0;
+		settings.fvgMaxEntryExtensionTicks = 28.0;
+	}
+
 	private static void configureBreakoutRetest(FuturesManager.FuturesStrategySettings settings, double volumeRatio, double maxRiskTicks, boolean coreQuality, String fvgSourceMode) {
 		settings.requireHigherTimeframeGuard = coreQuality;
 		settings.relaxPatternHardWindows = true;
@@ -455,10 +531,15 @@ public class FullDayStrategyResearchRunner {
 	}
 
 	private static void applyAdditiveScenario(Scenario scenario) throws Exception {
-		for (String symbol : SYMBOL_LIST) {
-			FuturesManager.FuturesStrategySettings settings = FuturesManager.loadFuturesStrategySettings(symbol, WIP_SLOT);
-			scenario.config.apply(symbol, settings);
-			FuturesManager.saveFuturesStrategySettings(symbol, WIP_SLOT, settings);
+		additiveOverlayMode = true;
+		try {
+			for (String symbol : SYMBOL_LIST) {
+				FuturesManager.FuturesStrategySettings settings = FuturesManager.loadFuturesStrategySettings(symbol, WIP_SLOT);
+				scenario.config.apply(symbol, settings);
+				FuturesManager.saveFuturesStrategySettings(symbol, WIP_SLOT, settings);
+			}
+		} finally {
+			additiveOverlayMode = false;
 		}
 	}
 
@@ -504,10 +585,11 @@ public class FullDayStrategyResearchRunner {
 	}
 
 	private static boolean clearsSoloGate(RunSummary summary) {
+		int minTrades = Math.max(1, Integer.parseInt(System.getProperty("fullDay.minSoloFamilyTrades", "50")));
 		return summary != null
 			&& "solo".equals(summary.mode)
 			&& summary.ruleViolation == 0
-			&& summary.familyTrades >= 50
+			&& summary.familyTrades >= minTrades
 			&& summary.familyPnl > 0.0
 			&& summary.profitFactor >= 1.05;
 	}
@@ -518,12 +600,14 @@ public class FullDayStrategyResearchRunner {
 		Set<String> codeSet = new HashSet<String>(Arrays.asList(codes));
 		try (Connection conn = DatabaseManager.getConnection()) {
 			try (PreparedStatement stmt = conn.prepareStatement(
-					"SELECT totalProfit, winRate, numTrades, profitFactor, maxDrawdownPct, maxIntradayLoss, maxAggregateMae, "
+					"SELECT startDate, endDate, totalProfit, winRate, numTrades, profitFactor, maxDrawdownPct, maxIntradayLoss, maxAggregateMae, "
 					+ "dailyLossBreaches, trailingDrawdownBreaches, maeBreaches, ruleViolation, overlapRejections, exposureRejections, riskRejections "
 					+ "FROM FuturesPortfolioBacktests WHERE portfolioBacktestID = ?")) {
 				stmt.setInt(1, id);
 				try (ResultSet rs = stmt.executeQuery()) {
 					if (rs.next()) {
+						summary.effectiveStartDate = rs.getString("startDate");
+						summary.effectiveEndDate = rs.getString("endDate");
 						summary.pnl = rs.getDouble("totalProfit");
 						summary.winRate = rs.getDouble("winRate");
 						summary.trades = rs.getInt("numTrades");
@@ -679,7 +763,15 @@ public class FullDayStrategyResearchRunner {
 		report.append("# Full-Day Strategy Research\n\n");
 		report.append("- Generated: ").append(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append(" local\n");
 		report.append("- Analysis DB copy: `").append(analysisDb).append("`\n");
-		report.append("- Range: `").append(START_DATE).append("` to `").append(END_DATE).append("`\n");
+		report.append("- Requested range: `").append(START_DATE).append("` to `").append(END_DATE).append("`\n");
+		if (!allRuns.isEmpty()) {
+			RunSummary first = allRuns.get(0);
+			report.append("- Effective backtest range: `")
+				.append(first.effectiveStartDate == null ? "" : first.effectiveStartDate)
+				.append("` to `")
+				.append(first.effectiveEndDate == null ? "" : first.effectiveEndDate)
+				.append("` based on the available portfolio candle days.\n");
+		}
 		report.append("- Account/risk: `TOPSTEP_50K`, $50k balance, $2k trailing drawdown, $1k daily loss, $700 max risk/trade, DTM `true`, qualitative risk `true`.\n");
 		report.append("- Additive gate: family PnL > 0, family trades >= 50, PF >= 1.05, and no funded-rule violation in solo mode.\n\n");
 		report.append("## Runs\n\n");
@@ -720,7 +812,23 @@ public class FullDayStrategyResearchRunner {
 		return false;
 	}
 
+	private static boolean shouldRunScenario(String scenarioName) {
+		String filter = System.getProperty("fullDay.scenarios", "").trim();
+		if (filter.length() == 0) {
+			return true;
+		}
+		for (String part : filter.split(",")) {
+			if (scenarioName.equals(part.trim())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private static void disableAllStrategies(FuturesManager.FuturesStrategySettings settings) {
+		if (additiveOverlayMode) {
+			return;
+		}
 		settings.orb.enabled = false;
 		settings.enableOrbRetest = false;
 		settings.lateOrbContinuation.enabled = false;

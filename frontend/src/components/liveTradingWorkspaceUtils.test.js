@@ -7,6 +7,7 @@ import {
   formatChartTimeLabel,
   liveWorkspacePropsAreEqual,
   rangeBarsForTimeframe,
+  shouldApplyChartSeriesSync,
   shouldApplyProgrammaticRange,
   volumeHistogramData,
 } from "./liveTradingWorkspaceUtils.js";
@@ -62,6 +63,32 @@ test("shouldApplyProgrammaticRange only moves the viewport for intentional chart
       previousRange: "5D",
       rangeRevision: 2,
       previousRangeRevision: 1,
+    }),
+    true
+  );
+});
+
+test("shouldApplyChartSeriesSync rejects stale imperative updates from previous symbols", () => {
+  assert.equal(
+    shouldApplyChartSeriesSync({
+      incomingChartKey: "MES|1m",
+      activeChartKey: "NQ|1m",
+    }),
+    false
+  );
+
+  assert.equal(
+    shouldApplyChartSeriesSync({
+      incomingChartKey: "NQ|1m",
+      activeChartKey: "NQ|1m",
+    }),
+    true
+  );
+
+  assert.equal(
+    shouldApplyChartSeriesSync({
+      incomingChartKey: "",
+      activeChartKey: "NQ|1m",
     }),
     true
   );
