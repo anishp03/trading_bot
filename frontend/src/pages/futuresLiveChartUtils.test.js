@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   displayCandlesForChart,
+  liveBotControlState,
   liveMonitorRequestKey,
   mergeSeriesCandleVolume,
   resolveLivePatchVolume,
@@ -16,6 +17,20 @@ test("displayCandlesForChart keeps short live-only series visible instead of bla
   ];
 
   assert.deepEqual(displayCandlesForChart(liveOnlyCandles, 24), liveOnlyCandles);
+});
+
+test("liveBotControlState does not expose a separate stop market feed state", () => {
+  assert.deepEqual(
+    liveBotControlState({ botStarted: false, feedRunning: true, busyAction: "" }),
+    { active: false, label: "Start Live Bot" }
+  );
+});
+
+test("liveBotControlState stops only the live bot while the bot is running", () => {
+  assert.deepEqual(
+    liveBotControlState({ botStarted: true, feedRunning: true, busyAction: "" }),
+    { active: true, label: "Stop Live Bot" }
+  );
 });
 
 test("liveMonitorRequestKey separates in-flight monitor requests by selected timeframe and symbols", () => {

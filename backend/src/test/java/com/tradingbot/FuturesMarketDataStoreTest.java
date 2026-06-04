@@ -92,4 +92,15 @@ public class FuturesMarketDataStoreTest {
 		assertTrue(json.contains("\"MES\":{\"capturedRows\":1"), json);
 		assertTrue(json.contains("\"coveragePct\":100.0"), json);
 	}
+
+	@Test
+	public void stopLiveDoesNotTriggerBacktestMarketDataReconciliation() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		FuturesMarketDataStore.initializeStore();
+
+		String result = FuturesManager.stopLive();
+
+		assertTrue(result.contains("\"success\":true"), result);
+		assertEquals(0, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesMarketDataReconciliations"));
+	}
 }

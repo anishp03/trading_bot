@@ -99,6 +99,7 @@ export default function FuturesBacktest() {
   const [instruments, setInstruments] = useState([]);
   const [marketData, setMarketData] = useState({ symbols: [], rowsBySymbol: {}, message: "", storagePath: "" });
   const [isMarketDataLoading, setIsMarketDataLoading] = useState(true);
+  const [isMarketDataRefreshing, setIsMarketDataRefreshing] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [batchSymbols, setBatchSymbols] = useState(MAIN_PORTFOLIO_SYMBOLS);
@@ -325,6 +326,35 @@ export default function FuturesBacktest() {
     }
   }
 
+  async function refreshMarketData() {
+    setIsMarketDataRefreshing(true);
+    setFeedback(`Refreshing data for ${selectedSymbols.join(", ")}...`);
+
+    const params = new URLSearchParams({
+      symbols: selectedSymbols.join(","),
+      startDate: config.startDate,
+      endDate: config.endDate,
+      schema: "ohlcv-1m",
+    });
+
+    try {
+      const response = await apiFetch(`/api/futures/market-data/update-backtest-data?${params.toString()}`, {
+        method: "POST",
+      });
+      const payload = await readApiResponse(response);
+      if (!response.ok || payload.json?.success === false) {
+        throw new Error(payload.json?.message || payload.text || "Failed to refresh futures market data.");
+      }
+      setFeedback(payload.json?.message || "Market data refreshed.");
+      loadMarketDataStatus();
+    } catch (error) {
+      console.error("Error refreshing futures market data:", error);
+      setFeedback(error.message || "Failed to refresh futures market data.");
+    } finally {
+      setIsMarketDataRefreshing(false);
+    }
+  }
+
   return (
     <div className="app-page futures-config-page">
       <div className="d-flex align-items-start justify-content-between gap-3 flex-wrap mb-3">
@@ -360,6 +390,14 @@ export default function FuturesBacktest() {
       <div className="app-panel">
         <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
           <div className="fw-bold app-kicker">Portfolio Market Data</div>
+          <button
+            type="button"
+            className="app-btn app-btn-small px-3"
+            onClick={refreshMarketData}
+            disabled={isMarketDataRefreshing || isMarketDataLoading || selectedSymbols.length === 0}
+          >
+            {isMarketDataRefreshing ? "Refreshing..." : "Refresh Data"}
+          </button>
         </div>
 
         <div className="app-data-toolbar futures-data-toolbar">

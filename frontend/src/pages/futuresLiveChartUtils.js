@@ -6,6 +6,14 @@ export function liveMonitorRequestKey(symbolsCsv, timeframe) {
   return `liveMonitor:${normalizeMonitorTimeframe(timeframe)}:${String(symbolsCsv || "").trim()}`;
 }
 
+export function liveBotControlState({ botStarted = false, busyAction = "" } = {}) {
+  if (busyAction === "start") return { active: false, label: "Starting..." };
+  if (busyAction === "stop") return { active: true, label: "Stopping..." };
+  return botStarted
+    ? { active: true, label: "Stop Live Bot" }
+    : { active: false, label: "Start Live Bot" };
+}
+
 export function liveMarksRequestKey(symbolsCsv, timeframe) {
   return `liveMarks:${normalizeMonitorTimeframe(timeframe)}:${String(symbolsCsv || "").trim()}`;
 }

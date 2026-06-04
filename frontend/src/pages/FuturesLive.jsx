@@ -5,6 +5,7 @@ import LiveTradingWorkspace from "../components/LiveTradingWorkspace.jsx";
 import TradeAnalysisModal from "../components/TradeAnalysisModal.jsx";
 import {
   displayCandlesForChart,
+  liveBotControlState,
   liveMarksRequestKey,
   liveMonitorRequestKey,
   mergeSeriesCandleVolume,
@@ -243,7 +244,7 @@ export default function FuturesLive() {
   const graphReadiness = liveMonitor?.graphReadiness || null;
   const graphReady = monitorDataActive && Boolean(graphReadiness?.ready);
   const graphBuilding = monitorDataActive && !graphReady;
-  const botControlActive = Boolean(liveStatus?.running || realtimeStatus?.running || liveMonitor?.realtimeRunning);
+  const botControl = liveBotControlState({ botStarted, busyAction });
   const dtmToggleOn = botStarted ? Boolean(liveStatus?.dtmEnabled) : dtmEnabled;
   const displayedDecisions = useMemo(() => (botStarted ? liveDecisions : []), [botStarted, liveDecisions]);
   const displayTradeRows = useMemo(() => mergeLiveTradeDecisions(displayedDecisions), [displayedDecisions]);
@@ -441,8 +442,8 @@ export default function FuturesLive() {
   const thinkingEntries = backendThinkingEntries.length > 0 ? backendThinkingEntries : observedThinking;
   const logDrawerEntries = useMemo(() => coalesceLiveBotLogEntries(thinkingEntries), [thinkingEntries]);
   const canStartLiveBot = !backendOffline && !selectedAccountDisabled && Boolean(sidebarStartReady && activeStrategyPreset && !liveStatus?.running);
-  const launchTone = backendOffline ? "offline" : botControlActive ? "live" : sidebarStartReady ? "ready" : "pending";
-  const launchLabel = backendOffline ? "Bot Status: OFF" : botStarted ? "Running" : feedRunning ? "Feed Live" : sidebarStartReady ? "Ready" : marketIdle && !marketSession?.entryWindowOpen ? "Closed" : "Setup";
+  const launchTone = backendOffline ? "offline" : botStarted ? "live" : sidebarStartReady ? "ready" : "pending";
+  const launchLabel = backendOffline ? "Bot Status: OFF" : botStarted ? "Running" : sidebarStartReady ? "Ready" : marketIdle && !marketSession?.entryWindowOpen ? "Closed" : "Setup";
   const noteChartInteraction = useCallback(() => {
     chartInteractionUntil.current = Date.now() + 2500;
   }, []);
@@ -1185,11 +1186,11 @@ export default function FuturesLive() {
             </label>
             <button
               type="button"
-              className={botControlActive ? "app-btn app-btn-danger px-3" : "app-btn app-btn-primary px-3"}
-              onClick={botControlActive ? stopLiveBot : startLiveBot}
-              disabled={busyAction === "start" || busyAction === "stop" || (!botControlActive && !canStartLiveBot)}
+              className={botControl.active ? "app-btn app-btn-danger px-3" : "app-btn app-btn-primary px-3"}
+              onClick={botControl.active ? stopLiveBot : startLiveBot}
+              disabled={busyAction === "start" || busyAction === "stop" || (!botControl.active && !canStartLiveBot)}
             >
-              {busyAction === "start" ? "Starting..." : busyAction === "stop" ? "Stopping..." : botStarted ? "Stop Live Bot" : feedRunning ? "Stop Market Feed" : "Start Live Bot"}
+              {botControl.label}
             </button>
           </div>
         </div>

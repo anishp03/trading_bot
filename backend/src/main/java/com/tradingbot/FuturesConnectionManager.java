@@ -315,7 +315,7 @@ public class FuturesConnectionManager {
 	}
 
 	public static String updateBacktestData(String symbols, String startDate, String endDate, String requestedSchema) {
-		return importTopstepxBars(symbols, startDate, endDate, 1);
+		return FuturesMarketDataStore.refreshBacktestMarketData(symbols, startDate, endDate, 1);
 	}
 
 	public static String rebuildDerivedFuturesData(String symbol) {

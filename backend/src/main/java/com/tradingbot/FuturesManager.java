@@ -10204,7 +10204,14 @@ public class FuturesManager {
 		}
 		empty.dataSource = ProjectXRealtimeManager.isRunning() ? "PROJECTX_SIGNALR_LIVE_ONLY" : "LIVE_NOT_STARTED";
 		empty.loadedAt = now;
-		return empty;
+		if (!liveMarketFeedActive()) {
+			return empty;
+		}
+		LiveWarmupBars loaded = loadProjectXWarmupBars(normalizedSymbol, normalizedTimeframe, limit);
+		synchronized (LIVE_WARMUP_CACHE) {
+			LIVE_WARMUP_CACHE.put(cacheKey, copyWarmupBars(loaded));
+		}
+		return loaded;
 	}
 
 	private static boolean liveMarketFeedActive() {
@@ -17755,6 +17762,9 @@ public class FuturesManager {
 			liveSession.lastDecision = "Futures live runner stopping; broker safety flatten will run if needed.";
 		}
 		stopLiveAutomationLoop();
+		if (ProjectXRealtimeManager.isRunning()) {
+			ProjectXRealtimeManager.stopReadOnly();
+		}
 		String stopMessage = "Futures live runner stopped.";
 		if (wasRunning && "TOPSTEPX".equals(session.executionMode)) {
 			LiveStrategySnapshotRow snapshot = loadActiveLiveStrategySnapshot();
@@ -17798,18 +17808,6 @@ public class FuturesManager {
 			liveSession.lastUpdatedAt = LocalDateTime.now().format(DISPLAY_TIME_FORMAT);
 			liveSession.lastDecision = stopMessage;
 		}
-		String reconciliationResult = FuturesMarketDataStore.reconcileAfterLiveStop(cleanOrDefault(session.symbols, DEFAULT_LIVE_SYMBOLS));
-		stopMessage = stopMessage + " Market data reconciliation: " + jsonStringSummary(reconciliationResult);
-		synchronized (FuturesManager.class) {
-			liveSession.lastUpdatedAt = LocalDateTime.now().format(DISPLAY_TIME_FORMAT);
-			liveSession.lastDecision = stopMessage;
-		}
-		recordLiveAudit(
-			jsonBoolean(reconciliationResult, "success") ? "MARKET_DATA_RECONCILED" : "MARKET_DATA_RECONCILE_NEEDS_ATTENTION",
-			jsonBoolean(reconciliationResult, "success") ? "INFO" : "WARN",
-			"Stop-time market data reconciliation completed.",
-			reconciliationResult
-		);
 		resetLiveMarketDataTransitionState();
 		if (sessionId > 0) {
 			updateLiveEngineSession(sessionId, "STOPPED", "", session.decisionCount, session.acceptedDecisionCount, session.rejectedDecisionCount, stopMessage);

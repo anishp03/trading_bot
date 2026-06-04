@@ -69,22 +69,26 @@ final class FuturesMarketDataStore {
 		recordLevel2Snapshot(symbol);
 	}
 
-	static String reconcileAfterLiveStop(String symbols) {
+	static String refreshBacktestMarketData(String symbols, String startDate, String endDate, int maxContractsPerSymbol) {
 		initializeStore();
 		String cleanSymbols = cleanSymbols(symbols);
 		String startedAt = displayTime();
 		String stopFlush = flushCapturedLevel1ToNativeHistory(cleanSymbols);
-		String topstep = FuturesConnectionManager.importTopstepxBars(cleanSymbols, "2025-05-01", LocalDate.now(NEW_YORK_ZONE).toString(), 1);
+		String cleanStartDate = isBlank(startDate) ? "2025-05-01" : clean(startDate);
+		String cleanEndDate = isBlank(endDate) ? LocalDate.now(NEW_YORK_ZONE).toString() : clean(endDate);
+		String topstep = FuturesConnectionManager.importTopstepxBars(cleanSymbols, cleanStartDate, cleanEndDate, maxContractsPerSymbol);
 		String level2 = fillLevel2Gaps(cleanSymbols);
 		boolean success = !topstep.contains("\"success\":false") && !level2.contains("\"success\":false");
-		String summary = "Level 1 live capture flush: " + jsonSummary(stopFlush)
+		String summary = "Manual backtest data refresh. Level 1 live capture merge: " + jsonSummary(stopFlush)
 			+ "; Topstep gap fill: " + jsonSummary(topstep)
 			+ "; Level 2 gap fill: " + jsonSummary(level2);
 		insertReconciliation(cleanSymbols, startedAt, displayTime(), success ? "COMPLETED" : "NEEDS_ATTENTION", summary);
 		return "{"
 			+ "\"success\":" + success + ","
 			+ "\"symbols\":" + jsonString(cleanSymbols) + ","
-			+ "\"level1Capture\":" + stopFlush + ","
+			+ "\"startDate\":" + jsonString(cleanStartDate) + ","
+			+ "\"endDate\":" + jsonString(cleanEndDate) + ","
+			+ "\"level1CaptureMerge\":" + stopFlush + ","
 			+ "\"topstepGapFill\":" + topstep + ","
 			+ "\"level2GapFill\":" + level2 + ","
 			+ "\"message\":" + jsonString(summary)
