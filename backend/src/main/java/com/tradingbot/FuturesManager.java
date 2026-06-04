@@ -1132,6 +1132,7 @@ public class FuturesManager {
 	private static class LiveAccountSizing {
 		private FundedRuleProfile profile;
 		private String accountId;
+		private double dayStartBalance;
 		private double currentBalance;
 		private double trailingCushion;
 		private double sizingRatio = 1.0;
@@ -13585,7 +13586,11 @@ public class FuturesManager {
 				if (!Double.isNaN(brokerBalance) && brokerBalance > 0.0) {
 					sizing.currentBalance = brokerBalance;
 				}
+				sizing.dayStartBalance = brokerDayStartBalanceForLiveRisk(brokerMetricsJson, sizing.currentBalance, LocalDate.now(NEW_YORK_ZONE));
 			}
+		}
+		if (sizing.dayStartBalance <= 0.0) {
+			sizing.dayStartBalance = sizing.currentBalance;
 		}
 		double drawdownFloor = Math.max(profileSize - configuredDrawdown, Math.min(profileSize, sizing.currentBalance - configuredDrawdown));
 		sizing.trailingCushion = Math.max(0.0, sizing.currentBalance - drawdownFloor);
@@ -13612,7 +13617,7 @@ public class FuturesManager {
 			configuredAccountSize = fundedRuleProfileFor(portfolioConfig.fundedProfile).accountSize;
 		}
 		portfolioConfig.accountSize = positiveOrDefault(configuredAccountSize, portfolioConfig.accountSize);
-		portfolioConfig.dayStartBalance = portfolioConfig.accountSize;
+		portfolioConfig.dayStartBalance = positiveOrDefault(accountSizing.dayStartBalance, portfolioConfig.accountSize);
 		portfolioConfig.currentBalance = positiveOrDefault(accountSizing.currentBalance, portfolioConfig.accountSize);
 		portfolioConfig.maxTrailingDrawdown = positiveOrDefault(session == null ? 0.0 : session.maxTrailingDrawdown, portfolioConfig.maxTrailingDrawdown);
 		portfolioConfig.dailyLossLimit = positiveOrDefault(session == null ? 0.0 : session.dailyLossLimit, portfolioConfig.dailyLossLimit);
@@ -13621,6 +13626,30 @@ public class FuturesManager {
 		portfolioConfig.maxOpenPositions = Math.max(1, accountSizing.maxOpenPositions);
 		portfolioConfig.maxAggregateContracts = Math.max(1, accountSizing.maxAggregateContracts);
 		portfolioConfig.maxAggregateMiniUnits = accountSizing.maxAggregateMiniUnits;
+	}
+
+	static double brokerDayStartBalanceForLiveRiskForTest(String brokerMetricsJson, double currentBalance, LocalDate marketDate) {
+		return brokerDayStartBalanceForLiveRisk(brokerMetricsJson, currentBalance, marketDate);
+	}
+
+	private static double brokerDayStartBalanceForLiveRisk(String brokerMetricsJson, double currentBalance, LocalDate marketDate) {
+		if (currentBalance <= 0.0 || marketDate == null || !jsonBoolean(brokerMetricsJson, "success")) {
+			return currentBalance;
+		}
+		double currentDayClosedPnl = 0.0;
+		List<String> trades = jsonArrayObjects(brokerMetricsJson, "trades");
+		for (int index = 0; index < trades.size(); index++) {
+			String trade = trades.get(index);
+			if (!jsonBoolean(trade, "closed")) {
+				continue;
+			}
+			ZonedDateTime tradeTime = parseMarketTimestamp(firstNonBlank(jsonText(trade, "createdAt", ""), jsonText(trade, "closedAt", "")));
+			if (tradeTime == null || !marketDate.equals(tradeTime.toLocalDate())) {
+				continue;
+			}
+			currentDayClosedPnl += jsonNumber(trade, "pnl", 0.0);
+		}
+		return round(currentBalance - currentDayClosedPnl);
 	}
 
 	private static boolean ensureTopstepxRealtimeFeedFresh(FuturesLiveSession session, LiveStrategySnapshotRow snapshot) {
@@ -16349,7 +16378,7 @@ public class FuturesManager {
 		}
 		double dayStartBalance = positiveOrDefault(portfolioConfig.dayStartBalance, portfolioConfig.accountSize);
 		double balance = positiveOrDefault(portfolioConfig.currentBalance, dayStartBalance);
-		double trailingThreshold = dayStartBalance - Math.abs(portfolioConfig.maxTrailingDrawdown);
+		double trailingThreshold = positiveOrDefault(portfolioConfig.accountSize, dayStartBalance) - Math.abs(portfolioConfig.maxTrailingDrawdown);
 		double equityAtOpen = balance + aggregateOpenPnl(openPositions, currentBars, "open");
 		if (equityAtOpen - dayStartBalance <= -Math.abs(portfolioConfig.dailyLossLimit)) {
 			order.reason = "Rejected: live portfolio daily loss guard blocked new entries.";
