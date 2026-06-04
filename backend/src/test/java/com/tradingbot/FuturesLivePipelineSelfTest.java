@@ -38,6 +38,8 @@ public class FuturesLivePipelineSelfTest {
 		assertTrue(json.contains("\"totalCases\":603"), json);
 		assertTrue(json.contains("\"failed\":0"), json);
 		assertTrue(json.contains("\"fullTradePathVerified\":true"), json);
+		assertTrue(json.contains("\"riskConfigEnvelopeOk\":true"), json);
+		assertTrue(json.contains("\"dailyLossBaselineOk\":true"), json);
 		assertTrue(json.contains("\"strategyCode\":\"IFVG\""), json);
 		assertTrue(json.contains("\"case\":\"valid signal reaches submit gate\""), json);
 		assertTrue(json.contains("\"case\":\"accepted signal completes through exit engine\""), json);

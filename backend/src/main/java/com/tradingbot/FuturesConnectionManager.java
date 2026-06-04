@@ -37,7 +37,6 @@ import java.util.Set;
 import java.util.TreeMap;
 
 public class FuturesConnectionManager {
-	private static final String DATABENTO = "DATABENTO";
 	private static final String TRADOVATE = "TRADOVATE";
 	private static final String TOPSTEPX = "TOPSTEPX";
 	private static final int CONNECT_TIMEOUT_MS = 8000;
@@ -81,11 +80,6 @@ public class FuturesConnectionManager {
 		private String body;
 	}
 
-	private static class DatabentoFetchResult {
-		private HttpResult http;
-		private LocalDate endDate;
-	}
-
 	private static class TopstepxOrderAttempt {
 		private boolean success;
 		private int statusCode;
@@ -96,23 +90,23 @@ public class FuturesConnectionManager {
 		private boolean bracketsSubmitted;
 	}
 
-	private static class InternalBar {
-		private Instant timestamp;
-		private String timestampText;
-		private double open;
-		private double high;
-		private double low;
-		private double close;
-		private double volume;
-		private double vwap;
-		private double ema9;
-		private double ema20;
-		private double ema50;
-		private double atr14;
-		private double rsi14;
-		private double volumeSma20;
-		private double rangeTicks;
-		private double bodyPct;
+	static class InternalBar {
+		Instant timestamp;
+		String timestampText;
+		double open;
+		double high;
+		double low;
+		double close;
+		double volume;
+		double vwap;
+		double ema9;
+		double ema20;
+		double ema50;
+		double atr14;
+		double rsi14;
+		double volumeSma20;
+		double rangeTicks;
+		double bodyPct;
 	}
 
 	private static class TopstepContract {
@@ -164,7 +158,6 @@ public class FuturesConnectionManager {
 
 	private static class MergeStats {
 		private int existingRows;
-		private int databentoRows;
 		private int topstepRows;
 		private int addedRows;
 		private int replacedRows;
@@ -196,7 +189,6 @@ public class FuturesConnectionManager {
 			e.printStackTrace();
 		}
 
-		ensureDefaultConnection(DATABENTO);
 		ensureDefaultConnection(TRADOVATE);
 		ensureDefaultConnection(TOPSTEPX);
 	}
@@ -204,7 +196,7 @@ public class FuturesConnectionManager {
 	public static String getConnectionsJson() {
 		initializeStore();
 		StringBuilder json = new StringBuilder("[");
-		String[] providers = {DATABENTO, TRADOVATE, TOPSTEPX};
+		String[] providers = {TRADOVATE, TOPSTEPX};
 		for (int index = 0; index < providers.length; index++) {
 			if (index > 0) {
 				json.append(",");
@@ -217,16 +209,6 @@ public class FuturesConnectionManager {
 
 	public static String getRequirementsJson() {
 		return "["
-			+ "{"
-			+ "\"provider\":\"DATABENTO\","
-			+ "\"name\":\"Databento Historical Futures Data\","
-			+ "\"purpose\":\"Backtest-grade CME futures bars and optional order-book/trade data.\","
-			+ "\"requiredFields\":[\"apiKey\",\"dataset\",\"schema\",\"symbols\"],"
-			+ "\"defaultDataset\":\"GLBX.MDP3\","
-			+ "\"defaultSchema\":\"ohlcv-1m\","
-			+ "\"supportedSchemas\":[\"ohlcv-1m\"],"
-			+ "\"docs\":\"https://databento.com/docs/api-reference-historical\""
-			+ "},"
 			+ "{"
 			+ "\"provider\":\"TRADOVATE\","
 			+ "\"name\":\"Tradovate API\","
@@ -312,9 +294,7 @@ public class FuturesConnectionManager {
 		String message;
 
 		try {
-			if (DATABENTO.equals(normalizedProvider)) {
-				message = testDatabento(config);
-			} else if (TRADOVATE.equals(normalizedProvider)) {
+			if (TRADOVATE.equals(normalizedProvider)) {
 				message = testTradovate(config);
 			} else if (TOPSTEPX.equals(normalizedProvider)) {
 				message = testTopstepx(config);
@@ -334,64 +314,6 @@ public class FuturesConnectionManager {
 			+ "}";
 	}
 
-	public static String importDatabentoBars(String symbol, String startDate, String endDate) {
-		return importDatabentoBars(symbol, startDate, endDate, "");
-	}
-
-	public static String importDatabentoBars(String symbol, String startDate, String endDate, String requestedSchema) {
-		initializeStore();
-		ConnectionConfig config = loadConnection(DATABENTO);
-		String key = cleanOrDefault(config.apiKey, System.getenv("DATABENTO_API_KEY"));
-		if (isBlank(key)) {
-			return "{\"success\":false,\"message\":\"Databento API key is missing.\",\"rows\":0}";
-		}
-
-		String normalizedSymbol = normalizeFuturesSymbol(symbol);
-		String databentoSymbol = resolveDatabentoSymbol(config, normalizedSymbol);
-		String schemaRequest = cleanOrDefault(requestedSchema, "ohlcv-1m");
-		String schema = normalizeDatabentoSchema(schemaRequest);
-		if (!"ohlcv-1m".equals(schema)) {
-			return "{\"success\":false,\"message\":"
-				+ jsonString("Only OHLCV 1-minute Databento imports are enabled. The 1-second import path was removed after the execution audit showed no useful difference for the current strategy.")
-				+ ",\"rows\":0}";
-		}
-		LocalDate requestedStart = parseDate(startDate, LocalDate.now(ZoneOffset.UTC).minusYears(1));
-		LocalDate requestedEnd = parseDate(endDate, LocalDate.now(ZoneOffset.UTC));
-		if (requestedEnd.isBefore(requestedStart)) {
-			LocalDate swap = requestedStart;
-			requestedStart = requestedEnd;
-			requestedEnd = swap;
-		}
-
-		try {
-			HttpResult result = requestDatabentoCsv(config, key, databentoSymbol, schema, requestedStart, requestedEnd);
-			if (result.statusCode < 200 || result.statusCode >= 300) {
-				if (result.statusCode == 422 && result.body != null && result.body.contains("dataset_unavailable_range")) {
-					String suggestedEndDate = LocalDate.now(ZoneOffset.UTC).minusDays(2).toString();
-					return "{\"success\":false,\"message\":"
-						+ jsonString("Databento says part of that date range is too recent or not licensed yet. This importer requests full calendar days, so set End Date to " + suggestedEndDate + " or earlier, then try again.")
-						+ ",\"rows\":0}";
-				}
-				return "{\"success\":false,\"message\":" + jsonString("Databento import failed (" + result.statusCode + "): " + summarizeBody(result.body)) + ",\"rows\":0}";
-			}
-
-			int rows = writeInternalFuturesCsv(normalizedSymbol, result.body);
-			String storagePath = futuresDataDir() + "/1min/" + normalizedSymbol + ".csv";
-			String generatedMessage = "generated 5-minute, 15-minute, and 1-hour futures files.";
-			saveTestResult(DATABENTO, "connected", "Databento imported " + rows + " " + normalizedSymbol + " " + schema + " bars from " + databentoSymbol + " and " + generatedMessage);
-			return "{\"success\":true,\"message\":"
-				+ jsonString("Databento imported " + rows + " " + normalizedSymbol + " " + schema + " bars, " + generatedMessage)
-				+ ",\"symbol\":" + jsonString(normalizedSymbol)
-				+ ",\"databentoSymbol\":" + jsonString(databentoSymbol)
-				+ ",\"schema\":" + jsonString(schema)
-				+ ",\"rows\":" + rows
-				+ ",\"path\":" + jsonString(storagePath)
-				+ "}";
-		} catch (Exception e) {
-			return "{\"success\":false,\"message\":" + jsonString("Databento import failed: " + safeMessage(e.getMessage())) + ",\"rows\":0}";
-		}
-	}
-
 	public static String updateBacktestData(String symbols, String startDate, String endDate, String requestedSchema) {
 		return importTopstepxBars(symbols, startDate, endDate, 1);
 	}
@@ -401,7 +323,7 @@ public class FuturesConnectionManager {
 		File source = new File(futuresDataDir() + "/1min/" + normalizedSymbol + ".csv");
 		if (!source.exists()) {
 			return "{\"success\":false,\"message\":"
-				+ jsonString("No 1-minute futures file exists for " + normalizedSymbol + ". Import Databento bars first.")
+				+ jsonString("No 1-minute futures file exists for " + normalizedSymbol + ". Run TopstepX historical gap fill or live capture first.")
 				+ ",\"rows\":0}";
 		}
 
@@ -413,9 +335,9 @@ public class FuturesConnectionManager {
 					csv.append(line).append("\n");
 				}
 			}
-			int rows = writeInternalFuturesCsv(normalizedSymbol, csv.toString());
+			int rows = rewriteInternalFuturesCsv(normalizedSymbol, csv.toString());
 			return "{\"success\":true,\"message\":"
-				+ jsonString("Rebuilt " + normalizedSymbol + " futures data into enriched 1-minute, 5-minute, 15-minute, 1-hour, and backtest-only synthetic Level 2 files without calling Databento.")
+				+ jsonString("Rebuilt " + normalizedSymbol + " futures data into enriched 1-minute, 5-minute, 15-minute, 1-hour, and derived Level 2 gap-fill files.")
 				+ ",\"symbol\":" + jsonString(normalizedSymbol)
 				+ ",\"rows\":" + rows
 				+ ",\"path\":" + jsonString(futuresDataDir() + "/1min/" + normalizedSymbol + ".csv")
@@ -505,7 +427,7 @@ public class FuturesConnectionManager {
 				}
 			}
 			symbolResults.append("]");
-			String message = "TopstepX historical merge completed for " + symbolList.size() + " symbol(s). Existing Databento rows were preserved on overlapping timestamps; Topstep filled missing timestamps only.";
+			String message = "TopstepX historical merge completed for " + symbolList.size() + " symbol(s). Existing native/live rows were preserved on overlapping timestamps; Topstep filled missing timestamps only.";
 			saveTestResult(TOPSTEPX, success ? "connected" : "failed", message);
 			return "{"
 				+ "\"success\":" + success + ","
@@ -892,7 +814,9 @@ public class FuturesConnectionManager {
 			for (int index = 0; index < tradeObjects.size(); index++) {
 				String trade = tradeObjects.get(index);
 				double grossPnl = firstJsonNumber(trade, "profitAndLoss");
-				double fees = firstJsonNumber(trade, "fees", "commission");
+				double brokerFees = firstJsonNumber(trade, "fees", "fee");
+				double commission = firstJsonNumber(trade, "commission", "commissions");
+				double fees = topstepxTradeCost(trade);
 				boolean closed = !Double.isNaN(grossPnl);
 				boolean voided = jsonBoolean(trade, "voided");
 				double netPnl = closed ? grossPnl - (Double.isNaN(fees) ? 0.0 : fees) : 0.0;
@@ -921,6 +845,9 @@ public class FuturesConnectionManager {
 					.append("\"exitPrice\":").append(closed ? numberOrZero(firstJsonNumber(trade, "price")) : "0").append(",")
 					.append("\"grossPnl\":").append(numberOrZero(grossPnl)).append(",")
 					.append("\"fees\":").append(numberOrZero(fees)).append(",")
+					.append("\"brokerFees\":").append(numberOrZero(brokerFees)).append(",")
+					.append("\"commission\":").append(numberOrZero(commission)).append(",")
+					.append("\"totalFees\":").append(numberOrZero(fees)).append(",")
 					.append("\"pnl\":").append(numberOrZero(netPnl)).append(",")
 					.append("\"closed\":").append(closed && !voided).append(",")
 					.append("\"voided\":").append(voided).append(",")
@@ -1961,6 +1888,22 @@ public class FuturesConnectionManager {
 		return Double.NaN;
 	}
 
+	static double topstepxTradeCost(String tradeJson) {
+		double fees = firstJsonNumber(tradeJson, "fees", "fee");
+		double commission = firstJsonNumber(tradeJson, "commission", "commissions");
+		double total = 0.0;
+		boolean hasCost = false;
+		if (!Double.isNaN(fees)) {
+			total += fees;
+			hasCost = true;
+		}
+		if (!Double.isNaN(commission)) {
+			total += commission;
+			hasCost = true;
+		}
+		return hasCost ? total : Double.NaN;
+	}
+
 	private static String numberOrZero(double value) {
 		return Double.isNaN(value) || Double.isInfinite(value) ? "0" : decimal(value);
 	}
@@ -2400,168 +2343,6 @@ public class FuturesConnectionManager {
 		}
 	}
 
-	private static MergeStats updateBacktestDataForSymbol(
-		ConnectionConfig config,
-		String key,
-		String symbol,
-		LocalDate requestedStart,
-		LocalDate requestedEnd,
-		String schema,
-		String runId
-	) throws Exception {
-		MergeStats stats = new MergeStats();
-		String normalizedSymbol = normalizeFuturesSymbol(symbol);
-		List<InternalBar> existingBars = readInternalFuturesBars(normalizedSymbol);
-		stats.existingRows = existingBars.size();
-		LocalDate firstExisting = firstBarDateUtc(existingBars);
-		LocalDate effectiveStart = firstExisting == null ? requestedStart : firstExisting;
-		LocalDate effectiveEnd = requestedEnd;
-		if (effectiveEnd.isBefore(effectiveStart)) {
-			effectiveEnd = effectiveStart;
-		}
-		stats.effectiveStart = effectiveStart.toString();
-
-		String databentoSymbol = resolveDatabentoSymbol(config, normalizedSymbol);
-		DatabentoFetchResult fetch = requestDatabentoCsvWithAvailabilityFallback(
-			config,
-			key,
-			databentoSymbol,
-			schema,
-			effectiveStart,
-			effectiveEnd
-		);
-		stats.effectiveEnd = fetch.endDate == null ? effectiveEnd.toString() : fetch.endDate.toString();
-		if (fetch.http.statusCode < 200 || fetch.http.statusCode >= 300) {
-			throw new IllegalStateException("Databento update failed (" + fetch.http.statusCode + "): " + summarizeBody(fetch.http.body));
-		}
-
-		List<InternalBar> databentoBars = parseInternalFuturesCsv(fetch.http.body);
-		stats.databentoRows = databentoBars.size();
-		Map<Instant, InternalBar> mergedBars = new TreeMap<Instant, InternalBar>();
-		for (int index = 0; index < existingBars.size(); index++) {
-			InternalBar bar = existingBars.get(index);
-			if (validBar(normalizedSymbol, bar)) {
-				mergedBars.put(bar.timestamp, bar);
-			}
-		}
-
-		for (int index = 0; index < databentoBars.size(); index++) {
-			InternalBar bar = databentoBars.get(index);
-			if (!validBar(normalizedSymbol, bar)) {
-				stats.invalidRows++;
-				continue;
-			}
-			InternalBar existing = mergedBars.put(bar.timestamp, bar);
-			if (existing == null) {
-				stats.addedRows++;
-			} else {
-				stats.replacedRows++;
-			}
-		}
-
-		stats.backupPath = backupFuturesBars(normalizedSymbol, runId);
-		List<InternalBar> merged = new ArrayList<InternalBar>(mergedBars.values());
-		stats.finalRows = writeInternalFuturesBars(normalizedSymbol, merged);
-		if (!merged.isEmpty()) {
-			stats.first = merged.get(0).timestamp.toString();
-			stats.last = merged.get(merged.size() - 1).timestamp.toString();
-		}
-		return stats;
-	}
-
-	private static HttpResult requestDatabentoCsv(
-		ConnectionConfig config,
-		String key,
-		String databentoSymbol,
-		String schema,
-		LocalDate startDate,
-		LocalDate endDate
-	) throws Exception {
-		String baseUrl = cleanOrDefault(config.baseUrl, "https://hist.databento.com/v0");
-		String dataset = cleanOrDefault(config.dataset, "GLBX.MDP3");
-		String requestStart = startDate.toString() + "T00:00";
-		String requestEnd = databentoRequestEnd(endDate);
-		HttpURLConnection conn = openConnection(baseUrl + "/timeseries.get_range", "POST");
-		String auth = Base64.getEncoder().encodeToString((key + ":").getBytes("UTF-8"));
-		conn.setRequestProperty("Authorization", "Basic " + auth);
-		conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-		conn.setRequestProperty("accept", "text/csv, text/plain");
-		conn.setDoOutput(true);
-
-		String body = formPair("dataset", dataset)
-			+ "&" + formPair("symbols", databentoSymbol)
-			+ "&" + formPair("schema", schema)
-			+ "&" + formPair("start", requestStart)
-			+ "&" + formPair("end", requestEnd)
-			+ "&" + formPair("stype_in", "continuous")
-			+ "&" + formPair("stype_out", "instrument_id")
-			+ "&" + formPair("encoding", "csv")
-			+ "&" + formPair("pretty_px", "true")
-			+ "&" + formPair("pretty_ts", "true")
-			+ "&" + formPair("map_symbols", "true");
-		try (OutputStream os = conn.getOutputStream()) {
-			byte[] input = body.getBytes("UTF-8");
-			os.write(input, 0, input.length);
-		}
-		return readResponse(conn);
-	}
-
-	private static DatabentoFetchResult requestDatabentoCsvWithAvailabilityFallback(
-		ConnectionConfig config,
-		String key,
-		String databentoSymbol,
-		String schema,
-		LocalDate startDate,
-		LocalDate endDate
-	) throws Exception {
-		DatabentoFetchResult fetch = new DatabentoFetchResult();
-		fetch.endDate = endDate;
-		fetch.http = requestDatabentoCsv(config, key, databentoSymbol, schema, startDate, endDate);
-		if (databentoUnavailableRange(fetch.http) && endDate.isAfter(LocalDate.now(ZoneOffset.UTC).minusDays(2))) {
-			LocalDate fallbackEnd = LocalDate.now(ZoneOffset.UTC).minusDays(2);
-			if (!fallbackEnd.isBefore(startDate)) {
-				fetch.endDate = fallbackEnd;
-				fetch.http = requestDatabentoCsv(config, key, databentoSymbol, schema, startDate, fallbackEnd);
-			}
-		}
-		return fetch;
-	}
-
-	private static boolean databentoUnavailableRange(HttpResult result) {
-		return result != null
-			&& result.statusCode == 422
-			&& result.body != null
-			&& result.body.contains("dataset_unavailable_range");
-	}
-
-	private static String databentoRequestEnd(LocalDate endDate) {
-		LocalDate today = LocalDate.now(ZoneOffset.UTC);
-		if (endDate != null && !endDate.isBefore(today)) {
-			Instant safeEnd = Instant.now().minusSeconds(20L * 60L);
-			return safeEnd.toString();
-		}
-		return (endDate == null ? today : endDate).toString() + "T23:59";
-	}
-
-	private static String testDatabento(ConnectionConfig config) throws Exception {
-		String key = cleanOrDefault(config.apiKey, System.getenv("DATABENTO_API_KEY"));
-		if (isBlank(key)) {
-			return "Databento API key is missing. Add DATABENTO_API_KEY or save the key in Futures Live.";
-		}
-
-		String baseUrl = cleanOrDefault(config.baseUrl, "https://hist.databento.com/v0");
-		HttpURLConnection conn = openConnection(baseUrl + "/metadata.list_datasets", "GET");
-		String auth = Base64.getEncoder().encodeToString((key + ":").getBytes("UTF-8"));
-		conn.setRequestProperty("Authorization", "Basic " + auth);
-		HttpResult result = readResponse(conn);
-		if (result.statusCode >= 200 && result.statusCode < 300) {
-			return result.body.contains("GLBX.MDP3")
-				? "Databento connected. GLBX.MDP3 futures dataset is visible."
-				: "Databento connected, but GLBX.MDP3 was not visible in the metadata response.";
-		}
-		return "Databento auth failed (" + result.statusCode + "): " + summarizeBody(result.body);
-	}
-
 	private static String testTradovate(ConnectionConfig config) throws Exception {
 		if (isBlank(config.username) || isBlank(config.password)) {
 			return "Tradovate username/password are missing.";
@@ -2631,12 +2412,12 @@ public class FuturesConnectionManager {
 		return readResponse(conn);
 	}
 
-	private static int writeInternalFuturesCsv(String symbol, String databentoCsv) throws Exception {
-		return writeInternalFuturesBars(symbol, parseInternalFuturesCsv(databentoCsv));
+	private static int rewriteInternalFuturesCsv(String symbol, String csv) throws Exception {
+		return writeInternalFuturesBars(symbol, parseInternalFuturesCsv(csv));
 	}
 
-	private static List<InternalBar> parseInternalFuturesCsv(String databentoCsv) throws Exception {
-		String[] lines = databentoCsv == null ? new String[0] : databentoCsv.split("\\r?\\n");
+	private static List<InternalBar> parseInternalFuturesCsv(String csv) throws Exception {
+		String[] lines = csv == null ? new String[0] : csv.split("\\r?\\n");
 		if (lines.length == 0) {
 			return new ArrayList<InternalBar>();
 		}
@@ -2670,7 +2451,7 @@ public class FuturesConnectionManager {
 		return bars;
 	}
 
-	private static int writeInternalFuturesBars(String symbol, List<InternalBar> bars) throws Exception {
+	static int writeInternalFuturesBars(String symbol, List<InternalBar> bars) throws Exception {
 		File dir = new File(futuresDataDir() + "/1min");
 		if (!dir.exists()) {
 			dir.mkdirs();
@@ -3004,7 +2785,7 @@ public class FuturesConnectionManager {
 		return "BALANCED";
 	}
 
-	private static List<InternalBar> readInternalFuturesBars(String symbol) throws Exception {
+	static List<InternalBar> readInternalFuturesBars(String symbol) throws Exception {
 		List<InternalBar> bars = new ArrayList<InternalBar>();
 		File source = new File(futuresDataDir() + "/1min/" + symbol + ".csv");
 		if (!source.exists()) {
@@ -3155,14 +2936,6 @@ public class FuturesConnectionManager {
 			return 1.00;
 		}
 		return 0.01;
-	}
-
-	private static String normalizeDatabentoSchema(String schema) {
-		String normalized = cleanOrDefault(schema, "ohlcv-1m").trim().toLowerCase(Locale.US);
-		if ("ohlcv-1m".equals(normalized)) {
-			return normalized;
-		}
-		return normalized;
 	}
 
 	private static double parseDouble(String value) {
@@ -3358,10 +3131,7 @@ public class FuturesConnectionManager {
 		config.lastTestAt = "";
 		config.updatedAt = "";
 
-		if (DATABENTO.equals(config.provider)) {
-			config.baseUrl = "https://hist.databento.com/v0";
-			config.environment = "HISTORICAL";
-		} else if (TRADOVATE.equals(config.provider)) {
+		if (TRADOVATE.equals(config.provider)) {
 			config.baseUrl = "https://demo.tradovateapi.com/v1";
 			config.environment = "DEMO";
 		} else if (TOPSTEPX.equals(config.provider)) {
@@ -3446,20 +3216,17 @@ public class FuturesConnectionManager {
 
 	private static String normalizeProvider(String provider) {
 		if (provider == null) {
-			return DATABENTO;
+			return TOPSTEPX;
 		}
 		String normalized = provider.trim().toUpperCase();
 		if ("PROJECTX".equals(normalized) || "TOPSTEP".equals(normalized)) {
 			return TOPSTEPX;
 		}
-		if ("DATABENTO_HISTORICAL".equals(normalized)) {
-			return DATABENTO;
-		}
 		if ("TRADOVATE_DIRECT".equals(normalized)) {
 			return TRADOVATE;
 		}
-		if (!DATABENTO.equals(normalized) && !TRADOVATE.equals(normalized) && !TOPSTEPX.equals(normalized)) {
-			return DATABENTO;
+		if (!TRADOVATE.equals(normalized) && !TOPSTEPX.equals(normalized)) {
+			return TOPSTEPX;
 		}
 		return normalized;
 	}
@@ -3518,26 +3285,6 @@ public class FuturesConnectionManager {
 			return "F.US.GCE";
 		}
 		return "F.US." + normalized;
-	}
-
-	private static String resolveDatabentoSymbol(ConnectionConfig config, String symbol) {
-		String preferred = preferredContinuousSymbol(symbol);
-		if (!isBlank(config.symbols)) {
-			String[] values = config.symbols.split(",");
-			for (String value : values) {
-				String trimmed = value.trim();
-				if (trimmed.equalsIgnoreCase(preferred)) {
-					return trimmed;
-				}
-			}
-			for (String value : values) {
-				String trimmed = value.trim();
-				if (trimmed.toUpperCase().startsWith(symbol + ".")) {
-					return trimmed;
-				}
-			}
-		}
-		return preferred;
 	}
 
 	private static String preferredContinuousSymbol(String symbol) {

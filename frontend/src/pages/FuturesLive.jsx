@@ -1,7 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useOutletContext } from "react-router-dom";
+import LiveTradingWorkspace from "../components/LiveTradingWorkspace.jsx";
 import TradeAnalysisModal from "../components/TradeAnalysisModal.jsx";
+import {
+  displayCandlesForChart,
+  liveMarksRequestKey,
+  liveMonitorRequestKey,
+  mergeSeriesCandleVolume,
+  resolveLivePatchVolume,
+} from "./futuresLiveChartUtils.js";
 import { apiFetch, isApiNetworkError } from "../utils/api.js";
 import { EASTERN_TIME_LABEL, formatEstTime } from "../utils/time.js";
 
@@ -13,6 +21,8 @@ const TIMEFRAME_OPTIONS = [
   { value: "1h", label: "1h" },
 ];
 const LIVE_MARKS_REFRESH_MS = 1000;
+const LIVE_MARKS_UI_REFRESH_MS = 10000;
+const CHART_UI_REFRESH_MS = 2500;
 const LIVE_RECONCILE_REFRESH_MS = 10000;
 const HEALTH_WARN_HOLD_MS = 25000;
 const MARKET_DATA_STALE_SECONDS = 30;
@@ -94,6 +104,7 @@ const DEFAULT_TRADE_FILTERS = {
 };
 const EMPTY_TRADE_METRICS = {
   totalPnl: 0,
+  totalFees: 0,
   returnPct: 0,
   trades: 0,
   winRate: 0,
@@ -160,6 +171,7 @@ export default function FuturesLive() {
   const [feedback, setFeedback] = useState("");
   const [busyAction, setBusyAction] = useState("");
   const [chartTransitioning, setChartTransitioning] = useState(false);
+  const [chartUiRevision, setChartUiRevision] = useState(0);
   const [lastMonitorRefreshAt, setLastMonitorRefreshAt] = useState("");
   const [backendOnline, setBackendOnline] = useState(true);
   const [liveTradeFilters, setLiveTradeFilters] = useState(DEFAULT_TRADE_FILTERS);
@@ -169,10 +181,19 @@ export default function FuturesLive() {
   const [tradeCacheReady, setTradeCacheReady] = useState(false);
   const [selectedAnalysisTrade, setSelectedAnalysisTrade] = useState(null);
   const chartTransitionTimer = useRef(null);
+  const liveWorkspaceRef = useRef(null);
+  const latestChartSyncSignature = useRef("");
+  const chartUiRevisionAt = useRef(0);
+  const chartUiCandleCount = useRef(0);
+  const liveMonitorRef = useRef(null);
+  const monitorCacheRef = useRef({});
+  const liveMarksUiCommitAt = useRef(0);
+  const chartInteractionUntil = useRef(0);
   const botStartedRef = useRef(false);
   const observedThinkingSession = useRef(0);
   const requestControllers = useRef(new Map());
   const decisionSidecarSignature = useRef("");
+  const latestMonitorRequestKey = useRef("");
   const liveMarksRef = useRef(null);
   const sidebarFeedStateSignature = useRef("");
   const tradeCachePersistSignature = useRef("");
@@ -212,7 +233,7 @@ export default function FuturesLive() {
   const accountPreset = PROFILE_ACCOUNTS[selectedAccountProfile.code] || PROFILE_ACCOUNTS[DEFAULT_ACCOUNT_PROFILE];
   const accountScopeId = String(accountPreset.accountId || "").trim();
   const selectedAccountSize = Number(selectedAccountProfile.accountSize || liveRiskConfig.accountSize || FALLBACK_PROFILE.accountSize);
-  const liveRiskAccountSize = Number(selectedAccountSize || liveRiskConfig.accountSize || selectedProfile.accountSize || FALLBACK_PROFILE.accountSize);
+  const liveRiskAccountSize = Number(liveRiskConfig.accountSize || selectedProfile.accountSize || FALLBACK_PROFILE.accountSize || selectedAccountSize);
   const symbolsCsv = monitorSymbols.join(",");
   const backendOffline = backendOnline === false || futuresSidebarOnline === false || futuresSidebarStatus?.backend?.online === false;
   const botStarted = !backendOffline && Boolean(liveStatus?.running);
@@ -291,8 +312,8 @@ export default function FuturesLive() {
     [liveThinking]
   );
   const liveTrades = useMemo(
-    () => botAccountDataActive ? brokerOpenTradeRows : [],
-    [botAccountDataActive, brokerOpenTradeRows]
+    () => botAccountDataActive ? attachDtmThinkingToTrades(brokerOpenTradeRows, dtmThinkingEvents) : [],
+    [botAccountDataActive, brokerOpenTradeRows, dtmThinkingEvents]
   );
   const allTradeRows = useMemo(
     () => attachDtmThinkingToTrades(enrichedClosedTradeRows, dtmThinkingEvents),
@@ -338,9 +359,9 @@ export default function FuturesLive() {
     },
     [rawChartCandles]
   );
-  const chartHasWarmupWindow = chartCandles.some((candle) => !candle.live) || chartCandles.length >= MIN_OPENING_CHART_BARS;
-  const warmupPending = graphBuilding || (graphReady && chartCandles.length > 0 && !chartHasWarmupWindow);
-  const chartDisplayCandles = chartHasWarmupWindow ? chartCandles : [];
+  const warmupPending = graphBuilding && chartCandles.length < MIN_OPENING_CHART_BARS;
+  const chartDisplayCandles = displayCandlesForChart(chartCandles, MIN_OPENING_CHART_BARS);
+  const liveChartDataKey = `${selectedChartSymbol}|${selectedTimeframe}`;
   const selectedSymbolState = useMemo(
     () => symbolStates.find((state) => String(state.symbol || "").toUpperCase() === selectedChartSymbol) || null,
     [selectedChartSymbol, symbolStates]
@@ -355,15 +376,38 @@ export default function FuturesLive() {
     [accountAnalyticsActive, accountScopeId, accountScopedMetrics, effectiveLiveAccountSize]
   );
   const sidebarStartReady = Boolean(futuresSidebarStatus?.topstepApi?.ready);
-  const brokerChartTradeRows = useMemo(
-    () => botAccountDataActive ? [...allTradeRows, ...brokerOpenTradeRows] : allTradeRows,
-    [allTradeRows, botAccountDataActive, brokerOpenTradeRows]
+  const chartLiveTradeRows = useMemo(
+    () => liveTrades,
+    [liveTrades]
   );
   const realChartTrades = useMemo(
-    () => buildChartTrades(botAccountDataActive ? brokerChartTradeRows : [], selectedChartSymbol, selectedChartMarkPrice),
-    [botAccountDataActive, brokerChartTradeRows, selectedChartMarkPrice, selectedChartSymbol]
+    () => buildChartTrades(chartLiveTradeRows, selectedChartSymbol, selectedChartMarkPrice),
+    [chartLiveTradeRows, selectedChartMarkPrice, selectedChartSymbol]
   );
   const chartTrades = realChartTrades;
+  useEffect(() => {
+    pushChartCandlesFromMonitor(displayMonitor, selectedChartSymbol, selectedTimeframe);
+  }, [displayMonitor, selectedChartSymbol, selectedTimeframe]);
+
+  useEffect(() => {
+    chartUiRevisionAt.current = 0;
+    chartUiCandleCount.current = 0;
+    latestChartSyncSignature.current = "";
+    liveMarksUiCommitAt.current = 0;
+    setChartUiRevision((revision) => revision + 1);
+  }, [liveChartDataKey]);
+
+  useEffect(() => {
+    const previousCount = chartUiCandleCount.current;
+    const nextCount = chartDisplayCandles.length;
+    const now = Date.now();
+    const firstCandlesArrived = previousCount === 0 && nextCount > 0;
+    chartUiCandleCount.current = nextCount;
+    if (!firstCandlesArrived && now - chartUiRevisionAt.current < CHART_UI_REFRESH_MS) return;
+    chartUiRevisionAt.current = now;
+    setChartUiRevision((revision) => revision + 1);
+  }, [chartDisplayCandles]);
+
   const botTrackers = useMemo(
     () => buildSymbolTrackers({
       symbols: monitorSymbols,
@@ -399,6 +443,9 @@ export default function FuturesLive() {
   const canStartLiveBot = !backendOffline && !selectedAccountDisabled && Boolean(sidebarStartReady && activeStrategyPreset && !liveStatus?.running);
   const launchTone = backendOffline ? "offline" : botControlActive ? "live" : sidebarStartReady ? "ready" : "pending";
   const launchLabel = backendOffline ? "Bot Status: OFF" : botStarted ? "Running" : feedRunning ? "Feed Live" : sidebarStartReady ? "Ready" : marketIdle && !marketSession?.entryWindowOpen ? "Closed" : "Setup";
+  const noteChartInteraction = useCallback(() => {
+    chartInteractionUntil.current = Date.now() + 2500;
+  }, []);
 
   useEffect(() => {
     loadFundedProfiles();
@@ -498,6 +545,14 @@ export default function FuturesLive() {
   useEffect(() => {
     setStableEquityReviewStatus((current) => stabilizeEquityReviewStatus(current, rawEquityReviewStatus));
   }, [rawEquityReviewStatus]);
+
+  useEffect(() => {
+    liveMonitorRef.current = liveMonitor;
+  }, [liveMonitor]);
+
+  useEffect(() => {
+    monitorCacheRef.current = monitorCache;
+  }, [monitorCache]);
 
   useEffect(() => {
     if (!monitorSymbols.includes(selectedChartSymbol)) {
@@ -670,11 +725,42 @@ export default function FuturesLive() {
   }
 
   function refreshLiveReconciliation() {
+    if (Date.now() < chartInteractionUntil.current) {
+      return;
+    }
     loadLiveStatus();
     loadRealtimeStatus();
     loadLiveOrders();
     loadLiveMetrics();
     loadLiveMonitor();
+  }
+
+  function pushChartCandlesFromMonitor(monitor, symbol, timeframe) {
+    const selectedSymbol = String(symbol || "").toUpperCase();
+    const normalizedTimeframe = normalizeClientTimeframe(timeframe);
+    const sourceCandles = monitor?.marketData?.[selectedSymbol] || [];
+    const normalizedCandles = (Array.isArray(sourceCandles) ? sourceCandles : [])
+      .map(normalizeCandle)
+      .filter((candle) => candle.time && Number(candle.close || 0) > 0);
+    const displayCandles = displayCandlesForChart(normalizedCandles, MIN_OPENING_CHART_BARS);
+    const latest = displayCandles[displayCandles.length - 1] || null;
+    const chartDataKey = `${selectedSymbol}|${normalizedTimeframe}`;
+    const signature = [
+      chartDataKey,
+      displayCandles.length,
+      latest?.time,
+      latest?.open,
+      latest?.high,
+      latest?.low,
+      latest?.close,
+      latest?.volume,
+    ].join("|");
+    if (signature === latestChartSyncSignature.current) return;
+    latestChartSyncSignature.current = signature;
+    liveWorkspaceRef.current?.syncCandles(displayCandles, {
+      chartDataKey,
+      timeframe: normalizedTimeframe,
+    });
   }
 
   function noteBackendResponse(response) {
@@ -839,22 +925,43 @@ export default function FuturesLive() {
   }
 
   function loadLiveMarks() {
+    const requestSymbols = symbolsCsv || DEFAULT_SYMBOLS.join(",");
+    const requestTimeframe = selectedTimeframe;
     const params = new URLSearchParams({
-      symbols: symbolsCsv || DEFAULT_SYMBOLS.join(","),
-      timeframe: selectedTimeframe,
+      symbols: requestSymbols,
+      timeframe: requestTimeframe,
     });
     if (accountScopeId) params.set("accountId", accountScopeId);
-    requestJson("liveMarks", `/api/futures/live/marks?${params.toString()}`, (data) => {
+    requestJson(liveMarksRequestKey(requestSymbols, requestTimeframe), `/api/futures/live/marks?${params.toString()}`, (data) => {
         if (!data?.success) return;
         liveMarksRef.current = data;
-        setLiveMarks(data);
-        const normalizedTimeframe = normalizeClientTimeframe(data.timeframe || selectedTimeframe);
-        setLiveMonitor((current) => mergeMonitorWithMarks(current, data, normalizedTimeframe));
-        setMonitorCache((current) => {
-          const base = current?.[normalizedTimeframe] || null;
-          const merged = mergeMonitorWithMarks(base, data, normalizedTimeframe);
-          return merged ? { ...current, [normalizedTimeframe]: merged } : current;
-        });
+        const normalizedTimeframe = normalizeClientTimeframe(data.timeframe || requestTimeframe);
+        const currentMonitor = liveMonitorRef.current;
+        const currentCache = monitorCacheRef.current || {};
+        const mergedMonitor = normalizeClientTimeframe(currentMonitor?.timeframe) === normalizedTimeframe
+          ? mergeMonitorWithMarks(currentMonitor, data, normalizedTimeframe)
+          : currentMonitor;
+        const mergedCacheMonitor = mergeMonitorWithMarks(currentCache?.[normalizedTimeframe], data, normalizedTimeframe);
+        pushChartCandlesFromMonitor(mergedMonitor || mergedCacheMonitor, selectedChartSymbol, normalizedTimeframe);
+        const now = Date.now();
+        const shouldCommitUi = now >= chartInteractionUntil.current && now - liveMarksUiCommitAt.current >= LIVE_MARKS_UI_REFRESH_MS;
+        if (!shouldCommitUi) return;
+        liveMarksUiCommitAt.current = now;
+        if (mergedMonitor && mergedMonitor !== currentMonitor) liveMonitorRef.current = mergedMonitor;
+        if (mergedCacheMonitor) {
+          const nextCache = { ...currentCache, [normalizedTimeframe]: mergedCacheMonitor };
+          monitorCacheRef.current = nextCache;
+          startTransition(() => {
+            setLiveMarks(data);
+            if (mergedMonitor && mergedMonitor !== currentMonitor) setLiveMonitor(mergedMonitor);
+            setMonitorCache(nextCache);
+          });
+        } else {
+          startTransition(() => {
+            setLiveMarks(data);
+            if (mergedMonitor && mergedMonitor !== currentMonitor) setLiveMonitor(mergedMonitor);
+          });
+        }
       }, (error) => {
         noteBackendError("Error loading live marks:", error);
         setLiveMarks((current) => current || {
@@ -872,25 +979,38 @@ export default function FuturesLive() {
   }
 
   function loadLiveMonitor() {
+    const requestSymbols = symbolsCsv || DEFAULT_SYMBOLS.join(",");
+    const requestTimeframe = selectedTimeframe;
+    const requestKey = liveMonitorRequestKey(requestSymbols, requestTimeframe);
+    latestMonitorRequestKey.current = requestKey;
     const params = new URLSearchParams({
-      symbols: symbolsCsv || DEFAULT_SYMBOLS.join(","),
-      limit: String(monitorLimitForTimeframe(selectedTimeframe)),
-      timeframe: selectedTimeframe,
+      symbols: requestSymbols,
+      limit: String(monitorLimitForTimeframe(requestTimeframe)),
+      timeframe: requestTimeframe,
     });
-    requestJson("liveMonitor", `/api/futures/live/monitor?${params.toString()}`, (data) => {
+    requestJson(requestKey, `/api/futures/live/monitor?${params.toString()}`, (data) => {
         if (data) {
-          const responseTimeframe = normalizeClientTimeframe(data.timeframe || selectedTimeframe);
+          const responseTimeframe = normalizeClientTimeframe(data.timeframe || requestTimeframe);
           const monitorWithTimeframe = { ...data, timeframe: responseTimeframe };
           const monitorWithMarks = mergeMonitorWithMarks(monitorWithTimeframe, liveMarksRef.current, responseTimeframe) || monitorWithTimeframe;
-          setLiveMonitor((current) => mergeMonitorWithCachedMarketData(monitorWithMarks, current));
-          setMonitorCache((current) => ({
-            ...current,
-            [responseTimeframe]: mergeMonitorWithCachedMarketData(monitorWithMarks, current?.[responseTimeframe]),
-          }));
+          const currentCache = monitorCacheRef.current || {};
+          const nextCache = {
+            ...currentCache,
+            [responseTimeframe]: mergeMonitorWithCachedMarketData(monitorWithMarks, currentCache?.[responseTimeframe]),
+          };
+          monitorCacheRef.current = nextCache;
+          startTransition(() => setMonitorCache(nextCache));
+          if (latestMonitorRequestKey.current === requestKey) {
+            const nextMonitor = mergeMonitorWithCachedMarketData(monitorWithMarks, liveMonitorRef.current);
+            liveMonitorRef.current = nextMonitor;
+            startTransition(() => setLiveMonitor(nextMonitor));
+          }
         } else {
-          setLiveMonitor((current) => current);
+          startTransition(() => setLiveMonitor((current) => current));
         }
-        setLastMonitorRefreshAt(new Date().toISOString());
+        if (latestMonitorRequestKey.current === requestKey) {
+          startTransition(() => setLastMonitorRefreshAt(new Date().toISOString()));
+        }
       }, (error) => {
         noteBackendError("Error loading live monitor:", error);
       });
@@ -929,22 +1049,23 @@ export default function FuturesLive() {
       setSelectedChartSymbol(openingSymbol);
       setSelectedTimeframe("1m");
       await loadLiveTradeCache(accountScopeId);
+      const riskProfileForStart = selectedProfile || FALLBACK_PROFILE;
       const params = new URLSearchParams({
         symbol: openingSymbol,
         executionMode: "TOPSTEPX",
-        fundedProfile: selectedProfile.code,
+        fundedProfile: riskProfileForStart.code,
         accountId: accountScopeId,
-        accountSize: String(effectiveLiveAccountSize || liveRiskAccountSize || 50000),
-        maxTrailingDrawdown: String(liveRiskConfig.maxTrailingDrawdown || selectedProfile.maxTrailingDrawdown || 2000),
-        dailyLossLimit: String(liveRiskConfig.dailyLossLimit || selectedProfile.dailyLossLimit || 1000),
-        maxRiskPerTrade: String(liveRiskConfig.maxRiskPerTrade || selectedProfile.maxRiskPerTrade || 400),
-        maxContracts: String(liveRiskConfig.maxContracts || selectedProfile.maxMicroContracts || selectedProfile.maxContracts || 50),
+        accountSize: String(riskProfileForStart.accountSize || liveRiskConfig.accountSize || 50000),
+        maxTrailingDrawdown: String(riskProfileForStart.maxTrailingDrawdown || liveRiskConfig.maxTrailingDrawdown || 2000),
+        dailyLossLimit: String(riskProfileForStart.dailyLossLimit || liveRiskConfig.dailyLossLimit || 1000),
+        maxRiskPerTrade: String(riskProfileForStart.maxRiskPerTrade || liveRiskConfig.maxRiskPerTrade || 400),
+        maxContracts: String(contractLimitForProfile(riskProfileForStart, liveRiskConfig.referenceSymbol)),
         commissionPerContract: String(liveRiskConfig.commissionPerContract || "1.24"),
         slippageTicks: String(liveRiskConfig.slippageTicks || "1"),
-        profitTarget: String(liveRiskConfig.profitTarget || selectedProfile.profitTarget || 0),
-        maxOpenPositions: String(liveRiskConfig.maxOpenPositions || selectedProfile.maxOpenPositions || 1),
-        maxAggregateContracts: String(liveRiskConfig.maxAggregateContracts || selectedProfile.maxAggregateContracts || 50),
-        maxAggregateMiniUnits: String(liveRiskConfig.maxAggregateMiniUnits || selectedProfile.maxAggregateMiniUnits || 5),
+        profitTarget: String(riskProfileForStart.profitTarget || liveRiskConfig.profitTarget || 0),
+        maxOpenPositions: String(riskProfileForStart.maxOpenPositions || liveRiskConfig.maxOpenPositions || 1),
+        maxAggregateContracts: String(riskProfileForStart.maxAggregateContracts || liveRiskConfig.maxAggregateContracts || 50),
+        maxAggregateMiniUnits: String(riskProfileForStart.maxAggregateMiniUnits || liveRiskConfig.maxAggregateMiniUnits || 5),
         symbols: monitorSymbols.join(","),
         strategyPreset: selectedStrategyPreset || DEFAULT_STRATEGY_PRESET,
         dtmEnabled: String(dtmEnabled),
@@ -1171,37 +1292,34 @@ export default function FuturesLive() {
         <TradesTable trades={filteredLiveTrades} mode="live" />
       </section>
 
-      <section className="app-panel futures-monitor-panel">
-        <div className="d-flex align-items-start justify-content-between gap-2 flex-wrap">
-          <div className="fw-bold app-kicker">Live Market Monitor</div>
-        </div>
-
-        <div className="futures-market-layout">
-          <FuturesMarketChart
-            botStarted={monitorDataActive}
-            candles={chartDisplayCandles}
-            isTransitioning={chartTransitioning}
-            symbol={selectedChartSymbol}
-            symbols={monitorSymbols}
-            timeframe={selectedTimeframe}
-            onSymbolChange={selectChartSymbol}
-            onTimeframeChange={changeTimeframe}
-            trades={chartTrades}
-            lastRefreshAt={lastMonitorRefreshAt}
-            serverTime={liveMonitor?.serverTime}
-            lastRealtimeEventAt={liveMonitor?.lastRealtimeEventAt}
-            feedStaleSeconds={feedStaleSeconds}
-            warmupPending={warmupPending}
-            graphReadiness={graphReadiness}
-            backendOffline={backendOffline}
-            marketIdle={marketIdle}
-          />
-          <FuturesBotTrackerPanel
-            trackers={botTrackers}
-            selectedSymbol={selectedChartSymbol}
-            botStarted={botAccountDataActive}
-          />
-        </div>
+      <section className="futures-monitor-workspace-panel">
+        <LiveTradingWorkspace
+          ref={liveWorkspaceRef}
+          botStarted={monitorDataActive}
+          candles={chartDisplayCandles}
+          isTransitioning={chartTransitioning}
+          symbol={selectedChartSymbol}
+          symbols={monitorSymbols}
+          timeframe={selectedTimeframe}
+          onSymbolChange={selectChartSymbol}
+          onTimeframeChange={changeTimeframe}
+          trades={chartTrades}
+          lastRefreshAt={lastMonitorRefreshAt}
+          serverTime={liveMonitor?.serverTime}
+          lastRealtimeEventAt={liveMonitor?.lastRealtimeEventAt}
+          feedStaleSeconds={feedStaleSeconds}
+          warmupPending={warmupPending}
+          graphReadiness={graphReadiness}
+          backendOffline={backendOffline}
+          marketIdle={marketIdle}
+          onChartInteraction={noteChartInteraction}
+          uiRevision={chartUiRevision}
+        />
+        <FuturesBotTrackerPanel
+          trackers={botTrackers}
+          selectedSymbol={selectedChartSymbol}
+          botStarted={botAccountDataActive}
+        />
       </section>
 
       <section className="app-panel">
@@ -2745,6 +2863,7 @@ function liveDecisionSidecarSignature(status) {
 function mergeMonitorWithMarks(monitor, marks, timeframe) {
   if (!monitor || !marks?.success || !marks.symbols) return monitor;
   const normalizedTimeframe = normalizeClientTimeframe(timeframe || marks.timeframe || monitor.timeframe);
+  if (marks.timeframe && normalizeClientTimeframe(marks.timeframe) !== normalizedTimeframe) return monitor;
   const marketData = { ...(monitor.marketData || {}) };
   Object.entries(marks.symbols || {}).forEach(([rawSymbol, patch]) => {
     const symbol = String(rawSymbol || "").toUpperCase();
@@ -2773,12 +2892,13 @@ function mergeCurrentCandleIntoSeries(series, currentCandle) {
   const lastTime = parseChartTime(last.time);
   const patchTime = parseChartTime(patch.time);
   if (last.time === patch.time) {
+    const resolvedVolume = resolveLivePatchVolume(candles, patch, last);
     candles[lastIndex] = {
       ...last,
       ...patch,
       high: Math.max(Number(last.high || 0), Number(patch.high || patch.close || 0)),
       low: Math.min(Number(last.low || patch.low || patch.close || 0), Number(patch.low || patch.close || 0)),
-      volume: Math.max(Number(last.volume || 0), Number(patch.volume || 0)),
+      volume: resolvedVolume,
       vwap: Number(last.vwap || 0) || Number(patch.vwap || 0),
       ema9: Number(last.ema9 || 0) || Number(patch.ema9 || 0),
       ema20: Number(last.ema20 || 0) || Number(patch.ema20 || 0),
@@ -2788,7 +2908,10 @@ function mergeCurrentCandleIntoSeries(series, currentCandle) {
     return candles;
   }
   if (patchTime && (!lastTime || patchTime > lastTime)) {
-    candles.push(patch);
+    candles.push({
+      ...patch,
+      volume: resolveLivePatchVolume(candles, patch, null),
+    });
   }
   return candles;
 }
@@ -2833,7 +2956,7 @@ function mergeCandleSeriesByTime(baseSeries, patchSeries) {
       ...candle,
       high: Math.max(Number(existing.high || 0), Number(candle.high || candle.close || 0)),
       low: Math.min(Number(existing.low || existing.close || 0), Number(candle.low || candle.close || 0)),
-      volume: Math.max(Number(existing.volume || 0), Number(candle.volume || 0)),
+      volume: mergeSeriesCandleVolume(existing, candle),
       live: Boolean(existing.live || candle.live),
     });
   });
@@ -3251,6 +3374,15 @@ function finiteNumberOrNull(value) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function tradeCostTotal(row) {
+  const explicitTotal = finiteNumberOrNull(row?.totalFees);
+  if (explicitTotal != null) return explicitTotal;
+  const fees = finiteNumberOrNull(row?.fees ?? row?.brokerFees);
+  const commission = finiteNumberOrNull(row?.commission ?? row?.commissions);
+  if (fees == null && commission == null) return null;
+  return (fees || 0) + (commission || 0);
+}
+
 function buildBrokerOpenTradeRows(positions, provenance = []) {
   return (Array.isArray(positions) ? positions : [])
     .filter((position) => Number(position?.contracts || 0) > 0)
@@ -3361,7 +3493,7 @@ function buildBrokerClosedTradeRows(trades, provenance = []) {
     });
     openLots.set(key, lots.filter((lot) => lot.remaining > 0));
 
-    const fees = finiteNumberOrNull(trade.fees ?? trade.commission);
+    const fees = tradeCostTotal(trade);
     const entryPrice = matchedContracts > 0 ? weightedEntry / matchedContracts : 0;
     const rowContracts = matchedContracts || contracts;
     const positionSide = entrySide ? positionSideFromEntrySide(entrySide) : positionSideFromClosingSide(tradeSide);
@@ -3419,6 +3551,9 @@ function buildBrokerClosedTradeRows(trades, provenance = []) {
       structuredExitReason: matchedDecision?.structuredExitReason || tradeReasonExitText(matchedDecision?.tradeReason),
       dtmDetails: tradeDtmDetailsText(matchedDecision),
       fees,
+      brokerFees: finiteNumberOrNull(trade.brokerFees ?? trade.fees),
+      commission: finiteNumberOrNull(trade.commission ?? trade.commissions),
+      totalFees: fees,
       stopPrice: finiteNumberOrNull(matchedDecision?.stopPrice),
       targetPrice: finiteNumberOrNull(matchedDecision?.targetPrice),
       signalTime: matchedDecision?.signalTime || entryTime,
@@ -3469,7 +3604,10 @@ function buildLocalClosedTradeCacheRows(trades, accountId = "") {
         structuredExitReason: trade.structuredExitReason || tradeReasonExitText(trade.tradeReason),
         dtmDetails: tradeDtmDetailsText(trade),
         reason: trade.reason || "Saved from local live strategy decision history.",
-        fees: finiteNumberOrNull(trade.fees),
+        fees: tradeCostTotal(trade),
+        brokerFees: finiteNumberOrNull(trade.brokerFees ?? trade.fees),
+        commission: finiteNumberOrNull(trade.commission ?? trade.commissions),
+        totalFees: tradeCostTotal(trade),
         stopPrice: finiteNumberOrNull(trade.stopPrice),
         targetPrice: finiteNumberOrNull(trade.targetPrice),
         signalTime: trade.signalTime || entryTime,
@@ -3565,7 +3703,10 @@ function normalizeCachedBrokerTradeRow(row, accountId = "") {
     entryReasoning: normalizeReasonSection(row?.entryReasoning || row?.tradeReason?.entry),
     exitReasoning: normalizeReasonSection(row?.exitReasoning || row?.tradeReason?.exit),
     reason: row?.reason || "",
-    fees: finiteNumberOrNull(row?.fees),
+    fees: tradeCostTotal(row),
+    brokerFees: finiteNumberOrNull(row?.brokerFees ?? row?.fees),
+    commission: finiteNumberOrNull(row?.commission ?? row?.commissions),
+    totalFees: tradeCostTotal(row),
     stopPrice: finiteNumberOrNull(row?.stopPrice),
     targetPrice: finiteNumberOrNull(row?.targetPrice),
     signalTime: row?.signalTime || entryTime,
@@ -4402,8 +4543,7 @@ function buildChartTrades(decisions, symbol, latestPrice) {
   const selectedSymbol = String(symbol || "").toUpperCase();
   const entries = (Array.isArray(decisions) ? decisions : [])
     .filter((decision) => isEntryDecision(decision) && String(decision.symbol || "").toUpperCase() === selectedSymbol)
-    .sort((first, second) => (parseChartTime(first.entryTime || first.signalTime || first.createdAt) || 0) - (parseChartTime(second.entryTime || second.signalTime || second.createdAt) || 0))
-    .slice(-8);
+    .sort((first, second) => (parseChartTime(first.entryTime || first.signalTime || first.createdAt) || 0) - (parseChartTime(second.entryTime || second.signalTime || second.createdAt) || 0));
 
   return entries.map((trade) => {
     const exitPrice = Number(trade.exitPrice || 0);
@@ -4415,29 +4555,46 @@ function buildChartTrades(decisions, symbol, latestPrice) {
     const livePnl = calculateFuturesPnl(selectedSymbol, trade.side, entryPrice, markPrice, contracts);
     const realizedPnl = Number(trade.pnl || 0);
     return {
-      id: trade.id,
-      symbol: trade.symbol,
-      strategyCode: trade.strategyCode,
+      id: stringifyChartValue(trade.id),
+      symbol: stringifyChartValue(trade.symbol),
+      strategyCode: stringifyChartValue(trade.strategyCode),
       side: String(trade.side || "").toUpperCase() === "SHORT" ? "SHORT" : "LONG",
       contracts,
       entryPrice,
       stopPrice: Number(trade.stopPrice || 0),
       targetPrice: Number(trade.targetPrice || 0),
-      entryTime: trade.entryTime || trade.signalTime || trade.createdAt,
-      exitTime: trade.exitTime || trade.updatedAt || trade.createdAt,
+      entryTime: stringifyChartValue(trade.entryTime || trade.signalTime || trade.createdAt),
+      exitTime: stringifyChartValue(trade.exitTime || trade.closedAt || trade.updatedAt || trade.createdAt),
       currentPrice: markPrice,
       closed,
       unrealizedPnl: closed && realizedPnl !== 0 ? realizedPnl : livePnl,
-      entryReason: trade.entryReason,
-      exitReason: trade.exitReason,
-    structuredExitReason: trade.structuredExitReason,
-    tradeReason: trade.tradeReason,
-    entryReasoning: trade.entryReasoning,
-    exitReasoning: trade.exitReasoning,
-    dtmDetails: trade.dtmDetails || tradeDtmDetailsText(trade),
-    fees: trade.fees,
+      entryReason: stringifyChartValue(trade.entryReason),
+      exitReason: stringifyChartValue(trade.exitReason),
+      structuredExitReason: stringifyChartValue(trade.structuredExitReason),
+      tradeReason: stringifyChartValue(trade.tradeReason),
+      entryReasoning: stringifyChartValue(trade.entryReasoning),
+      exitReasoning: stringifyChartValue(trade.exitReasoning),
+      dtmDetails: stringifyChartValue(trade.dtmDetails || tradeDtmDetailsText(trade)),
+      fees: tradeCostTotal(trade),
     };
   });
+}
+
+function stringifyChartValue(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value?.summary) return stringifyChartValue(value.summary);
+  if (value?.reason) return stringifyChartValue(value.reason);
+  if (value?.text) return stringifyChartValue(value.text);
+  if (value?.entryReasonText) return stringifyChartValue(value.entryReasonText);
+  if (value?.exitReasonText) return stringifyChartValue(value.exitReasonText);
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === "{}" ? "" : serialized;
+  } catch {
+    return "";
+  }
 }
 
 function isEntryDecision(decision) {
@@ -4564,6 +4721,7 @@ function filterTradeRows(trades, filters = DEFAULT_TRADE_FILTERS) {
 function calculateTradeMetrics(trades, accountSize = 0) {
   const rows = Array.isArray(trades) ? trades : [];
   const totalPnl = rows.reduce((total, trade) => total + Number(trade?.pnl || 0), 0);
+  const totalFees = rows.reduce((total, trade) => total + Number(tradeCostTotal(trade) || 0), 0);
   const wins = rows.filter((trade) => Number(trade?.pnl || 0) > 0);
   const losses = rows.filter((trade) => Number(trade?.pnl || 0) < 0);
   const winPnl = wins.reduce((total, trade) => total + Number(trade?.pnl || 0), 0);
@@ -4571,6 +4729,7 @@ function calculateTradeMetrics(trades, accountSize = 0) {
   const baseAccountSize = Number(accountSize || 0);
   return {
     totalPnl,
+    totalFees,
     returnPct: baseAccountSize > 0 ? (totalPnl / baseAccountSize) * 100 : 0,
     trades: rows.length,
     winRate: rows.length > 0 ? (wins.length / rows.length) * 100 : 0,
@@ -4721,6 +4880,7 @@ function TradeMetricsGrid({ metrics, pnlLabel = "P/L", tradeLabel = "Trades", re
     <div className="futures-live-filtered-metrics-stack">
       <div className="app-live-grid futures-live-filtered-primary-grid">
         <MetricCard label={pnlLabel} value={formatCurrency(safeMetrics.totalPnl)} accent={safeMetrics.totalPnl} />
+        <MetricCard label="Total Fees" value={formatFees(safeMetrics.totalFees)} />
         <MetricCard label={returnLabel} value={formatPct(safeMetrics.returnPct)} accent={safeMetrics.returnPct} />
         <MetricCard label={tradeLabel} value={formatInteger(safeMetrics.trades)} />
         <MetricCard label="Win Rate" value={formatRate(safeMetrics.winRate)} />
@@ -5209,7 +5369,6 @@ function attachDtmThinkingToTrades(trades, dtmEvents) {
   if (!events.length) return Array.isArray(trades) ? trades : [];
   return (Array.isArray(trades) ? trades : []).map((trade) => {
     const existingDtm = tradeDtmDetailsText(trade);
-    if (existingDtm && !isNoDtmText(existingDtm)) return trade;
     const matchedEvents = events.filter((event) => dtmEventMatchesTrade(event, trade));
     if (!matchedEvents.length) return trade;
     const timeline = matchedEvents.map((event) => ({
@@ -5220,6 +5379,7 @@ function attachDtmThinkingToTrades(trades, dtmEvents) {
     }));
     const last = matchedEvents[matchedEvents.length - 1];
     const dtmSummary = matchedEvents.map(dtmThinkingEventText).filter(Boolean).join(" | ");
+    const managedLevels = dtmManagedLevelsFromEvents(matchedEvents);
     const currentReason = normalizeTradeReasonPayload(trade?.tradeReason);
     const currentExit = normalizeReasonSection(trade?.exitReasoning || currentReason.exit);
     const exitReasoning = {
@@ -5235,11 +5395,37 @@ function attachDtmThinkingToTrades(trades, dtmEvents) {
     };
     return {
       ...trade,
+      stopPrice: managedLevels.stopPrice > 0 ? managedLevels.stopPrice : trade.stopPrice,
+      targetPrice: managedLevels.targetPrice > 0 ? managedLevels.targetPrice : trade.targetPrice,
       tradeReason,
       exitReasoning,
-      dtmDetails: dtmSummary,
+      dtmDetails: dtmSummary || (existingDtm && !isNoDtmText(existingDtm) ? existingDtm : ""),
     };
   });
+}
+
+function dtmManagedLevelsFromEvents(events) {
+  return (Array.isArray(events) ? events : []).reduce((levels, event) => {
+    const details = normalizeReasonSection(event?.details);
+    const brokerModify = normalizeReasonSection(details.brokerModify);
+    const nextStop = firstPositiveNumber(
+      details.newStop,
+      brokerModify.stopPrice,
+      brokerModify.stop,
+      brokerModify.activeStop,
+      details.stopPrice
+    );
+    const nextTarget = firstPositiveNumber(
+      details.newTarget,
+      brokerModify.targetPrice,
+      brokerModify.target,
+      details.targetPrice
+    );
+    return {
+      stopPrice: nextStop > 0 ? nextStop : levels.stopPrice,
+      targetPrice: nextTarget > 0 ? nextTarget : levels.targetPrice,
+    };
+  }, { stopPrice: 0, targetPrice: 0 });
 }
 
 function dtmEventMatchesTrade(event, trade) {

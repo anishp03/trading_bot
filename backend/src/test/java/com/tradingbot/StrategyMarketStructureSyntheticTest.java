@@ -50,6 +50,78 @@ public class StrategyMarketStructureSyntheticTest {
 		assertFalse(hasSignalCode(invokeBuildSignals(invalidatedFvgScenario()), "FVG"), "FVG continuation should reject after the gap closes through and inverts");
 	}
 
+	@Test
+	public void rangeMidpointContinuationRequiresConfirmingOrderFlow() throws Exception {
+		Scenario scenario = validRmcScenario();
+		Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> orderFlow = orderFlowMap(
+			scenario.symbol,
+			NORMAL_DAY,
+			LocalTime.of(11, 5),
+			-0.34,
+			-180.0,
+			"ASK_FLIP",
+			"ASK_ABSORPTION"
+		);
+
+		assertTrue(hasSignalCode(invokeBuildSignals(scenario, orderFlow), "RMC"), "RMC should accept a midpoint rejection only when Level 2 confirms continuation.");
+	}
+
+	@Test
+	public void rangeMidpointContinuationRejectsOpposingOrderFlow() throws Exception {
+		Scenario scenario = validRmcScenario();
+		Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> orderFlow = orderFlowMap(
+			scenario.symbol,
+			NORMAL_DAY,
+			LocalTime.of(11, 5),
+			0.42,
+			220.0,
+			"BID_FLIP",
+			"BID_ABSORPTION"
+		);
+
+		assertFalse(hasSignalCode(invokeBuildSignals(scenario, orderFlow), "RMC"), "RMC should reject candle-only midpoint continuation when Level 2 argues against the continuation.");
+	}
+
+	@Test
+	public void rangeMidpointContinuationRejectsViolentCountertrendPullback() throws Exception {
+		Scenario scenario = validRmcScenario();
+		for (int index = 90; index <= 94; index++) {
+			set(scenario.bars.get(index), "volume", 4200.0);
+		}
+		Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> orderFlow = orderFlowMap(
+			scenario.symbol,
+			NORMAL_DAY,
+			LocalTime.of(11, 5),
+			-0.34,
+			-180.0,
+			"ASK_FLIP",
+			"ASK_ABSORPTION"
+		);
+
+		assertFalse(hasSignalCode(invokeBuildSignals(scenario, orderFlow), "RMC"), "RMC should reject midpoint continuations when the pullback shows heavy countertrend participation.");
+	}
+
+	@Test
+	public void rangeMidpointContinuationRejectsOpposingFifteenMinuteContext() throws Exception {
+		Scenario scenario = validRmcScenario();
+		Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> orderFlow = orderFlowMap(
+			scenario.symbol,
+			NORMAL_DAY,
+			LocalTime.of(11, 5),
+			-0.34,
+			-180.0,
+			"ASK_FLIP",
+			"ASK_ABSORPTION"
+		);
+		List<Object> fifteenMinuteBars = flatBars(scenario.symbol, NORMAL_DAY, LocalTime.of(10, 30), 3, basePrice(scenario.symbol));
+		double base = basePrice(scenario.symbol);
+		double tick = tickSize(scenario.symbol);
+		setCandle(fifteenMinuteBars, 1, base + (18 * tick), base + (24 * tick), base + (17 * tick), base + (23 * tick), Trend.LONG, scenario.symbol);
+		setCandle(fifteenMinuteBars, 2, base + (22 * tick), base + (28 * tick), base + (21 * tick), base + (26 * tick), Trend.LONG, scenario.symbol);
+
+		assertFalse(hasSignalCode(invokeBuildSignals(scenario, orderFlow, fifteenMinuteBars), "RMC"), "RMC should reject a Level 2-confirmed midpoint short when the latest closed 15-minute auction is bullish.");
+	}
+
 	private static List<String> directStrategyCodes() {
 		return Arrays.asList(
 			"ORB", "ORB2", "LORB", "OMOM", "SWEEP", "SWEEP2", "PDB", "VWAP", "VRCL", "MRVWAP",
@@ -138,6 +210,24 @@ public class StrategyMarketStructureSyntheticTest {
 		} else if ("MCLTC".equals(code)) {
 			setChannelBreakout(bars, 90, base, Trend.LONG, symbol);
 		}
+		return new Scenario(symbol, bars, previousBars(symbol), settings);
+	}
+
+	private static Scenario validRmcScenario() throws Exception {
+		String symbol = "MNQ";
+		double base = basePrice(symbol);
+		double tick = tickSize(symbol);
+		List<Object> bars = flatBars(symbol, NORMAL_DAY, LocalTime.of(9, 30), 420, base);
+		for (int index = 45; index <= 82; index++) {
+			setCandle(bars, index, base - (index - 44) * tick, base - (index - 43) * tick, base - (index - 40) * tick, base - (index - 42) * tick, Trend.SHORT, symbol);
+		}
+		setCandle(bars, 90, base - (42 * tick), base - (36 * tick), base - (46 * tick), base - (38 * tick), Trend.LONG, symbol);
+		setCandle(bars, 91, base - (38 * tick), base - (31 * tick), base - (42 * tick), base - (33 * tick), Trend.LONG, symbol);
+		setCandle(bars, 92, base - (33 * tick), base - (26 * tick), base - (38 * tick), base - (28 * tick), Trend.LONG, symbol);
+		setCandle(bars, 93, base - (28 * tick), base - (22 * tick), base - (34 * tick), base - (24 * tick), Trend.LONG, symbol);
+		setCandle(bars, 94, base - (24 * tick), base - (18 * tick), base - (30 * tick), base - (22 * tick), Trend.LONG, symbol);
+		setCandle(bars, 95, base - (22 * tick), base - (18 * tick), base - (38 * tick), base - (31 * tick), Trend.SHORT, symbol);
+		FuturesManager.FuturesStrategySettings settings = settingsFor("RMC");
 		return new Scenario(symbol, bars, previousBars(symbol), settings);
 	}
 
@@ -286,6 +376,7 @@ public class StrategyMarketStructureSyntheticTest {
 		else if ("MSCALP".equals(code)) setToggle(settings, "microScalp", true, 5);
 		else if ("TLAD".equals(code)) setToggle(settings, "trendLadder", true, 5);
 		else if ("RCB".equals(code)) setToggle(settings, "rangeCompressionBreakout", true, 5);
+		else if ("RMC".equals(code)) setToggle(settings, "rangeMidpointContinuation", true, 5);
 		else if ("VPB".equals(code)) setToggle(settings, "valueAreaReclaim", true, 5);
 		else if ("EIA".equals(code)) setToggle(settings, "mclEiaContinuation", true, 5);
 		else if ("COPEN".equals(code)) setToggle(settings, "mclCrudeSessionOpen", true, 5);
@@ -428,7 +519,7 @@ public class StrategyMarketStructureSyntheticTest {
 			"marketIntradayMomentum", "keltnerScalp", "keltnerReversion", "microScalp", "microShadow",
 			"microEcho", "winnerFollowThrough", "trendLadder", "rangeCompressionBreakout", "valueAreaReclaim",
 			"mclEiaContinuation", "mclCrudeSessionOpen", "mymIndexConfirmation", "mymOrbRetest",
-			"mymBreadthConfirmation", "mclTrendContinuation"
+			"mymBreadthConfirmation", "mclTrendContinuation", "rangeMidpointContinuation"
 		)) {
 			setToggle(settings, field, false, 0);
 		}
@@ -440,6 +531,14 @@ public class StrategyMarketStructureSyntheticTest {
 	}
 
 	private static List<Object> invokeBuildSignals(Scenario scenario) throws Exception {
+		return invokeBuildSignals(scenario, null);
+	}
+
+	private static List<Object> invokeBuildSignals(Scenario scenario, Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> orderFlow) throws Exception {
+		return invokeBuildSignals(scenario, orderFlow, new ArrayList<Object>());
+	}
+
+	private static List<Object> invokeBuildSignals(Scenario scenario, Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> orderFlow, List<Object> fifteenMinuteBars) throws Exception {
 		Object config = newPrivate("com.tradingbot.FuturesManager$BacktestConfig");
 		set(config, "symbol", scenario.symbol);
 		set(config, "strategySettings", scenario.settings);
@@ -451,12 +550,51 @@ public class StrategyMarketStructureSyntheticTest {
 			List.class,
 			List.class,
 			List.class,
-			config.getClass()
+			config.getClass(),
+			Map.class
 		);
 		method.setAccessible(true);
 		@SuppressWarnings("unchecked")
-		List<Object> signals = (List<Object>) method.invoke(null, spec, scenario.bars, scenario.previousBars, new ArrayList<Object>(), new ArrayList<Object>(), config);
+		List<Object> signals = (List<Object>) method.invoke(null, spec, scenario.bars, scenario.previousBars, fifteenMinuteBars, new ArrayList<Object>(), config, orderFlow);
 		return signals;
+	}
+
+	private static Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> orderFlowMap(
+		String symbol,
+		LocalDate day,
+		LocalTime time,
+		double depthImbalance5,
+		double tapeDelta,
+		String bookFlip,
+		String absorption
+	) throws Exception {
+		Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> byDay = new HashMap<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>>();
+		Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot> byTime = new HashMap<LocalTime, LiveRuntimeState.OrderFlowSnapshot>();
+		LiveRuntimeState.OrderFlowSnapshot snapshot = new LiveRuntimeState.OrderFlowSnapshot();
+		snapshot.symbol = symbol;
+		snapshot.available = true;
+		snapshot.fresh = true;
+		snapshot.ageSeconds = 0L;
+		snapshot.lastUpdatedAt = day.toString() + " " + time.toString();
+		snapshot.bestBid = basePrice(symbol);
+		snapshot.bestAsk = basePrice(symbol) + tickSize(symbol);
+		snapshot.spreadTicks = 1.0;
+		snapshot.depthImbalance3 = depthImbalance5;
+		snapshot.depthImbalance5 = depthImbalance5;
+		snapshot.depthImbalance10 = depthImbalance5;
+		snapshot.topBookImbalance = depthImbalance5;
+		snapshot.tapeDelta = tapeDelta;
+		if (tapeDelta >= 0.0) {
+			snapshot.aggressiveBuyVolume = tapeDelta;
+		} else {
+			snapshot.aggressiveSellVolume = Math.abs(tapeDelta);
+		}
+		snapshot.bookFlip = bookFlip;
+		snapshot.absorption = absorption;
+		snapshot.flowState = depthImbalance5 < -0.25 ? "ASK_HEAVY" : (depthImbalance5 > 0.25 ? "BID_HEAVY" : "BALANCED");
+		byTime.put(time, snapshot);
+		byDay.put(day, byTime);
+		return byDay;
 	}
 
 	private static boolean hasSignalCode(List<Object> signals, String code) throws Exception {

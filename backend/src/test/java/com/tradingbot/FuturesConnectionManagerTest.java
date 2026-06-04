@@ -62,6 +62,25 @@ public class FuturesConnectionManagerTest {
 	}
 
 	@Test
+	public void futuresConnectionsDoNotExposeDatabentoProvider() {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+
+		String connections = FuturesConnectionManager.getConnectionsJson();
+		String requirements = FuturesConnectionManager.getRequirementsJson();
+
+		assertFalse(connections.contains("DATABENTO"), connections);
+		assertFalse(requirements.contains("DATABENTO"), requirements);
+		assertTrue(connections.contains("TOPSTEPX"), connections);
+	}
+
+	@Test
+	public void topstepxTradeCostAddsFeesAndCommission() {
+		String payload = "{\"profitAndLoss\":100.0,\"fees\":2.75,\"commission\":4.25}";
+
+		assertEquals(7.0, FuturesConnectionManager.topstepxTradeCost(payload), 0.0001);
+	}
+
+	@Test
 	public void rebuildDerivedDataCreatesCandleConsistentSyntheticLevel2() throws Exception {
 		Path futuresDir = tempDir.resolve("futures");
 		Path oneMinuteDir = futuresDir.resolve("1min");

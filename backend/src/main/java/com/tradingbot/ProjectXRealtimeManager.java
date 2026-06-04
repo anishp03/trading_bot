@@ -813,6 +813,7 @@ public class ProjectXRealtimeManager {
 			runtime.lastMessage = cleanOrDefault(eventType, "Realtime event") + " received.";
 		}
 		LiveRuntimeState.recordRealtimeEvent(hub, eventType, accountId, contractId, resolvedSymbol, payloadJson, receivedAt);
+		FuturesMarketDataStore.recordRealtimeEvent(hub, eventType, resolvedSymbol, payloadJson, receivedAt);
 	}
 
 	private static boolean shouldPersistRealtimeEvent(String hub, String eventType, String symbol) {

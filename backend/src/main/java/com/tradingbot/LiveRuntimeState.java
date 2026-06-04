@@ -1222,6 +1222,8 @@ public class LiveRuntimeState {
 		public double bidStacking;
 		public double askStacking;
 		public String flowState = "WAITING_FOR_DEPTH";
+		public String source = "";
+		public double sourceConfidence = 0.0;
 
 		private static OrderFlowSnapshot empty(String symbol) {
 			OrderFlowSnapshot snapshot = new OrderFlowSnapshot();
@@ -1256,7 +1258,9 @@ public class LiveRuntimeState {
 				+ "\"askWallDistanceTicks\":" + numberOrZero(askWallDistanceTicks) + ","
 				+ "\"bidStacking\":" + numberOrZero(bidStacking) + ","
 				+ "\"askStacking\":" + numberOrZero(askStacking) + ","
-				+ "\"flowState\":" + jsonString(flowState)
+				+ "\"flowState\":" + jsonString(flowState) + ","
+				+ "\"source\":" + jsonString(source) + ","
+				+ "\"sourceConfidence\":" + numberOrZero(sourceConfidence)
 				+ "}";
 		}
 	}

@@ -59,14 +59,6 @@ final class FuturesConnectionRoutes {
             ctx.contentType("application/json").result(FuturesConnectionManager.syncTopstepxReadOnly());
         });
 
-        app.post("/api/futures/market-data/databento/import", ctx -> {
-            String symbol = ApiRequestUtils.valueOrDefault(ctx.queryParam("symbol"), "MNQ");
-            String startDate = ApiRequestUtils.valueOrDefault(ctx.queryParam("startDate"), LocalDate.now().minusYears(1).toString());
-            String endDate = ApiRequestUtils.valueOrDefault(ctx.queryParam("endDate"), LocalDate.now().toString());
-            String schema = ApiRequestUtils.valueOrDefault(ctx.queryParam("schema"), "ohlcv-1m");
-            ctx.contentType("application/json").result(FuturesConnectionManager.importDatabentoBars(symbol, startDate, endDate, schema));
-        });
-
         app.post("/api/futures/market-data/update-backtest-data", ctx -> {
             String symbols = ApiRequestUtils.valueOrDefault(ctx.queryParam("symbols"), defaultPortfolioSymbols + ",GC");
             String startDate = ApiRequestUtils.valueOrDefault(ctx.queryParam("startDate"), LocalDate.now().minusYears(1).toString());

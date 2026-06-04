@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch, apiFormFetch } from "../utils/api.js";
 
 const PROVIDER_LABELS = {
-  DATABENTO: "Databento",
   TRADOVATE: "Tradovate",
   TOPSTEPX: "TopstepX",
 };
@@ -156,7 +155,6 @@ export default function Settings({ accountEmail }) {
 function ConnectionPanel({ connection, busyProvider, onChange, onSave, onTest }) {
   const provider = connection.provider;
   const isBusy = busyProvider === provider;
-  const hasSecretFields = provider !== "DATABENTO";
 
   return (
     <div className="app-panel">
@@ -197,28 +195,25 @@ function ConnectionPanel({ connection, busyProvider, onChange, onSave, onTest })
 
         <Field label={credentialFieldLabel(provider, "username")} className="col-12 col-md-4 col-xl-3">
           <input
-            type={provider === "DATABENTO" ? "password" : "text"}
-            autoComplete={provider === "DATABENTO" ? "off" : undefined}
-            value={provider === "DATABENTO" ? connection.apiKey || "" : connection.username || ""}
-            onChange={(event) => onChange(provider, provider === "DATABENTO" ? "apiKey" : "username", event.target.value)}
-            placeholder={provider === "DATABENTO" ? connection.apiKeyPreview || "db-..." : provider === "TOPSTEPX" ? "ProjectX username" : ""}
+            type="text"
+            value={connection.username || ""}
+            onChange={(event) => onChange(provider, "username", event.target.value)}
+            placeholder={provider === "TOPSTEPX" ? "ProjectX username" : ""}
             className="form-control app-input"
           />
         </Field>
 
-        {provider !== "DATABENTO" && (
-          <Field label={credentialFieldLabel(provider, "apiKey")} className="col-12 col-md-4 col-xl-3">
-            <input
-              type="password"
-              value={provider === "TOPSTEPX" ? connection.apiKey || "" : connection.password || ""}
-              onChange={(event) => onChange(provider, provider === "TOPSTEPX" ? "apiKey" : "password", event.target.value)}
-              placeholder={provider === "TOPSTEPX" ? connection.apiKeyPreview || "TopstepX API key" : connection.hasPassword ? "Saved" : ""}
-              className="form-control app-input"
-            />
-          </Field>
-        )}
+        <Field label={credentialFieldLabel(provider, "apiKey")} className="col-12 col-md-4 col-xl-3">
+          <input
+            type="password"
+            value={provider === "TOPSTEPX" ? connection.apiKey || "" : connection.password || ""}
+            onChange={(event) => onChange(provider, provider === "TOPSTEPX" ? "apiKey" : "password", event.target.value)}
+            placeholder={provider === "TOPSTEPX" ? connection.apiKeyPreview || "TopstepX API key" : connection.hasPassword ? "Saved" : ""}
+            className="form-control app-input"
+          />
+        </Field>
 
-        {hasSecretFields && provider === "TRADOVATE" && (
+        {provider === "TRADOVATE" && (
           <>
             <Field label="App ID" className="col-12 col-md-4 col-xl-2">
               <input
@@ -264,43 +259,13 @@ function ConnectionPanel({ connection, busyProvider, onChange, onSave, onTest })
           </>
         )}
 
-        {provider !== "DATABENTO" && (
-          <Field label={provider === "TOPSTEPX" ? "Topstep Account ID" : "Account ID"} className="col-12 col-md-4 col-xl-2">
-            <input
-              value={connection.accountId || ""}
-              onChange={(event) => onChange(provider, "accountId", event.target.value)}
-              className="form-control app-input"
-            />
-          </Field>
-        )}
-
-        {provider === "DATABENTO" && (
-          <>
-            <Field label="Dataset" className="col-12 col-md-4 col-xl-2">
-              <input
-                value={connection.dataset || ""}
-                onChange={(event) => onChange(provider, "dataset", event.target.value)}
-                className="form-control app-input"
-              />
-            </Field>
-
-            <Field label="Schema" className="col-12 col-md-4 col-xl-2">
-              <input
-                value={connection.schema || ""}
-                onChange={(event) => onChange(provider, "schema", event.target.value)}
-                className="form-control app-input"
-              />
-            </Field>
-
-            <Field label="Continuous Symbols" className="col-12 col-xl-4">
-              <input
-                value={connection.symbols || ""}
-                onChange={(event) => onChange(provider, "symbols", event.target.value)}
-                className="form-control app-input"
-              />
-            </Field>
-          </>
-        )}
+        <Field label={provider === "TOPSTEPX" ? "Topstep Account ID" : "Account ID"} className="col-12 col-md-4 col-xl-2">
+          <input
+            value={connection.accountId || ""}
+            onChange={(event) => onChange(provider, "accountId", event.target.value)}
+            className="form-control app-input"
+          />
+        </Field>
 
         {provider === "TOPSTEPX" && (
           <>
@@ -369,7 +334,6 @@ function providerLabel(provider) {
 }
 
 function credentialFieldLabel(provider, field) {
-  if (provider === "DATABENTO") return "API Key";
   if (provider === "TOPSTEPX" && field === "username") return "ProjectX Username";
   if (provider === "TOPSTEPX" && field === "apiKey") return "ProjectX API Key";
   return field === "apiKey" ? "Password" : "Username";

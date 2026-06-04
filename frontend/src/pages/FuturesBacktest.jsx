@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { API_BASE_URL, apiFetch } from "../utils/api.js";
+import { apiFetch } from "../utils/api.js";
 
 const DEFAULT_RISK_PROFILE = "TOPSTEP_150K";
 const MAIN_PORTFOLIO_SYMBOLS = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K", "MYM", "MCL"];
@@ -75,7 +75,7 @@ const DEFAULT_CONFIG = {
   referenceSymbol: "MNQ",
   fundedProfile: DEFAULT_RISK_PROFILE,
   startDate: "2025-05-01",
-  endDate: "2026-05-04",
+  endDate: defaultEndDate(),
   accountSize: "150000",
   maxTrailingDrawdown: "4500",
   dailyLossLimit: "3000",
@@ -93,30 +93,21 @@ const DEFAULT_CONFIG = {
   dtmEnabled: "true",
 };
 
-const DEFAULT_DATA_CONFIG = {
-  startDate: DEFAULT_CONFIG.startDate,
-  endDate: defaultEndDate(),
-  schema: "ohlcv-1m",
-};
-
 export default function FuturesBacktest() {
   const navigate = useNavigate();
   const [config, setConfig] = useState(DEFAULT_CONFIG);
-  const [dataConfig, setDataConfig] = useState(DEFAULT_DATA_CONFIG);
   const [instruments, setInstruments] = useState([]);
   const [marketData, setMarketData] = useState({ symbols: [], rowsBySymbol: {}, message: "", storagePath: "" });
   const [isMarketDataLoading, setIsMarketDataLoading] = useState(true);
-  const [isUpdatingData, setIsUpdatingData] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [feedback, setFeedback] = useState("");
-  const [dataFeedback, setDataFeedback] = useState("");
   const [batchSymbols, setBatchSymbols] = useState(MAIN_PORTFOLIO_SYMBOLS);
   const [fundedProfiles, setFundedProfiles] = useState([]);
   const [strategyPresets, setStrategyPresets] = useState([]);
 
   useEffect(() => {
     loadInstruments();
-    loadMarketDataStatus(true);
+    loadMarketDataStatus();
     loadFundedProfiles();
     loadStrategyPresets();
     loadPortfolioDefaults();
@@ -131,15 +122,19 @@ export default function FuturesBacktest() {
   }, [batchSymbols, instruments]);
 
   const selectedRows = selectedSymbols.reduce((total, symbol) => total + Number(marketData.rowsBySymbol?.[symbol] || 0), 0);
+  const selectedLevel2CapturedRows = selectedSymbols.reduce((total, symbol) => total + Number(marketData.level2StatsBySymbol?.[symbol]?.capturedRows || 0), 0);
+  const selectedLevel2DerivedRows = selectedSymbols.reduce((total, symbol) => total + Number(marketData.level2StatsBySymbol?.[symbol]?.derivedRows || 0), 0);
+  const selectedLevel2Coverage = selectedSymbols.length
+    ? selectedSymbols.reduce((total, symbol) => total + Number(marketData.level2StatsBySymbol?.[symbol]?.coveragePct || 0), 0) / selectedSymbols.length
+    : 0;
   const missingDataSymbols = selectedSymbols.filter((symbol) => Number(marketData.rowsBySymbol?.[symbol] || 0) <= 0);
   const selectedInstrument = (instruments.length ? instruments : INSTRUMENT_FALLBACKS).find((instrument) => instrument.symbol === config.referenceSymbol) || INSTRUMENT_FALLBACKS[0] || null;
   const canRun = Boolean(config.startDate && config.endDate && selectedSymbols.length > 0 && missingDataSymbols.length === 0);
-  const canUpdateData = Boolean(dataConfig.startDate && dataConfig.endDate && selectedSymbols.length > 0);
   const presetOptions = mergeStrategyPresets(strategyPresets);
   const selectedPresetLabel = presetOptions.find((preset) => preset.name === config.strategyPreset)?.label || config.strategyPreset || DEFAULT_STRATEGY_PRESET;
   const riskProfileOptions = useMemo(() => buildRiskProfileOptions(fundedProfiles), [fundedProfiles]);
-  const savedRiskSizingEnabled = config.fundedProfile !== "CUSTOM";
-  const sizingSourceLabel = savedRiskSizingEnabled ? "Saved per-contract risk" : "Manual risk fields";
+  const riskConfigLocked = config.fundedProfile !== "CUSTOM";
+  const sizingSourceLabel = riskConfigLocked ? "Risk Config envelope" : "Manual custom risk";
   const ruleModeLabel = config.continueAfterRuleViolation === "true" ? "Full trail" : "Stop on breach";
 
   function loadInstruments() {
@@ -168,7 +163,7 @@ export default function FuturesBacktest() {
       });
   }
 
-  function loadMarketDataStatus(syncDateRange = false) {
+  function loadMarketDataStatus() {
     setIsMarketDataLoading(true);
     apiFetch("/api/futures/market-data")
       .then((response) => {
@@ -186,14 +181,13 @@ export default function FuturesBacktest() {
           overallEndDate: data.overallEndDate || "",
           commonStartDate: data.commonStartDate || "",
           commonEndDate: data.commonEndDate || "",
+          level2StatsBySymbol: data.level2StatsBySymbol || {},
+          latestReconciliation: data.latestReconciliation || null,
           message: data.message || "",
           storagePath: data.storagePath || "market_data/futures",
           timeframe: data.timeframe || "1Min",
         };
         setMarketData(nextMarketData);
-        if (syncDateRange) {
-          applyMarketDateRangeToData(nextMarketData);
-        }
       })
       .catch((error) => {
         console.error("Error loading futures market data:", error);
@@ -239,7 +233,7 @@ export default function FuturesBacktest() {
       referenceSymbol: nextSymbols.includes(DEFAULT_CONFIG.referenceSymbol) ? DEFAULT_CONFIG.referenceSymbol : nextSymbols[0],
       fundedProfile: normalizeRiskProfileCode(payload?.fundedProfile || DEFAULT_CONFIG.fundedProfile),
       startDate: String(payload?.startDate || DEFAULT_CONFIG.startDate),
-      endDate: String(payload?.endDate || DEFAULT_CONFIG.endDate),
+      endDate: defaultEndDate(),
       accountSize: String(payload?.accountSize ?? DEFAULT_CONFIG.accountSize),
       maxTrailingDrawdown: String(payload?.maxTrailingDrawdown ?? DEFAULT_CONFIG.maxTrailingDrawdown),
       dailyLossLimit: String(payload?.dailyLossLimit ?? DEFAULT_CONFIG.dailyLossLimit),
@@ -260,12 +254,6 @@ export default function FuturesBacktest() {
     setBatchSymbols(nextSymbols);
   }
 
-  function applyMarketDateRangeToData(data) {
-    const startDate = data.commonStartDate || data.overallStartDate || DEFAULT_DATA_CONFIG.startDate;
-    const endDate = data.commonEndDate || data.overallEndDate || DEFAULT_DATA_CONFIG.endDate;
-    setDataConfig((current) => ({ ...current, startDate, endDate }));
-  }
-
   function updateConfig(field, value) {
     setConfig((current) => {
       const next = { ...current, [field]: value };
@@ -277,10 +265,6 @@ export default function FuturesBacktest() {
     });
   }
 
-  function updateDataConfig(field, value) {
-    setDataConfig((current) => ({ ...current, [field]: value }));
-  }
-
   function toggleBatchSymbol(symbol) {
     setBatchSymbols((current) => {
       if (current.includes(symbol)) {
@@ -289,44 +273,6 @@ export default function FuturesBacktest() {
       }
       return [...current, symbol];
     });
-  }
-
-  async function updateBacktestData() {
-    if (!canUpdateData) {
-      setDataFeedback("Select at least one contract and a valid date range.");
-      return;
-    }
-
-    setIsUpdatingData(true);
-    setDataFeedback(`Updating portfolio data for ${selectedSymbols.join(", ")}...`);
-
-    const endpoint = "/api/futures/market-data/update-backtest-data";
-    const params = new URLSearchParams({
-      ...dataConfig,
-      symbols: selectedSymbols.join(","),
-    });
-
-    try {
-      const response = await apiFetch(`${endpoint}?${params.toString()}`, {
-        method: "POST",
-      });
-      const payload = await readApiResponse(response);
-      if (!response.ok || payload.json?.success === false) {
-        throw new Error(formatUpdateErrorMessage(response, payload, {
-          endpoint,
-          symbols: selectedSymbols,
-          startDate: dataConfig.startDate,
-          endDate: dataConfig.endDate,
-        }));
-      }
-      setDataFeedback(formatDataUpdateMessage(payload.json));
-      loadMarketDataStatus(true);
-    } catch (error) {
-      console.error("Error updating futures backtest data:", error);
-      setDataFeedback(error.message || "Backtest data update failed.");
-    } finally {
-      setIsUpdatingData(false);
-    }
   }
 
   async function startRun() {
@@ -356,7 +302,7 @@ export default function FuturesBacktest() {
       maxOpenPositions: config.maxOpenPositions,
       maxAggregateContracts: config.maxAggregateContracts,
       maxAggregateMiniUnits: config.maxAggregateMiniUnits,
-      useSavedRisk: savedRiskSizingEnabled ? "true" : "false",
+      useSavedRisk: "false",
       continueAfterRuleViolation: config.continueAfterRuleViolation === "true" ? "true" : "false",
       qualitativeRiskEnabled: "true",
       dtmEnabled: config.dtmEnabled === "true" ? "true" : "false",
@@ -414,14 +360,6 @@ export default function FuturesBacktest() {
       <div className="app-panel">
         <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-3">
           <div className="fw-bold app-kicker">Portfolio Market Data</div>
-          <button
-            type="button"
-            className="app-btn app-btn-primary px-3"
-            onClick={updateBacktestData}
-            disabled={isUpdatingData || !canUpdateData}
-          >
-            {isUpdatingData ? "Updating..." : "Update Data"}
-          </button>
         </div>
 
         <div className="app-data-toolbar futures-data-toolbar">
@@ -434,34 +372,25 @@ export default function FuturesBacktest() {
             <strong>{marketData.timeframe || "1Min"}</strong>
           </div>
           <div className="app-data-chip futures-data-chip">
-            <span className="app-label">Selected Rows</span>
+            <span className="app-label">Selected L1 Rows</span>
             <strong>{isMarketDataLoading ? "Loading..." : formatNumber(selectedRows, 0)}</strong>
           </div>
-          <Field label="Update Start" className="futures-data-field">
-            <input
-              type="date"
-              value={dataConfig.startDate}
-              max={dataConfig.endDate || undefined}
-              onChange={(event) => updateDataConfig("startDate", event.target.value)}
-              className="form-control app-input"
-            />
-          </Field>
-          <Field label="Update End" className="futures-data-field">
-            <input
-              type="date"
-              value={dataConfig.endDate}
-              min={dataConfig.startDate || undefined}
-              onChange={(event) => updateDataConfig("endDate", event.target.value)}
-              className="form-control app-input"
-            />
-          </Field>
+          <div className="app-data-chip futures-data-chip">
+            <span className="app-label">Selected L2 Real</span>
+            <strong>{isMarketDataLoading ? "Loading..." : formatNumber(selectedLevel2CapturedRows, 0)}</strong>
+          </div>
+          <div className="app-data-chip futures-data-chip">
+            <span className="app-label">Selected L2 Derived</span>
+            <strong>{isMarketDataLoading ? "Loading..." : formatNumber(selectedLevel2DerivedRows, 0)}</strong>
+          </div>
+          <div className="app-data-chip futures-data-chip">
+            <span className="app-label">L2 Coverage</span>
+            <strong>{isMarketDataLoading ? "Loading..." : `${formatNumber(selectedLevel2Coverage, 1)}%`}</strong>
+          </div>
         </div>
-        {dataFeedback && (
-          <div
-            className={`${dataFeedback.startsWith("Backtest data update failed") ? "app-pnl-neg" : "app-muted"} app-kicker mt-3`}
-            style={{ whiteSpace: "pre-line" }}
-          >
-            {dataFeedback}
+        {marketData.latestReconciliation && (
+          <div className="app-muted app-kicker mt-3">
+            Last reconciliation: {marketData.latestReconciliation.status || "unknown"} {marketData.latestReconciliation.completedAt ? `at ${marketData.latestReconciliation.completedAt}` : ""}
           </div>
         )}
       </div>
@@ -512,23 +441,23 @@ export default function FuturesBacktest() {
           </Field>
 
           <Field label="Account Size ($)" className="col-12 col-md-4 col-xl-3">
-            <input type="number" value={config.accountSize} onChange={(event) => updateConfig("accountSize", event.target.value)} className="form-control app-input" />
+            <input type="number" value={config.accountSize} onChange={(event) => updateConfig("accountSize", event.target.value)} className="form-control app-input" readOnly={riskConfigLocked} />
           </Field>
 
           <Field label="Trailing Drawdown ($)" className="col-12 col-md-4 col-xl-3">
-            <input type="number" value={config.maxTrailingDrawdown} onChange={(event) => updateConfig("maxTrailingDrawdown", event.target.value)} className="form-control app-input" />
+            <input type="number" value={config.maxTrailingDrawdown} onChange={(event) => updateConfig("maxTrailingDrawdown", event.target.value)} className="form-control app-input" readOnly={riskConfigLocked} />
           </Field>
 
           <Field label="Daily Loss Limit ($)" className="col-12 col-md-4 col-xl-3">
-            <input type="number" value={config.dailyLossLimit} onChange={(event) => updateConfig("dailyLossLimit", event.target.value)} className="form-control app-input" />
+            <input type="number" value={config.dailyLossLimit} onChange={(event) => updateConfig("dailyLossLimit", event.target.value)} className="form-control app-input" readOnly={riskConfigLocked} />
           </Field>
 
           <Field label="Max Risk / Trade ($)" className="col-12 col-md-4 col-xl-3">
-            <input type="number" value={config.maxRiskPerTrade} onChange={(event) => updateConfig("maxRiskPerTrade", event.target.value)} className="form-control app-input" />
+            <input type="number" value={config.maxRiskPerTrade} onChange={(event) => updateConfig("maxRiskPerTrade", event.target.value)} className="form-control app-input" readOnly={riskConfigLocked} />
           </Field>
 
           <Field label="Max Contracts" className="col-12 col-md-4 col-xl-3">
-            <input type="number" value={config.maxContracts} onChange={(event) => updateConfig("maxContracts", event.target.value)} className="form-control app-input" />
+            <input type="number" value={config.maxContracts} onChange={(event) => updateConfig("maxContracts", event.target.value)} className="form-control app-input" readOnly={riskConfigLocked} />
           </Field>
 
           <Field label="Commission / Contract ($)" className="col-12 col-md-4 col-xl-3">
@@ -544,15 +473,15 @@ export default function FuturesBacktest() {
           </Field>
 
           <Field label="Max Open Positions" className="col-12 col-md-4 col-xl-3">
-            <input type="number" min="1" value={config.maxOpenPositions} onChange={(event) => updateConfig("maxOpenPositions", event.target.value)} className="form-control app-input" />
+            <input type="number" min="1" value={config.maxOpenPositions} onChange={(event) => updateConfig("maxOpenPositions", event.target.value)} className="form-control app-input" readOnly={riskConfigLocked} />
           </Field>
 
           <Field label="Max Aggregate Contracts" className="col-12 col-md-4 col-xl-3">
-            <input type="number" min="1" value={config.maxAggregateContracts} onChange={(event) => updateConfig("maxAggregateContracts", event.target.value)} className="form-control app-input" />
+            <input type="number" min="1" value={config.maxAggregateContracts} onChange={(event) => updateConfig("maxAggregateContracts", event.target.value)} className="form-control app-input" readOnly={riskConfigLocked} />
           </Field>
 
           <Field label="Funded Contract Units" className="col-12 col-md-4 col-xl-3">
-            <input type="number" min="0" step="0.1" value={config.maxAggregateMiniUnits} onChange={(event) => updateConfig("maxAggregateMiniUnits", event.target.value)} className="form-control app-input" />
+            <input type="number" min="0" step="0.1" value={config.maxAggregateMiniUnits} onChange={(event) => updateConfig("maxAggregateMiniUnits", event.target.value)} className="form-control app-input" readOnly={riskConfigLocked} />
           </Field>
 
           <Field label="Risk Sizing" className="col-12 col-md-4 col-xl-3">
@@ -655,39 +584,6 @@ async function readApiResponse(response) {
   }
 }
 
-function formatUpdateErrorMessage(response, payload, request) {
-  const serverMessage = cleanErrorText(payload.json?.message || payload.json?.error || payload.text);
-  const statusLine = response.ok
-    ? "Backtest data update failed."
-    : `Backtest data update failed: HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}.`;
-  const details = [
-    statusLine,
-    `Endpoint: POST ${request.endpoint}`,
-    `Backend: ${API_BASE_URL}`,
-    `Symbols: ${request.symbols.join(", ")}`,
-    `Range: ${request.startDate} to ${request.endDate}`,
-  ];
-  if (serverMessage) {
-    details.push(`Server said: ${serverMessage}`);
-  }
-  if (response.status === 404) {
-    details.push("Likely cause: this frontend is pointed at a backend that does not have the update-backtest-data route yet.");
-  } else if (response.status === 401 || response.status === 403) {
-    details.push("Likely cause: the backend rejected the request because the current session or credentials are not allowed.");
-  } else if (response.status >= 500) {
-    details.push("Likely cause: the backend hit an internal error while pulling or merging futures data.");
-  } else if (payload.json?.success === false && !serverMessage) {
-    details.push("Likely cause: the backend returned success=false without a message.");
-  }
-  return details.join("\n");
-}
-
-function cleanErrorText(value) {
-  const text = String(value || "").trim();
-  if (!text) return "";
-  return text.length > 500 ? `${text.slice(0, 500)}...` : text;
-}
-
 function defaultEndDate() {
   const date = new Date();
   const year = date.getFullYear();
@@ -701,17 +597,6 @@ function formatNumber(value, decimals = 2) {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
-}
-
-function formatDataUpdateMessage(payload) {
-  if (!payload || !Array.isArray(payload.symbols)) {
-    return payload?.message || "Backtest data updated.";
-  }
-  const updated = payload.symbols
-    .filter((symbol) => symbol?.success)
-    .map((symbol) => `${symbol.symbol}: ${formatNumber(symbol.finalRows, 0)} rows`)
-    .join(", ");
-  return updated ? `${payload.message} ${updated}.` : payload.message || "Backtest data updated.";
 }
 
 function buildInstrumentOptions(apiInstruments = []) {
