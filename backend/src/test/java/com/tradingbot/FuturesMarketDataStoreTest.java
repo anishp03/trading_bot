@@ -63,6 +63,30 @@ public class FuturesMarketDataStoreTest {
 	}
 
 	@Test
+	public void level2GapFillHonorsRequestedDateRange() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		Path futuresDir = tempDir.resolve("futures");
+		Path oneMinuteDir = futuresDir.resolve("1min");
+		Files.createDirectories(oneMinuteDir);
+		System.setProperty("tradingbot.futuresDataDir", futuresDir.toString());
+		Files.write(
+			oneMinuteDir.resolve("MGC.csv"),
+			(
+				"timestamp,open,high,low,close,volume\n"
+					+ "2026-06-03T13:30:00Z,4500.00,4502.00,4498.00,4501.00,100\n"
+					+ "2026-06-04T13:30:00Z,4520.00,4523.00,4519.00,4522.00,120\n"
+			).getBytes(StandardCharsets.UTF_8)
+		);
+
+		String result = FuturesMarketDataStore.fillLevel2GapsForSymbol("MGC", "2026-06-04", "2026-06-04");
+
+		assertTrue(result.contains("\"createdDerivedRows\":1"), result);
+		assertEquals(1, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesHistoricalLevel2Snapshots WHERE symbol = 'MGC' AND source = 'DERIVED_GAP_FILL'"));
+		assertEquals(1, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesHistoricalLevel2Snapshots WHERE symbol = 'MGC' AND timestamp = '2026-06-04T13:30:00Z'"));
+		assertEquals(0, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesHistoricalLevel2Snapshots WHERE symbol = 'MGC' AND timestamp = '2026-06-03T13:30:00Z'"));
+	}
+
+	@Test
 	public void marketDataStatusIncludesLevel2CoverageStats() throws Exception {
 		TestDatabaseSupport.useTempDatabase(tempDir);
 		Path futuresDir = tempDir.resolve("futures");

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "../utils/api.js";
 
-const DEFAULT_RISK_PROFILE = "TOPSTEP_150K";
+const DEFAULT_RISK_PROFILE = "TOPSTEP_50K";
 const MAIN_PORTFOLIO_SYMBOLS = ["MES", "MNQ", "NQ", "MGC", "ES", "M2K", "MYM", "MCL"];
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MYM", "MGC", "MCL"]);
 const CONTROL_STRATEGY_PRESET = "backtestbias92k";
@@ -76,17 +76,17 @@ const DEFAULT_CONFIG = {
   fundedProfile: DEFAULT_RISK_PROFILE,
   startDate: "2025-05-01",
   endDate: defaultEndDate(),
-  accountSize: "150000",
-  maxTrailingDrawdown: "4500",
-  dailyLossLimit: "3000",
-  maxRiskPerTrade: "2100",
-  maxContracts: "150",
+  accountSize: "50000",
+  maxTrailingDrawdown: "2000",
+  dailyLossLimit: "1000",
+  maxRiskPerTrade: "700",
+  maxContracts: "50",
   commissionPerContract: "1.24",
   slippageTicks: "1",
   profitTarget: "0",
   maxOpenPositions: "3",
-  maxAggregateContracts: "150",
-  maxAggregateMiniUnits: "15",
+  maxAggregateContracts: "50",
+  maxAggregateMiniUnits: "5",
   useSavedRisk: "true",
   continueAfterRuleViolation: "true",
   qualitativeRiskEnabled: "true",
@@ -396,7 +396,7 @@ export default function FuturesBacktest() {
             onClick={refreshMarketData}
             disabled={isMarketDataRefreshing || isMarketDataLoading || selectedSymbols.length === 0}
           >
-            {isMarketDataRefreshing ? "Refreshing..." : "Refresh Data"}
+            {isMarketDataRefreshing ? "Updating..." : "Update Data"}
           </button>
         </div>
 

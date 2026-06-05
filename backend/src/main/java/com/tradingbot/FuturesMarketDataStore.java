@@ -77,7 +77,7 @@ final class FuturesMarketDataStore {
 		String cleanStartDate = isBlank(startDate) ? "2025-05-01" : clean(startDate);
 		String cleanEndDate = isBlank(endDate) ? LocalDate.now(NEW_YORK_ZONE).toString() : clean(endDate);
 		String topstep = FuturesConnectionManager.importTopstepxBars(cleanSymbols, cleanStartDate, cleanEndDate, maxContractsPerSymbol);
-		String level2 = fillLevel2Gaps(cleanSymbols);
+		String level2 = fillLevel2Gaps(cleanSymbols, cleanStartDate, cleanEndDate);
 		boolean success = !topstep.contains("\"success\":false") && !level2.contains("\"success\":false");
 		String summary = "Manual backtest data refresh. Level 1 live capture merge: " + jsonSummary(stopFlush)
 			+ "; Topstep gap fill: " + jsonSummary(topstep)
@@ -137,6 +137,10 @@ final class FuturesMarketDataStore {
 	}
 
 	static String fillLevel2Gaps(String symbols) {
+		return fillLevel2Gaps(symbols, "", "");
+	}
+
+	static String fillLevel2Gaps(String symbols, String startDate, String endDate) {
 		initializeStore();
 		List<String> symbolList = parseSymbols(symbols);
 		StringBuilder results = new StringBuilder("[");
@@ -146,7 +150,7 @@ final class FuturesMarketDataStore {
 				results.append(",");
 			}
 			String symbol = symbolList.get(index);
-			String result = fillLevel2GapsForSymbol(symbol);
+			String result = fillLevel2GapsForSymbol(symbol, startDate, endDate);
 			if (result.contains("\"success\":false")) {
 				success = false;
 			}
@@ -157,14 +161,23 @@ final class FuturesMarketDataStore {
 	}
 
 	static String fillLevel2GapsForSymbol(String symbol) {
+		return fillLevel2GapsForSymbol(symbol, "", "");
+	}
+
+	static String fillLevel2GapsForSymbol(String symbol, String startDate, String endDate) {
 		initializeStore();
 		String normalized = normalizeSymbol(symbol);
 		try {
 			List<FuturesConnectionManager.InternalBar> bars = FuturesConnectionManager.readInternalFuturesBars(normalized);
+			LocalDate start = parseRequestedDate(startDate);
+			LocalDate end = parseRequestedDate(endDate);
 			int beforeCaptured = countLevel2Rows(normalized, SOURCE_LIVE_CAPTURED);
 			int beforeDerived = countLevel2Rows(normalized, SOURCE_DERIVED_GAP_FILL);
 			int created = 0;
 			for (FuturesConnectionManager.InternalBar bar : bars) {
+				if (!barInsideDateRange(bar, start, end)) {
+					continue;
+				}
 				String timestamp = normalizedTimestamp(bar.timestampText);
 				if (timestamp.length() == 0 || hasLevel2Row(normalized, timestamp)) {
 					continue;
@@ -665,6 +678,29 @@ final class FuturesMarketDataStore {
 			return "";
 		}
 		return Instant.ofEpochSecond((instant.getEpochSecond() / 60L) * 60L).toString();
+	}
+
+	private static boolean barInsideDateRange(FuturesConnectionManager.InternalBar bar, LocalDate startDate, LocalDate endDate) {
+		if (bar == null || bar.timestamp == null) {
+			return false;
+		}
+		LocalDate barDate = bar.timestamp.atZone(NEW_YORK_ZONE).toLocalDate();
+		if (startDate != null && barDate.isBefore(startDate)) {
+			return false;
+		}
+		return endDate == null || !barDate.isAfter(endDate);
+	}
+
+	private static LocalDate parseRequestedDate(String value) {
+		String clean = clean(value);
+		if (clean.length() == 0) {
+			return null;
+		}
+		try {
+			return LocalDate.parse(clean);
+		} catch (Exception ignored) {
+			return null;
+		}
 	}
 
 	private static Instant parseInstant(String value) {

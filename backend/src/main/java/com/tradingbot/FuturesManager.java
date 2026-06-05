@@ -1100,26 +1100,26 @@ public class FuturesManager {
 		private String symbol = "MES";
 		private String executionMode = "SIMULATED";
 		private String fundedProfile = TOPSTEPX_DEFAULT_LIVE_PROFILE;
-		private String strategyPreset = WINDOWED_94K_STRATEGY_PRESET;
-		private String strategySlot = strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET);
+		private String strategyPreset = BEST_BIAS_FREE_STRATEGY_PRESET;
+		private String strategySlot = strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET);
 		private String symbols = DEFAULT_LIVE_SYMBOLS;
 		private String startedAt = "";
 		private String lastUpdatedAt = "";
 		private String lastDryRunAt = "";
 		private String dataMode = "IDLE";
 		private String lastBarTime = "";
-		private double accountSize = 150000.0;
-		private double maxTrailingDrawdown = 4500.0;
-		private double dailyLossLimit = 3000.0;
-		private double maxRiskPerTrade = 2100.0;
-		private int maxContracts = 150;
+		private double accountSize = 50000.0;
+		private double maxTrailingDrawdown = 2000.0;
+		private double dailyLossLimit = 1000.0;
+		private double maxRiskPerTrade = 700.0;
+		private int maxContracts = 50;
 		private double commissionPerContract = 1.24;
 		private double slippageTicks = 1.0;
 		private double profitTarget = 0.0;
 		private int maxOpenPositions = 3;
-		private int maxAggregateContracts = 150;
-		private double maxAggregateMiniUnits = 15.0;
-		private boolean dtmEnabled;
+		private int maxAggregateContracts = 50;
+		private double maxAggregateMiniUnits = 5.0;
+		private boolean dtmEnabled = true;
 		private int decisionCount;
 		private int acceptedDecisionCount;
 		private int rejectedDecisionCount;
@@ -3372,11 +3372,11 @@ public class FuturesManager {
 				json.append(",");
 			}
 			String name = normalizeStrategyPresetName(presetNames.get(index));
-			json.append("{")
-				.append("\"name\":").append(jsonString(name)).append(",")
-				.append("\"label\":").append(jsonString(strategyPresetLabel(name))).append(",")
-				.append("\"slot\":").append(jsonString(strategyPresetSlot(name))).append(",")
-				.append("\"default\":").append(WINDOWED_94K_STRATEGY_PRESET.equals(name))
+				json.append("{")
+					.append("\"name\":").append(jsonString(name)).append(",")
+					.append("\"label\":").append(jsonString(strategyPresetLabel(name))).append(",")
+					.append("\"slot\":").append(jsonString(strategyPresetSlot(name))).append(",")
+					.append("\"default\":").append(BEST_BIAS_FREE_STRATEGY_PRESET.equals(name))
 				.append("}");
 		}
 		json.append("]");
@@ -5101,24 +5101,24 @@ public class FuturesManager {
 			+ "\"success\":false,"
 			+ "\"mode\":\"PORTFOLIO\","
 			+ "\"sourcePortfolioBacktestId\":0,"
-			+ "\"sourceLabel\":" + jsonString(WINDOWED_94K_STRATEGY_PRESET) + ","
-			+ "\"strategyPreset\":" + jsonString(WINDOWED_94K_STRATEGY_PRESET) + ","
+			+ "\"sourceLabel\":" + jsonString(BEST_BIAS_FREE_STRATEGY_PRESET) + ","
+			+ "\"strategyPreset\":" + jsonString(BEST_BIAS_FREE_STRATEGY_PRESET) + ","
 			+ "\"symbols\":" + jsonString(DEFAULT_LIVE_SYMBOLS) + ","
 			+ "\"symbolList\":" + jsonStringArray(parseSymbols(DEFAULT_LIVE_SYMBOLS)) + ","
 			+ "\"startDate\":" + jsonString(startDate.toString()) + ","
 			+ "\"endDate\":" + jsonString(endDate.toString()) + ","
-			+ "\"fundedProfile\":\"TOPSTEP_150K\","
-			+ "\"accountSize\":150000,"
-			+ "\"maxTrailingDrawdown\":4500,"
-			+ "\"dailyLossLimit\":3000,"
-			+ "\"maxRiskPerTrade\":2100,"
-			+ "\"maxContracts\":150,"
+			+ "\"fundedProfile\":\"TOPSTEP_50K\","
+			+ "\"accountSize\":50000,"
+			+ "\"maxTrailingDrawdown\":2000,"
+			+ "\"dailyLossLimit\":1000,"
+			+ "\"maxRiskPerTrade\":700,"
+			+ "\"maxContracts\":50,"
 			+ "\"commissionPerContract\":1.24,"
 			+ "\"slippageTicks\":1,"
 			+ "\"profitTarget\":0,"
 			+ "\"maxOpenPositions\":3,"
-			+ "\"maxAggregateContracts\":150,"
-			+ "\"maxAggregateMiniUnits\":15,"
+			+ "\"maxAggregateContracts\":50,"
+			+ "\"maxAggregateMiniUnits\":5,"
 			+ "\"useSavedRisk\":true,"
 			+ "\"continueAfterRuleViolation\":true,"
 			+ "\"qualitativeRiskEnabled\":true,"
@@ -13302,7 +13302,7 @@ public class FuturesManager {
 	}
 
 	private static String livePortfolioSettingsJson(String symbols, FundedRuleProfile profile, String accountId, String accountMode) {
-		return livePortfolioSettingsJson(symbols, profile, accountId, accountMode, WINDOWED_94K_STRATEGY_PRESET, strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET));
+		return livePortfolioSettingsJson(symbols, profile, accountId, accountMode, BEST_BIAS_FREE_STRATEGY_PRESET, strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET));
 	}
 
 	private static String livePortfolioSettingsJson(String symbols, FundedRuleProfile profile, String accountId, String accountMode, String strategyPreset, String strategySlot) {
@@ -13353,7 +13353,7 @@ public class FuturesManager {
 	}
 
 	private static String liveSourceMetricsConfigJson(String symbols, FundedRuleProfile profile) {
-		return liveSourceMetricsConfigJson(symbols, profile, WINDOWED_94K_STRATEGY_PRESET, strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET));
+		return liveSourceMetricsConfigJson(symbols, profile, BEST_BIAS_FREE_STRATEGY_PRESET, strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET));
 	}
 
 	private static String liveSourceMetricsConfigJson(String symbols, FundedRuleProfile profile, String strategyPreset, String strategySlot) {
@@ -13716,7 +13716,7 @@ public class FuturesManager {
 		if (snapshotPreset.length() > 0) {
 			return strategyPresetSlot(visibleStrategyPresetName(snapshotPreset));
 		}
-		return strategyPresetSlot(WINDOWED_94K_STRATEGY_PRESET);
+		return strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET);
 	}
 
 	private static String activeLiveStrategyPreset(FuturesLiveSession session, LiveStrategySnapshotRow snapshot) {

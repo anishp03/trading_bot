@@ -36,10 +36,11 @@ const LIVE_ALL_TRADES_PAGE_SIZE = 500;
 const DEFAULT_PROFILE = "TOPSTEP_50K";
 const DEFAULT_ACCOUNT_PROFILE = "TOPSTEP_50K";
 const DEFAULT_STRATEGY_PRESET = "bestbiasfree";
+const CONTROL_STRATEGY_PRESET = "backtestbias92k";
 const BIAS_FREE_STRATEGY_PRESET = "biasfree92k";
 const BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
 const CANONICAL_STRATEGY_PRESETS = [
-  { name: DEFAULT_STRATEGY_PRESET, label: "Backtest Bias 92k" },
+  { name: CONTROL_STRATEGY_PRESET, label: "Backtest Bias 92k" },
   { name: BIAS_FREE_STRATEGY_PRESET, label: "Bias-Free 92k" },
   { name: BEST_BIAS_FREE_STRATEGY_PRESET, label: "Best Bias-Free" },
 ];
