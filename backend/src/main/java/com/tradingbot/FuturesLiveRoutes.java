@@ -64,6 +64,12 @@ final class FuturesLiveRoutes {
             ctx.contentType("application/json").result(FuturesManager.getLiveSignalDecisionsJson(sessionId, limit, accountId));
         });
 
+        app.get("/api/futures/live/cycle-audit", ctx -> {
+            int sessionId = ApiRequestUtils.parseIntOrDefault(ctx.queryParam("sessionId"), 0);
+            int limit = ApiRequestUtils.parseIntOrDefault(ctx.queryParam("limit"), 100);
+            ctx.contentType("application/json").result(FuturesManager.getLiveCycleAuditJson(sessionId, limit));
+        });
+
         app.get("/api/futures/live/thinking", ctx -> {
             int sessionId = ApiRequestUtils.parseIntOrDefault(ctx.queryParam("sessionId"), 0);
             int limit = ApiRequestUtils.parseIntOrDefault(ctx.queryParam("limit"), 100);
@@ -151,7 +157,7 @@ final class FuturesLiveRoutes {
             String symbol = ApiRequestUtils.valueOrDefault(ctx.queryParam("symbol"), "MNQ");
             String symbols = ApiRequestUtils.valueOrDefault(ctx.queryParam("symbols"), defaultPortfolioSymbols);
             String executionMode = ApiRequestUtils.valueOrDefault(ctx.queryParam("executionMode"), "SIMULATED");
-            String fundedProfile = ApiRequestUtils.valueOrDefault(ctx.queryParam("fundedProfile"), "TOPSTEP_150K");
+            String fundedProfile = ApiRequestUtils.valueOrDefault(ctx.queryParam("fundedProfile"), "TOPSTEP_50K");
             String accountId = ApiRequestUtils.valueOrDefault(ctx.queryParam("accountId"), "");
             String strategyPreset = ApiRequestUtils.valueOrDefault(ctx.queryParam("strategyPreset"), "bestbiasfree");
             FuturesManager.FuturesRiskSettings savedRisk = FuturesManager.loadFuturesRiskSettings(symbol);

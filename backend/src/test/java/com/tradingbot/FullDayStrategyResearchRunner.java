@@ -23,7 +23,7 @@ public class FullDayStrategyResearchRunner {
 	private static final String[] SYMBOL_LIST = new String[] { "MES", "MNQ", "NQ", "MGC", "ES", "M2K", "MYM", "MCL" };
 	private static final String START_DATE = System.getProperty("fullDay.startDate", "2025-05-01");
 	private static final String END_DATE = System.getProperty("fullDay.endDate", "2026-06-04");
-	private static final String PROFILE = "TOPSTEP_50K";
+	private static final String PROFILE = System.getProperty("fullDay.profile", "TOPSTEP_50K");
 	private static final String BASE_PRESET = "bestbiasfree";
 	private static final String WIP_PRESET = "wip";
 	private static final String WIP_SLOT = FuturesManager.strategyPresetSlot(WIP_PRESET);
@@ -255,6 +255,226 @@ public class FullDayStrategyResearchRunner {
 			}
 		}));
 
+		scenarios.add(new Scenario("MTF_STACK", "mtf_vwap_pullback_stack", "Top-down VWAP trend pullback: 4H proxy bias, 1H structure, 15M shift, 5M trigger, then 1M execution.", new String[] { "TLAD", "MSCALP", "VWAP", "VRCL" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if (!"MCL".equals(symbol)) {
+					configureVwapTrend(settings, 0.65, 0.55, 18.0, 1.15, true);
+					configureMtfStack(settings, "TLAD,MSCALP,VWAP,VRCL");
+				}
+			}
+		}));
+		scenarios.add(new Scenario("MTF_STACK", "mtf_fvg_retest_stack", "Top-down fair-value-gap/retest: HTF trend permission first, 15M structure shift, 5M confirmation before 1M execution.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("MGC".equals(symbol) || "ES".equals(symbol) || "MES".equals(symbol) || "MNQ".equals(symbol) || "NQ".equals(symbol)) {
+					configureFocusedFvg(settings, 0.78, 44.0, 1.18, "ANY_CONTEXT", true);
+					settings.fvg.maxTradesPerDay = 2;
+					settings.fvgRetestBars = 10;
+					settings.fvgMaxRetestDepthPct = 0.72;
+					settings.fvgMaxEntryExtensionTicks = 18.0;
+					configureMtfStack(settings, "FVG");
+				}
+			}
+		}));
+		scenarios.add(new Scenario("MTF_STACK", "mtf_breakout_retest_stack", "Top-down break-and-retest: higher timeframe path of least resistance, 1H level break, 15M/5M continuation trigger.", new String[] { "PDB", "FVG", "IFVG", "RCB", "SWEEP", "SWEEP2" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if (!"MYM".equals(symbol) && !"MCL".equals(symbol)) {
+					configureBreakoutRetest(settings, 0.70, 40.0, true, "ANY_CONTEXT");
+					settings.priorDayBreakout.maxTradesPerDay = 1;
+					settings.sweep.maxTradesPerDay = 2;
+					settings.rangeCompressionBreakout.maxTradesPerDay = 2;
+					configureMtfStack(settings, "PDB,FVG,IFVG,RCB,SWEEP,SWEEP2");
+				}
+			}
+		}));
+		scenarios.add(new Scenario("MTF_STACK", "mtf_rmc_midpoint_stack", "Range midpoint continuation repaired with top-down bias: use HTF direction to decide whether midpoint rejection is continuation or noise.", new String[] { "RMC" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("MGC".equals(symbol) || "ES".equals(symbol) || "MES".equals(symbol) || "MNQ".equals(symbol)) {
+					configureRangeMidpoint(settings, 2.0, 40.0, 0.42, 0.74, 1.18, 4);
+					configureMtfStack(settings, "RMC");
+				}
+			}
+		}));
+		scenarios.add(new Scenario("MTF_STACK", "mtf_bestbiasfree_structure_filter", "Apply top-down MTF confirmation as a blocker on existing Best Bias Free structure/reversal components while leaving opening momentum logic alone.", new String[] { "FVG", "IFVG", "PDB", "SWEEP", "SWEEP2", "VPB", "KREV", "VWAP", "VRCL", "TLAD", "MSCALP", "RCB", "RMC" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				configureMtfStack(settings, "FVG,IFVG,PDB,SWEEP,SWEEP2,VPB,KREV,VWAP,VRCL,TLAD,MSCALP,RCB,RMC");
+			}
+		}));
+		scenarios.add(new Scenario("MTF_STACK", "mtf_bestbiasfree_global_filter", "Apply top-down MTF confirmation as a whole-preset blocker to test whether higher timeframe agreement improves the full current bot.", new String[] { "ORB", "ORB2", "OMOM", "CMOM", "FVG", "IFVG", "PDB", "SWEEP", "SWEEP2", "VPB", "KREV", "VWAP", "VRCL", "TLAD", "MSCALP", "RCB", "MIM", "LORB", "IPB" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				configureMtfStack(settings, "");
+			}
+		}));
+
+		scenarios.add(new Scenario("FVG_MICROSTRUCTURE", "fvg_micro_mgc_es_mes_source", "Positive-pocket FVG: MGC/ES/MES only, source-context gap, tight retest, no broad weak symbols.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("MGC".equals(symbol) || "ES".equals(symbol) || "MES".equals(symbol)) {
+					configureMicrostructureFvg(settings, 0.90, 34.0, 1.18, "ANY_CONTEXT", false, 0.62, 0.80, 16.0, 10);
+				}
+			}
+		}));
+		scenarios.add(new Scenario("FVG_MICROSTRUCTURE", "fvg_micro_indices_strict", "Index FVG continuation with stricter reclaim geometry; skip MYM/M2K until they prove repair.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("ES".equals(symbol) || "MES".equals(symbol) || "NQ".equals(symbol) || "MNQ".equals(symbol)) {
+					configureMicrostructureFvg(settings, 1.00, 36.0, 1.20, "ANY_CONTEXT", false, 0.58, 0.82, 14.0, 9);
+					settings.fvgMinTrendSlopeTicks = "MNQ".equals(symbol) || "NQ".equals(symbol) ? 1.25 : 0.90;
+				}
+			}
+		}));
+		scenarios.add(new Scenario("FVG_MICROSTRUCTURE", "fvg_micro_participation", "High-participation FVG only: fewer trades, stronger volume, tighter entry extension, positive symbols first.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("MGC".equals(symbol) || "ES".equals(symbol) || "MES".equals(symbol) || "NQ".equals(symbol) || "MNQ".equals(symbol)) {
+					configureMicrostructureFvg(settings, 1.18, 32.0, 1.22, "ANY_CONTEXT", false, 0.50, 0.84, 12.0, 8);
+					settings.fvgMinImpulseBodyPct = 55.0;
+					settings.fvgMinSourceBreakTicks = 4.0;
+				}
+			}
+		}));
+		scenarios.add(new Scenario("FVG_MICROSTRUCTURE", "fvg_micro_expansion_day", "Controlled expansion-day FVG: HTF guard plus tight source/retest filters, tested as a risky separate branch.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("MGC".equals(symbol) || "ES".equals(symbol) || "MES".equals(symbol) || "NQ".equals(symbol) || "MNQ".equals(symbol)) {
+					configureMicrostructureFvg(settings, 1.05, 38.0, 1.28, "HTF_BREAKOUT", true, 0.55, 0.82, 14.0, 8);
+					settings.fvgMaxHoldBars = 28;
+					settings.fvgAcceptanceBars = 2;
+					settings.fvgAcceptanceMinCloseLocation = 0.72;
+					settings.fvgAcceptanceRequireReclaimExtremeBreak = true;
+				}
+			}
+		}));
+		scenarios.add(new Scenario("FVG_MICROSTRUCTURE", "fvg_micro_source_positive_symbols", "Restore broader source-context FVG geometry, but keep only symbols that showed positive source-context pockets.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("MGC".equals(symbol) || "ES".equals(symbol) || "MES".equals(symbol) || "M2K".equals(symbol)) {
+					configureFocusedFvg(settings, 0.75, 48.0, 1.10, "ANY_CONTEXT", false);
+				}
+			}
+		}));
+		scenarios.add(new Scenario("FVG_MICROSTRUCTURE", "fvg_micro_core_positive_symbols", "Use core FVG quality on the positive symbols only, avoiding MYM/NQ/MNQ/MCL dilution.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("MGC".equals(symbol) || "ES".equals(symbol) || "MES".equals(symbol)) {
+					configureFocusedFvg(settings, 0.75, 48.0, 1.15, "NONE", false);
+				}
+			}
+		}));
+		scenarios.add(new Scenario("FVG_MICROSTRUCTURE", "fvg_micro_source_without_mym", "Broader source-context FVG without the largest recurring drag symbol.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if (!"MYM".equals(symbol) && !"NQ".equals(symbol) && !"MNQ".equals(symbol)) {
+					configureFocusedFvg(settings, 0.75, 48.0, 1.10, "ANY_CONTEXT", false);
+				}
+			}
+		}));
+		scenarios.add(new Scenario("FVG_MICROSTRUCTURE", "fvg_micro_source_gold_es_only", "Highest-quality source-context pocket: MGC and ES only, testing whether concentrated edge beats broader trade count.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("MGC".equals(symbol) || "ES".equals(symbol)) {
+					configureFocusedFvg(settings, 0.75, 48.0, 1.10, "ANY_CONTEXT", false);
+				}
+			}
+		}));
+		scenarios.add(new Scenario("FVG_MICROSTRUCTURE", "fvg_micro_source_positive_max1", "Source-context positive symbols, but one FVG per day to avoid marginal follow-on gaps.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("MGC".equals(symbol) || "ES".equals(symbol) || "MES".equals(symbol) || "M2K".equals(symbol)) {
+					configureFocusedFvg(settings, 0.75, 48.0, 1.10, "ANY_CONTEXT", false);
+					settings.fvg.maxTradesPerDay = 1;
+				}
+			}
+		}));
+		scenarios.add(new Scenario("FVG_MICROSTRUCTURE", "fvg_micro_source_positive_max2", "Source-context positive symbols with two FVGs per day, testing controlled frequency versus trade count.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("MGC".equals(symbol) || "ES".equals(symbol) || "MES".equals(symbol) || "M2K".equals(symbol)) {
+					configureFocusedFvg(settings, 0.75, 48.0, 1.10, "ANY_CONTEXT", false);
+					settings.fvg.maxTradesPerDay = 2;
+				}
+			}
+		}));
+		scenarios.add(new Scenario("FVG_MICROSTRUCTURE", "fvg_micro_mgc_es_max1", "MGC/ES source-context FVG with one trade per day to isolate the strongest setup per symbol.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("MGC".equals(symbol) || "ES".equals(symbol)) {
+					configureFocusedFvg(settings, 0.75, 48.0, 1.10, "ANY_CONTEXT", false);
+					settings.fvg.maxTradesPerDay = 1;
+				}
+			}
+		}));
+		scenarios.add(new Scenario("FVG_MICROSTRUCTURE", "fvg_micro_mgc_only_max1", "MGC-only source-context FVG with one trade per day, checking whether the gold edge survives without portfolio competition.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("MGC".equals(symbol)) {
+					configureFocusedFvg(settings, 0.75, 48.0, 1.10, "ANY_CONTEXT", false);
+					settings.fvg.maxTradesPerDay = 1;
+				}
+			}
+		}));
+		scenarios.add(new Scenario("FVG_MICROSTRUCTURE", "fvg_micro_mgc_only_max1_risk36", "MGC-only source-context FVG with one trade per day and tighter risk to clear funded-rule breaches.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("MGC".equals(symbol)) {
+					configureFocusedFvg(settings, 0.75, 36.0, 1.12, "ANY_CONTEXT", false);
+					settings.fvg.maxTradesPerDay = 1;
+				}
+			}
+		}));
+		scenarios.add(new Scenario("FVG_MICROSTRUCTURE", "fvg_micro_mgc_only_max1_risk32", "MGC-only source-context FVG with lower risk distance for cleaner 50k-rule survival.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("MGC".equals(symbol)) {
+					configureFocusedFvg(settings, 0.78, 32.0, 1.12, "ANY_CONTEXT", false);
+					settings.fvg.maxTradesPerDay = 1;
+				}
+			}
+		}));
+		scenarios.add(new Scenario("FVG_MICROSTRUCTURE", "fvg_micro_mgc_only_max1_risk28", "MGC-only source-context FVG with the tightest risk cap in this repair pass.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("MGC".equals(symbol)) {
+					configureFocusedFvg(settings, 0.80, 28.0, 1.15, "ANY_CONTEXT", false);
+					settings.fvg.maxTradesPerDay = 1;
+				}
+			}
+		}));
+		scenarios.add(new Scenario("FVG_MICROSTRUCTURE", "fvg_micro_mgc_only_max1_risk24", "MGC-only source-context FVG with a conservative risk cap, testing if lower sizing friction preserves PF.", new String[] { "FVG" }, new ScenarioConfig() {
+			@Override
+			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
+				disableAllStrategies(settings);
+				if ("MGC".equals(symbol)) {
+					configureFocusedFvg(settings, 0.85, 24.0, 1.15, "ANY_CONTEXT", false);
+					settings.fvg.maxTradesPerDay = 1;
+				}
+			}
+		}));
+
 		scenarios.add(new Scenario("BREAKOUT_RETEST", "breakout_retest_broad", "Prior levels/FVG/compression retests: accepted break first, then enter on reclaim/hold instead of chasing.", new String[] { "PDB", "FVG", "IFVG", "RCB", "SWEEP", "SWEEP2" }, new ScenarioConfig() {
 			@Override
 			public void apply(String symbol, FuturesManager.FuturesStrategySettings settings) {
@@ -382,6 +602,47 @@ public class FullDayStrategyResearchRunner {
 		settings.microScalpMaxHoldBars = 10;
 	}
 
+	private static void configureMtfStack(FuturesManager.FuturesStrategySettings settings, String strategyCodes) {
+		settings.requireMultiTimeframeStack = true;
+		settings.multiTimeframeStackStrategyCodes = strategyCodes == null ? "" : strategyCodes;
+	}
+
+	private static void configureRangeMidpoint(
+		FuturesManager.FuturesStrategySettings settings,
+		double midpointBufferTicks,
+		double maxRiskTicks,
+		double minRetracePct,
+		double maxRetracePct,
+		double rewardRisk,
+		int maxTradesPerDay
+	) {
+		settings.rangeMidpointContinuation.enabled = true;
+		settings.rangeMidpointContinuation.maxTradesPerDay = maxTradesPerDay;
+		settings.allowRangeMidpointLongs = true;
+		settings.allowRangeMidpointShorts = true;
+		settings.rangeMidpointStartMinute = 570;
+		settings.rangeMidpointEndMinute = 930;
+		settings.rangeMidpointImpulseBars = 45;
+		settings.rangeMidpointPullbackBars = 8;
+		settings.rangeMidpointMinImpulseTicks = 24.0;
+		settings.rangeMidpointMinRetracePct = minRetracePct;
+		settings.rangeMidpointMaxRetracePct = maxRetracePct;
+		settings.rangeMidpointMidpointBufferTicks = midpointBufferTicks;
+		settings.rangeMidpointMaxCloseExtensionPct = 0.32;
+		settings.rangeMidpointMaxPullbackVolumeRatio = 1.15;
+		settings.rangeMidpointMinBodyPct = 42.0;
+		settings.rangeMidpointMinVolumeRatio = 0.65;
+		settings.rangeMidpointMinCloseLocation = 0.60;
+		settings.rangeMidpointMaxRiskTicks = maxRiskTicks;
+		settings.rangeMidpointRewardRisk = rewardRisk;
+		settings.rangeMidpointMaxHoldBars = 70;
+		settings.rangeMidpointMaxSpreadTicks = 4.0;
+		settings.rangeMidpointMinDepthImbalance = 0.12;
+		settings.rangeMidpointMinTapeDelta = 20.0;
+		settings.rangeMidpointMinOrderFlowVotes = 1;
+		settings.rangeMidpointMinOrderFlowConfidence = 0.20;
+	}
+
 	private static void configureFocusedFvg(FuturesManager.FuturesStrategySettings settings, double volumeRatio, double maxRiskTicks, double rewardRisk, String sourceMode, boolean htfGuard) {
 		settings.requireHigherTimeframeGuard = htfGuard;
 		settings.fvg.enabled = true;
@@ -420,6 +681,34 @@ public class FullDayStrategyResearchRunner {
 		settings.fvgMinTrendSlopeTicks = 0.75;
 		settings.fvgMaxVwapDistanceTicks = 96.0;
 		settings.fvgMaxEntryExtensionTicks = 28.0;
+	}
+
+	private static void configureMicrostructureFvg(
+		FuturesManager.FuturesStrategySettings settings,
+		double volumeRatio,
+		double maxRiskTicks,
+		double rewardRisk,
+		String sourceMode,
+		boolean htfGuard,
+		double maxRetestDepthPct,
+		double minReclaimCloseLocation,
+		double maxEntryExtensionTicks,
+		int retestBars
+	) {
+		configureFocusedFvg(settings, volumeRatio, maxRiskTicks, rewardRisk, sourceMode, htfGuard);
+		settings.fvg.maxTradesPerDay = 6;
+		settings.fvgMinWidthTicks = 4.0;
+		settings.fvgMinRiskTicks = 10.0;
+		settings.fvgMaxHoldBars = 20;
+		settings.fvgRetestBars = retestBars;
+		settings.fvgMinImpulseBodyPct = 50.0;
+		settings.fvgMaxRetestDepthPct = maxRetestDepthPct;
+		settings.fvgMinReclaimCloseLocation = minReclaimCloseLocation;
+		settings.fvgMinTrendSlopeTicks = 0.90;
+		settings.fvgMaxVwapDistanceTicks = 72.0;
+		settings.fvgMaxEntryExtensionTicks = maxEntryExtensionTicks;
+		settings.fvgSourceRangeBars = 20;
+		settings.fvgMinSourceBreakTicks = "NONE".equals(sourceMode) ? 0.0 : 3.0;
 	}
 
 	private static void configureBreakoutRetest(FuturesManager.FuturesStrategySettings settings, double volumeRatio, double maxRiskTicks, boolean coreQuality, String fvgSourceMode) {
@@ -772,7 +1061,7 @@ public class FullDayStrategyResearchRunner {
 				.append(first.effectiveEndDate == null ? "" : first.effectiveEndDate)
 				.append("` based on the available portfolio candle days.\n");
 		}
-		report.append("- Account/risk: `TOPSTEP_50K`, $50k balance, $2k trailing drawdown, $1k daily loss, $700 max risk/trade, DTM `true`, qualitative risk `true`.\n");
+		report.append("- Account/risk: ").append(riskDescription()).append(", DTM `true`, qualitative risk `true`.\n");
 		report.append("- Additive gate: family PnL > 0, family trades >= 50, PF >= 1.05, and no funded-rule violation in solo mode.\n\n");
 		report.append("## Runs\n\n");
 		report.append("| Family | Run | Mode | Total PnL | Total Trades | Win % | PF | DD % | Rule | Family Trades | Family PnL | Family Win % | Rationale |\n");
@@ -910,6 +1199,19 @@ public class FullDayStrategyResearchRunner {
 
 	private static String safeFileName(String value) {
 		return value == null ? "full-day-strategy-research" : value.replaceAll("[^A-Za-z0-9._-]", "_");
+	}
+
+	private static String riskDescription() {
+		if ("TOPSTEP_150K".equalsIgnoreCase(PROFILE)) {
+			return "`TOPSTEP_150K`, $150k balance, $4.5k trailing drawdown, $3k daily loss, $2.1k max risk/trade, 150 micros, 15 funded units";
+		}
+		if ("TOPSTEP_100K".equalsIgnoreCase(PROFILE)) {
+			return "`TOPSTEP_100K`, $100k balance, $3k trailing drawdown, $2k daily loss, $1.4k max risk/trade, 100 micros, 10 funded units";
+		}
+		if ("TOPSTEP_50K".equalsIgnoreCase(PROFILE)) {
+			return "`TOPSTEP_50K`, $50k balance, $2k trailing drawdown, $1k daily loss, $700 max risk/trade, 50 micros, 5 funded units";
+		}
+		return "`" + PROFILE + "`";
 	}
 
 	private static String money(double value) {

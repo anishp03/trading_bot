@@ -15,6 +15,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -99,8 +100,8 @@ public class FuturesManager {
 	private static final String FVG_SOURCE_HTF_BREAKOUT = "HTF_BREAKOUT";
 	private static final String FVG_SOURCE_ANY_CONTEXT = "ANY_CONTEXT";
 	private static final String TOPSTEPX_100K_COMBINE_ACCOUNT_ID = "";
-	private static final String TOPSTEPX_DEFAULT_ACCOUNT_MODE = "TOPSTEP_150K";
-	private static final String TOPSTEPX_DEFAULT_LIVE_PROFILE = "TOPSTEP_150K";
+	private static final String TOPSTEPX_DEFAULT_ACCOUNT_MODE = "TOPSTEP_50K";
+	private static final String TOPSTEPX_DEFAULT_LIVE_PROFILE = "TOPSTEP_50K";
 	private static final String DEFAULT_LIVE_SNAPSHOT_SOURCE_ID = "242";
 	private static final String STRATEGY_SLOT_BACKTEST = "BACKTEST";
 	private static final String STRATEGY_SLOT_LIVE = "LIVE";
@@ -673,6 +674,8 @@ public class FuturesManager {
 		public int lateOrbContinuationMaxHoldBars = 120;
 		public boolean skipMidmorningOrbRetest = false;
 		public boolean requireHigherTimeframeGuard = true;
+		public boolean requireMultiTimeframeStack = false;
+		public String multiTimeframeStackStrategyCodes = "";
 		public boolean relaxPatternHardWindows = false;
 		public boolean allowShorts = true;
 		public int openingMomentumRangeMinutes = 10;
@@ -1316,7 +1319,19 @@ public class FuturesManager {
 						+ "barTime TEXT, summary TEXT, detail TEXT, detailsJson TEXT, createdAt TEXT"
 						+ ")"
 				);
+				stmt.execute(
+					"CREATE TABLE IF NOT EXISTS FuturesLiveCycleAudit ("
+						+ "cycleID INTEGER PRIMARY KEY AUTOINCREMENT, "
+						+ "sessionID INTEGER, snapshotID INTEGER, marketSessionCode TEXT, marketDate TEXT, entryWindowOpen INTEGER, "
+						+ "symbolsChecked INTEGER, symbolsWithBars INTEGER, symbolsWaitingForBars INTEGER, daySignalEvents INTEGER, "
+						+ "candidateCount INTEGER, acceptedCount INTEGER, rejectedCount INTEGER, exitsProcessed INTEGER, "
+						+ "lastProcessedBarTime TEXT, feedFresh INTEGER, message TEXT, payloadJson TEXT, createdAt TEXT, "
+						+ "FOREIGN KEY (sessionID) REFERENCES FuturesLiveEngineSessions(sessionID), "
+						+ "FOREIGN KEY (snapshotID) REFERENCES FuturesLiveStrategySnapshots(snapshotID)"
+						+ ")"
+				);
 				stmt.execute("CREATE INDEX IF NOT EXISTS idx_FuturesLiveThinkingLog_createdAt ON FuturesLiveThinkingLog(createdAt DESC, logID DESC)");
+				stmt.execute("CREATE INDEX IF NOT EXISTS idx_FuturesLiveCycleAudit_session_createdAt ON FuturesLiveCycleAudit(sessionID, createdAt DESC, cycleID DESC)");
 			} catch (SQLException e) {
 				e.printStackTrace();
 			}
@@ -1884,6 +1899,7 @@ public class FuturesManager {
 		}
 		json.append("},")
 			.append("\"level2StatsBySymbol\":").append(FuturesMarketDataStore.level2StatsBySymbolJson(supportedInstrumentSymbols())).append(",")
+			.append("\"liveCapturedRowsBySymbol\":").append(FuturesMarketDataStore.liveCapturedRowsBySymbolJson(supportedInstrumentSymbols())).append(",")
 			.append("\"latestReconciliation\":").append(FuturesMarketDataStore.latestReconciliationSummaryJson()).append(",")
 			.append("\"overallStartDate\":").append(jsonDate(overallStartDate)).append(",")
 			.append("\"overallEndDate\":").append(jsonDate(overallEndDate)).append(",")
@@ -2443,6 +2459,8 @@ public class FuturesManager {
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "lateOrbContinuationMaxHoldBars"), safeSettings.lateOrbContinuationMaxHoldBars);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "skipMidmorningOrbRetest"), safeSettings.skipMidmorningOrbRetest);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "requireHigherTimeframeGuard"), safeSettings.requireHigherTimeframeGuard);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "requireMultiTimeframeStack"), safeSettings.requireMultiTimeframeStack);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "multiTimeframeStackStrategyCodes"), safeSettings.multiTimeframeStackStrategyCodes == null ? "" : safeSettings.multiTimeframeStackStrategyCodes);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "relaxPatternHardWindows"), safeSettings.relaxPatternHardWindows);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "allowShorts"), safeSettings.allowShorts);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "openingMomentumRangeMinutes"), safeSettings.openingMomentumRangeMinutes);
@@ -2962,6 +2980,8 @@ public class FuturesManager {
 			+ "\"lateOrbContinuationMaxHoldBars\":" + settings.lateOrbContinuationMaxHoldBars + ","
 			+ "\"skipMidmorningOrbRetest\":" + settings.skipMidmorningOrbRetest + ","
 			+ "\"requireHigherTimeframeGuard\":" + settings.requireHigherTimeframeGuard + ","
+			+ "\"requireMultiTimeframeStack\":" + settings.requireMultiTimeframeStack + ","
+			+ "\"multiTimeframeStackStrategyCodes\":" + jsonString(settings.multiTimeframeStackStrategyCodes == null ? "" : settings.multiTimeframeStackStrategyCodes) + ","
 			+ "\"relaxPatternHardWindows\":" + settings.relaxPatternHardWindows + ","
 			+ "\"allowShorts\":" + settings.allowShorts + ","
 			+ "\"openingMomentumRangeMinutes\":" + settings.openingMomentumRangeMinutes + ","
@@ -3881,6 +3901,8 @@ public class FuturesManager {
 		else if ("lateOrbContinuationMaxHoldBars".equals(key)) settings.lateOrbContinuationMaxHoldBars = parseInt(value, settings.lateOrbContinuationMaxHoldBars);
 		else if ("skipMidmorningOrbRetest".equals(key)) settings.skipMidmorningOrbRetest = parseBoolean(value, settings.skipMidmorningOrbRetest);
 		else if ("requireHigherTimeframeGuard".equals(key)) settings.requireHigherTimeframeGuard = parseBoolean(value, settings.requireHigherTimeframeGuard);
+		else if ("requireMultiTimeframeStack".equals(key)) settings.requireMultiTimeframeStack = parseBoolean(value, settings.requireMultiTimeframeStack);
+		else if ("multiTimeframeStackStrategyCodes".equals(key)) settings.multiTimeframeStackStrategyCodes = value == null ? "" : value.trim();
 		else if ("relaxPatternHardWindows".equals(key)) settings.relaxPatternHardWindows = parseBoolean(value, settings.relaxPatternHardWindows);
 		else if ("allowShorts".equals(key)) settings.allowShorts = parseBoolean(value, settings.allowShorts);
 		else if ("openingMomentumRangeMinutes".equals(key)) settings.openingMomentumRangeMinutes = parseInt(value, settings.openingMomentumRangeMinutes);
@@ -6482,6 +6504,8 @@ public class FuturesManager {
 		copy.lateOrbContinuationMaxHoldBars = safe.lateOrbContinuationMaxHoldBars;
 		copy.skipMidmorningOrbRetest = safe.skipMidmorningOrbRetest;
 		copy.requireHigherTimeframeGuard = safe.requireHigherTimeframeGuard;
+		copy.requireMultiTimeframeStack = safe.requireMultiTimeframeStack;
+		copy.multiTimeframeStackStrategyCodes = safe.multiTimeframeStackStrategyCodes;
 		copy.relaxPatternHardWindows = safe.relaxPatternHardWindows;
 		copy.allowShorts = safe.allowShorts;
 		copy.openingMomentumRangeMinutes = safe.openingMomentumRangeMinutes;
@@ -7423,6 +7447,7 @@ public class FuturesManager {
 		}
 		String tag = tagPrefix + "-" + System.currentTimeMillis();
 		String createdAt = LocalDateTime.now().format(DISPLAY_TIME_FORMAT);
+		String traceKey = liveParityTraceKey(normalizedSymbol, cleanStrategyCode, side, signalTime, entryTime);
 		String requestJson = "{"
 			+ "\"provider\":\"TOPSTEPX\","
 			+ "\"sharedOrderPath\":true,"
@@ -7439,6 +7464,7 @@ public class FuturesManager {
 			+ "\"stopPrice\":" + safeStop + ","
 			+ "\"targetPrice\":" + safeTarget + ","
 			+ "\"customTag\":" + jsonString(tag) + ","
+			+ "\"traceKey\":" + jsonString(traceKey) + ","
 			+ "\"signalTime\":" + jsonString(cleanOrDefault(signalTime, "")) + ","
 			+ "\"entryTime\":" + jsonString(cleanOrDefault(entryTime, "")) + ","
 			+ "\"reason\":" + jsonString(cleanOrDefault(reason, "live strategy order"))
@@ -7893,6 +7919,56 @@ public class FuturesManager {
 							.append("\"customTag\":").append(jsonString(customTag)).append(",")
 							.append("\"sizingDiagnostics\":").append(jsonObjectOrDefault(jsonObjectForKey(payload, "sizingDiagnostics"), "{}")).append(",")
 							.append("\"reason\":").append(jsonString(rs.getString("reason"))).append(",")
+						.append("\"createdAt\":").append(jsonString(rs.getString("createdAt")))
+						.append("}");
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		json.append("]");
+		return json.toString();
+	}
+
+	public static String getLiveCycleAuditJson(int sessionId, int limit) {
+		initializeStore();
+		int safeLimit = boundedInt(limit, 100, 1, LIVE_HISTORY_ROW_LIMIT);
+		StringBuilder json = new StringBuilder("[");
+		String sql = sessionId > 0
+			? "SELECT * FROM FuturesLiveCycleAudit WHERE sessionID = ? ORDER BY cycleID DESC LIMIT ?"
+			: "SELECT * FROM FuturesLiveCycleAudit ORDER BY cycleID DESC LIMIT ?";
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
+			if (sessionId > 0) {
+				pstmt.setInt(1, sessionId);
+				pstmt.setInt(2, safeLimit);
+			} else {
+				pstmt.setInt(1, safeLimit);
+			}
+			try (ResultSet rs = pstmt.executeQuery()) {
+				while (rs.next()) {
+					if (json.length() > 1) {
+						json.append(",");
+					}
+					json.append("{")
+						.append("\"id\":").append(rs.getInt("cycleID")).append(",")
+						.append("\"sessionId\":").append(rs.getInt("sessionID")).append(",")
+						.append("\"snapshotId\":").append(rs.getInt("snapshotID")).append(",")
+						.append("\"marketSessionCode\":").append(jsonString(rs.getString("marketSessionCode"))).append(",")
+						.append("\"marketDate\":").append(jsonString(rs.getString("marketDate"))).append(",")
+						.append("\"entryWindowOpen\":").append(rs.getInt("entryWindowOpen") == 1).append(",")
+						.append("\"symbolsChecked\":").append(rs.getInt("symbolsChecked")).append(",")
+						.append("\"symbolsWithBars\":").append(rs.getInt("symbolsWithBars")).append(",")
+						.append("\"symbolsWaitingForBars\":").append(rs.getInt("symbolsWaitingForBars")).append(",")
+						.append("\"daySignalEvents\":").append(rs.getInt("daySignalEvents")).append(",")
+						.append("\"candidateCount\":").append(rs.getInt("candidateCount")).append(",")
+						.append("\"acceptedCount\":").append(rs.getInt("acceptedCount")).append(",")
+						.append("\"rejectedCount\":").append(rs.getInt("rejectedCount")).append(",")
+						.append("\"exitsProcessed\":").append(rs.getInt("exitsProcessed")).append(",")
+						.append("\"lastProcessedBarTime\":").append(jsonString(rs.getString("lastProcessedBarTime"))).append(",")
+						.append("\"feedFresh\":").append(rs.getInt("feedFresh") == 1).append(",")
+						.append("\"message\":").append(jsonString(rs.getString("message"))).append(",")
+						.append("\"payload\":").append(jsonObjectOrDefault(rs.getString("payloadJson"), "{}")).append(",")
 						.append("\"createdAt\":").append(jsonString(rs.getString("createdAt")))
 						.append("}");
 				}
@@ -12416,6 +12492,157 @@ public class FuturesManager {
 		}
 	}
 
+	private static String liveCycleSymbolAuditJson(
+		String symbol,
+		List<Bar> bars,
+		int daySignalEvents,
+		String signalBarTime,
+		String entryBarTime,
+		String status
+	) {
+		int barCount = bars == null ? 0 : bars.size();
+		return "{"
+			+ "\"symbol\":" + jsonString(normalizeSymbol(symbol)) + ","
+			+ "\"barCount\":" + barCount + ","
+			+ "\"daySignalEvents\":" + daySignalEvents + ","
+			+ "\"signalBarTime\":" + jsonString(cleanOrDefault(signalBarTime, "")) + ","
+			+ "\"entryBarTime\":" + jsonString(cleanOrDefault(entryBarTime, "")) + ","
+			+ "\"status\":" + jsonString(cleanOrDefault(status, "UNKNOWN"))
+			+ "}";
+	}
+
+	private static String liveCycleCandidateAuditJson(
+		LivePortfolioSignalCandidate candidate,
+		String status,
+		String reason,
+		int contracts,
+		double entryPrice,
+		double stopPrice,
+		double targetPrice,
+		String diagnosticsJson,
+		String brokerSubmitJson
+	) {
+		Signal signal = candidate == null || candidate.event == null ? null : candidate.event.signal;
+		String symbol = candidate == null ? "" : candidate.symbol;
+		String strategyCode = signal == null ? "" : signal.strategyCode;
+		String side = signal == null ? "" : signal.side;
+		String traceKey = liveParityTraceKey(symbol, strategyCode, side, candidate == null ? "" : candidate.signalTime, candidate == null ? "" : candidate.entryTime);
+		String brokerPayload = cleanOrDefault(brokerSubmitJson, "").length() == 0
+			? ""
+			: ",\"brokerSubmit\":" + jsonObjectOrDefault(brokerSubmitJson, "{}");
+		return "{"
+			+ "\"traceKey\":" + jsonString(traceKey) + ","
+			+ "\"symbol\":" + jsonString(normalizeSymbol(symbol)) + ","
+			+ "\"strategyCode\":" + jsonString(cleanOrDefault(strategyCode, "")) + ","
+			+ "\"strategyName\":" + jsonString(signal == null ? "" : cleanOrDefault(signal.strategyName, "")) + ","
+			+ "\"side\":" + jsonString(cleanOrDefault(side, "")) + ","
+			+ "\"signalTime\":" + jsonString(candidate == null ? "" : cleanOrDefault(candidate.signalTime, "")) + ","
+			+ "\"entryTime\":" + jsonString(candidate == null ? "" : cleanOrDefault(candidate.entryTime, "")) + ","
+			+ "\"signalEntryPrice\":" + round(signal == null ? 0.0 : signal.entryPrice) + ","
+			+ "\"validatedEntryPrice\":" + round(entryPrice) + ","
+			+ "\"stopPrice\":" + round(stopPrice) + ","
+			+ "\"targetPrice\":" + round(targetPrice) + ","
+			+ "\"contracts\":" + contracts + ","
+			+ "\"status\":" + jsonString(cleanOrDefault(status, "")) + ","
+			+ "\"reason\":" + jsonString(cleanOrDefault(reason, "")) + ","
+			+ "\"sizingDiagnostics\":" + jsonObjectOrDefault(diagnosticsJson, "{}")
+			+ brokerPayload
+			+ "}";
+	}
+
+	private static String liveParityTraceKey(String symbol, String strategyCode, String side, String signalTime, String entryTime) {
+		return normalizeSymbol(symbol)
+			+ "|" + cleanOrDefault(strategyCode, "").toUpperCase(Locale.US)
+			+ "|" + cleanOrDefault(side, "").toUpperCase(Locale.US)
+			+ "|" + cleanOrDefault(signalTime, "")
+			+ "|" + cleanOrDefault(entryTime, "");
+	}
+
+	private static String liveCycleAuditPayloadJson(
+		FuturesLiveSession session,
+		LiveStrategySnapshotRow snapshot,
+		MarketSessionStatus marketStatus,
+		MarketFeedFreshness feed,
+		List<String> symbolAuditParts,
+		List<String> candidateAuditParts
+	) {
+		MarketFeedFreshness safeFeed = feed == null ? new MarketFeedFreshness() : feed;
+		return "{"
+			+ "\"sessionId\":" + (session == null ? 0 : session.sessionId) + ","
+			+ "\"snapshotId\":" + (snapshot == null ? 0 : snapshot.snapshotId) + ","
+			+ "\"strategyPreset\":" + jsonString(cleanOrDefault(session == null ? "" : session.strategyPreset, "")) + ","
+			+ "\"strategySlot\":" + jsonString(cleanOrDefault(session == null ? "" : session.strategySlot, "")) + ","
+			+ "\"riskProfile\":" + jsonString(cleanOrDefault(session == null ? "" : session.fundedProfile, "")) + ","
+			+ "\"executionMode\":" + jsonString(cleanOrDefault(session == null ? "" : session.executionMode, "")) + ","
+			+ "\"marketSessionCode\":" + jsonString(cleanOrDefault(marketStatus == null ? "" : marketStatus.code, "")) + ","
+			+ "\"marketDate\":" + jsonString(cleanOrDefault(marketStatus == null ? "" : marketStatus.marketDate, "")) + ","
+			+ "\"entryWindowOpen\":" + (marketStatus != null && marketStatus.entryWindowOpen) + ","
+			+ "\"feedFresh\":" + safeFeed.fresh + ","
+			+ "\"feedReason\":" + jsonString(cleanOrDefault(safeFeed.reason, "")) + ","
+			+ "\"symbols\":[" + joinJsonParts(symbolAuditParts) + "],"
+			+ "\"candidates\":[" + joinJsonParts(candidateAuditParts) + "]"
+			+ "}";
+	}
+
+	private static String joinJsonParts(List<String> parts) {
+		if (parts == null || parts.isEmpty()) {
+			return "";
+		}
+		StringBuilder builder = new StringBuilder();
+		for (int index = 0; index < parts.size(); index++) {
+			if (index > 0) {
+				builder.append(",");
+			}
+			builder.append(jsonObjectOrDefault(parts.get(index), "{}"));
+		}
+		return builder.toString();
+	}
+
+	private static void insertLiveCycleAudit(
+		int sessionId,
+		int snapshotId,
+		MarketSessionStatus marketStatus,
+		int symbolsChecked,
+		int symbolsWithBars,
+		int symbolsWaitingForBars,
+		int daySignalEvents,
+		int candidateCount,
+		int acceptedCount,
+		int rejectedCount,
+		int exitsProcessed,
+		String lastProcessedBarTime,
+		boolean feedFresh,
+		String message,
+		String payloadJson
+	) {
+		String sql = "INSERT INTO FuturesLiveCycleAudit (sessionID, snapshotID, marketSessionCode, marketDate, entryWindowOpen, symbolsChecked, symbolsWithBars, symbolsWaitingForBars, daySignalEvents, candidateCount, acceptedCount, rejectedCount, exitsProcessed, lastProcessedBarTime, feedFresh, message, payloadJson, createdAt) "
+			+ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
+			pstmt.setInt(1, sessionId);
+			pstmt.setInt(2, snapshotId);
+			pstmt.setString(3, cleanOrDefault(marketStatus == null ? "" : marketStatus.code, ""));
+			pstmt.setString(4, cleanOrDefault(marketStatus == null ? "" : marketStatus.marketDate, ""));
+			pstmt.setInt(5, marketStatus != null && marketStatus.entryWindowOpen ? 1 : 0);
+			pstmt.setInt(6, symbolsChecked);
+			pstmt.setInt(7, symbolsWithBars);
+			pstmt.setInt(8, symbolsWaitingForBars);
+			pstmt.setInt(9, daySignalEvents);
+			pstmt.setInt(10, candidateCount);
+			pstmt.setInt(11, acceptedCount);
+			pstmt.setInt(12, rejectedCount);
+			pstmt.setInt(13, exitsProcessed);
+			pstmt.setString(14, cleanOrDefault(lastProcessedBarTime, ""));
+			pstmt.setInt(15, feedFresh ? 1 : 0);
+			pstmt.setString(16, cleanOrDefault(message, ""));
+			pstmt.setString(17, jsonObjectOrDefault(payloadJson, "{}"));
+			pstmt.setString(18, LocalDateTime.now().format(DISPLAY_TIME_FORMAT));
+			pstmt.executeUpdate();
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+	}
+
 	private static void insertLiveRiskEvent(int sessionId, int snapshotId, String eventType, String severity, String message, String payloadJson) {
 		String sql = "INSERT INTO FuturesLiveRiskEvents (sessionID, snapshotID, eventType, severity, message, payloadJson, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)";
 		try (Connection conn = DatabaseManager.getConnection();
@@ -14188,6 +14415,24 @@ public class FuturesManager {
 			}
 
 		if ("TOPSTEPX".equals(session.executionMode) && !ensureTopstepxRealtimeFeedFresh(session, snapshot)) {
+			MarketFeedFreshness staleFeed = currentMarketFeedFreshness();
+			insertLiveCycleAudit(
+				session.sessionId,
+				snapshot.snapshotId,
+				marketStatus,
+				0,
+				0,
+				0,
+				0,
+				0,
+				0,
+				0,
+				0,
+				"",
+				false,
+				"Live cycle skipped because Topstep realtime feed was not fresh.",
+				liveCycleAuditPayloadJson(session, snapshot, marketStatus, staleFeed, new ArrayList<String>(), new ArrayList<String>())
+			);
 			return;
 		}
 
@@ -14200,6 +14445,7 @@ public class FuturesManager {
 			int symbolsWithBars = 0;
 			int symbolsWaitingForBars = 0;
 			int daySignalEvents = 0;
+			List<String> symbolAuditParts = new ArrayList<String>();
 			LocalDate today = LocalDate.now(NEW_YORK_ZONE);
 		PortfolioBacktestConfig portfolioConfig = livePortfolioConfigFromSnapshot(snapshot, today, today);
 		LiveAccountSizing accountSizing = liveAccountSizingFor(session, snapshot);
@@ -14210,6 +14456,7 @@ public class FuturesManager {
 				List<Bar> bars = realtimeBarsForSymbol(symbol, "1m", LIVE_STRATEGY_ONE_MINUTE_BAR_LIMIT);
 				if (bars.size() < 6) {
 					symbolsWaitingForBars++;
+					symbolAuditParts.add(liveCycleSymbolAuditJson(symbol, bars, 0, "", "", "WAITING_FOR_BARS"));
 					continue;
 				}
 				symbolsWithBars++;
@@ -14231,6 +14478,14 @@ public class FuturesManager {
 				);
 				List<SignalEvent> todaysEvents = context.eventsByDay.get(entryBar.marketDate);
 				daySignalEvents += todaysEvents == null ? 0 : todaysEvents.size();
+				symbolAuditParts.add(liveCycleSymbolAuditJson(
+					symbol,
+					bars,
+					todaysEvents == null ? 0 : todaysEvents.size(),
+					signalBar.displayTime,
+					entryBar.displayTime,
+					!entryBar.marketTime.isBefore(FORCED_EXIT_TIME) ? "AFTER_FORCED_EXIT_CUTOFF" : "READY"
+				));
 				liveContexts.put(symbol, context);
 				if (!entryBar.marketTime.isBefore(FORCED_EXIT_TIME)) {
 					continue;
@@ -14254,6 +14509,7 @@ public class FuturesManager {
 			: new LiveBrokerExposure();
 		int acceptedThisCycle = 0;
 		int rejectedThisCycle = 0;
+		List<String> candidateAuditParts = new ArrayList<String>();
 			for (int candidateIndex = 0; candidateIndex < candidates.size(); candidateIndex++) {
 				LivePortfolioSignalCandidate candidate = candidates.get(candidateIndex);
 				Signal signal = candidate.event.signal;
@@ -14282,6 +14538,7 @@ public class FuturesManager {
 				);
 				LiveSignalOrder order = validateLivePortfolioSignal(session, portfolioConfig, liveContexts, candidate, openPositions, takenByStrategy, brokerExposure);
 				if (!order.accepted) {
+					candidateAuditParts.add(liveCycleCandidateAuditJson(candidate, "REJECTED", order.reason, 0, 0.0, signal.stopPrice, signal.targetPrice, order.diagnosticsJson, ""));
 					insertLiveSignalDecisionFromSignal(session.sessionId, snapshot.snapshotId, candidate.symbol, signal, candidate.signalTime, candidate.entryTime, 0, 0.0, signal.stopPrice, signal.targetPrice, 0.0, "REJECTED", order.reason, "", order.diagnosticsJson);
 					pushLiveEvent(
 						session.sessionId,
@@ -14347,6 +14604,7 @@ public class FuturesManager {
 				reason = "Live signal accepted in simulated mode.";
 			}
 				insertLiveSignalDecisionFromSignal(session.sessionId, snapshot.snapshotId, candidate.symbol, signal, candidate.signalTime, candidate.entryTime, order.contracts, order.entryPrice, order.stopPrice, order.targetPrice, order.fundedMiniUnits, status, reason, brokerSubmitJson, order.diagnosticsJson);
+				candidateAuditParts.add(liveCycleCandidateAuditJson(candidate, status, reason, order.contracts, order.entryPrice, order.stopPrice, order.targetPrice, order.diagnosticsJson, brokerSubmitJson));
 				if (status.startsWith("SUBMIT_BLOCKED")) {
 					pushLiveEvent(
 						session.sessionId,
@@ -14426,6 +14684,30 @@ public class FuturesManager {
 			}
 			updateLiveEngineSession(session.sessionId, "RUNNING", session.lastBarTime, session.decisionCount, session.acceptedDecisionCount, session.rejectedDecisionCount, message);
 		}
+		MarketFeedFreshness cycleFeedFreshness = "TOPSTEPX".equals(session.executionMode) ? currentMarketFeedFreshness() : new MarketFeedFreshness();
+		boolean cycleFeedFresh = !"TOPSTEPX".equals(session.executionMode) || cycleFeedFreshness.fresh;
+		String cycleAuditMessage = acceptedThisCycle > 0
+			? "Live cycle submitted " + acceptedThisCycle + " order signal(s)."
+			: (rejectedThisCycle > 0
+				? "Live cycle rejected " + rejectedThisCycle + " candidate signal(s)."
+				: "Live cycle processed without accepted candidates.");
+		insertLiveCycleAudit(
+			session.sessionId,
+			snapshot.snapshotId,
+			marketStatus,
+			symbolsChecked,
+			symbolsWithBars,
+			symbolsWaitingForBars,
+			daySignalEvents,
+			candidates.size(),
+			acceptedThisCycle,
+			rejectedThisCycle,
+			exitsProcessed,
+			lastProcessed,
+			cycleFeedFresh,
+			cycleAuditMessage,
+			liveCycleAuditPayloadJson(session, snapshot, marketStatus, cycleFeedFreshness, symbolAuditParts, candidateAuditParts)
+		);
 	}
 
 	private static int processTopstepxLiveExitSignals(
@@ -17395,6 +17677,7 @@ public class FuturesManager {
 					+ "\"sourceStrategyCode\":" + jsonString(cleanOrDefault(signal.sourceStrategyCode, "")) + ","
 					+ "\"sourceStrategyName\":" + jsonString(cleanOrDefault(signal.sourceStrategyName, "")) + ","
 					+ "\"side\":" + jsonString(signal.side) + ","
+				+ "\"traceKey\":" + jsonString(liveParityTraceKey(symbol, signal.strategyCode, signal.side, signalTime, entryTime)) + ","
 				+ "\"signalTime\":" + jsonString(signalTime) + ","
 				+ "\"entryTime\":" + jsonString(entryTime) + ","
 				+ "\"signalEntryPrice\":" + round(signal.entryPrice) + ","
@@ -17833,6 +18116,12 @@ public class FuturesManager {
 				liveSession.flattenAttempted = true;
 			}
 		}
+		String stoppedSymbols = cleanSymbolsCsv(cleanOrDefault(session.symbols, DEFAULT_LIVE_SYMBOLS));
+		String marketDataReconciliation = FuturesMarketDataStore.reconcileLiveCapturedMarketDataOnStop(stoppedSymbols);
+		boolean marketDataReconciled = jsonBoolean(marketDataReconciliation, "success");
+		stopMessage = stopMessage + (marketDataReconciled
+			? " Market-data stop merge completed."
+			: " Market-data stop merge needs attention: " + jsonStringSummary(marketDataReconciliation));
 		synchronized (FuturesManager.class) {
 			liveSession.lastUpdatedAt = LocalDateTime.now().format(DISPLAY_TIME_FORMAT);
 			liveSession.lastDecision = stopMessage;
@@ -17849,10 +18138,10 @@ public class FuturesManager {
 				"",
 				"Live bot stopped.",
 				stopMessage,
-				"{\"sessionId\":" + sessionId + "}"
+				"{\"sessionId\":" + sessionId + ",\"marketDataReconciliation\":" + marketDataReconciliation + "}"
 			);
 		}
-		return "{\"success\":true,\"message\":" + jsonString(stopMessage) + ",\"status\":" + getLiveStatusJson() + "}";
+		return "{\"success\":true,\"message\":" + jsonString(stopMessage) + ",\"marketDataReconciliation\":" + marketDataReconciliation + ",\"status\":" + getLiveStatusJson() + "}";
 	}
 
 	public static String getLiveTradeCacheJson(String accountId) {
@@ -20862,6 +21151,9 @@ public class FuturesManager {
 		}
 		if (settings.liquidityReclaim.enabled) {
 			signals.addAll(findLiquidityReclaimSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings, signals));
+		}
+		if (settings.requireMultiTimeframeStack) {
+			signals = filterMultiTimeframeStackSignals(signals, settings, spec, bars, fifteenMinuteBars, oneHourBars);
 		}
 		return signals;
 	}
@@ -24313,6 +24605,7 @@ public class FuturesManager {
 		List<Bar> allBars = bundle.bars == null ? Collections.<Bar>emptyList() : bundle.bars;
 		List<Bar> dayBars = barsForDate(allBars, entryTime.toLocalDate());
 		List<Bar> previousBars = previousSessionBars(allBars, entryTime.toLocalDate());
+		String dataSource = bundle.source;
 
 		LocalDateTime windowStart = entryTime.minusMinutes(55);
 		LocalDateTime windowEnd = exitTime.plusMinutes(30);
@@ -24320,6 +24613,17 @@ public class FuturesManager {
 			windowStart = minDateTime(windowStart, LocalDateTime.of(entryTime.toLocalDate(), RTH_START.minusMinutes(5)));
 		}
 		List<Bar> windowBars = barsBetween(allBars, windowStart, windowEnd);
+		if (windowBars.isEmpty()) {
+			DataBundle captured = liveCapturedTradeAnalysisBars(normalizedSymbol, entryTime.toLocalDate(), windowEnd);
+			List<Bar> capturedBars = captured.bars == null ? Collections.<Bar>emptyList() : captured.bars;
+			List<Bar> capturedWindow = barsBetween(capturedBars, windowStart, windowEnd);
+			if (!capturedWindow.isEmpty()) {
+				allBars = capturedBars;
+				dayBars = barsForDate(allBars, entryTime.toLocalDate());
+				windowBars = capturedWindow;
+				dataSource = captured.source;
+			}
+		}
 		if (!windowBars.isEmpty()) {
 			windowBars = focusTradeAnalysisWindow(windowBars, entryTime, exitTime);
 		}
@@ -24353,7 +24657,7 @@ public class FuturesManager {
 			+ "\"closedAt\":" + jsonString(closedAt) + ","
 			+ "\"entryTime\":" + jsonString(displayTime(entryTime.toLocalDate(), entryTime.toLocalTime())) + ","
 			+ "\"exitTime\":" + jsonString(displayTime(exitTime.toLocalDate(), exitTime.toLocalTime())) + ","
-			+ "\"dataSource\":" + jsonString(bundle.source) + ","
+			+ "\"dataSource\":" + jsonString(dataSource) + ","
 			+ "\"tickSize\":" + spec.tickSize + ","
 			+ "\"candles\":" + tradeAnalysisCandlesJson(windowBars) + ","
 			+ "\"marketContext\":" + tradeAnalysisContextJson(context, entryBar) + ","
@@ -24375,6 +24679,53 @@ public class FuturesManager {
 		} catch (Exception ignored) {
 			return null;
 		}
+	}
+
+	private static DataBundle liveCapturedTradeAnalysisBars(String symbol, LocalDate entryDay, LocalDateTime windowEnd) {
+		DataBundle bundle = new DataBundle();
+		if (entryDay == null || windowEnd == null) {
+			return bundle;
+		}
+		InstrumentSpec spec = instrumentFor(symbol);
+		Instant start = entryDay.atStartOfDay(NEW_YORK_ZONE).toInstant();
+		Instant end = windowEnd.atZone(NEW_YORK_ZONE).toInstant();
+		try {
+			List<FuturesConnectionManager.InternalBar> captured = FuturesMarketDataStore.readCapturedBarsForRange(spec.symbol, start, end);
+			for (FuturesConnectionManager.InternalBar internal : captured) {
+				Bar bar = barFromInternalCapturedBar(internal);
+				if (bar != null && !bar.marketTime.isBefore(RTH_START) && bar.marketTime.isBefore(RTH_END)) {
+					bundle.bars.add(bar);
+				}
+			}
+			if (!bundle.bars.isEmpty()) {
+				enrichLiveBars(bundle.bars, spec);
+				bundle.source = "live captured bars fallback";
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return bundle;
+	}
+
+	private static Bar barFromInternalCapturedBar(FuturesConnectionManager.InternalBar internal) {
+		if (internal == null || internal.timestampText == null) {
+			return null;
+		}
+		ZonedDateTime timestamp = parseMarketTimestamp(internal.timestampText);
+		if (timestamp == null) {
+			return null;
+		}
+		Bar bar = new Bar();
+		bar.marketDate = timestamp.toLocalDate();
+		bar.marketTime = timestamp.toLocalTime().withSecond(0).withNano(0);
+		bar.displayTime = displayTime(bar.marketDate, bar.marketTime);
+		bar.open = internal.open;
+		bar.high = internal.high;
+		bar.low = internal.low;
+		bar.close = internal.close;
+		bar.volume = internal.volume;
+		bar.vwap = internal.vwap > 0.0 ? internal.vwap : ((bar.high + bar.low + bar.close) / 3.0);
+		return bar;
 	}
 
 	private static List<Bar> barsForDate(List<Bar> bars, LocalDate day) {
@@ -25515,6 +25866,146 @@ public class FuturesManager {
 		return true;
 	}
 
+	private static List<Signal> filterMultiTimeframeStackSignals(
+		List<Signal> signals,
+		FuturesStrategySettings settings,
+		InstrumentSpec spec,
+		List<Bar> bars,
+		List<Bar> fifteenMinuteBars,
+		List<Bar> oneHourBars
+	) {
+		if (signals == null || signals.isEmpty()) {
+			return signals;
+		}
+		List<Signal> filtered = new ArrayList<Signal>();
+		for (int index = 0; index < signals.size(); index++) {
+			Signal signal = signals.get(index);
+			if (!multiTimeframeStackApplies(settings, signal)) {
+				filtered.add(signal);
+				continue;
+			}
+			if (multiTimeframeStackAligned(signal, spec, bars, fifteenMinuteBars, oneHourBars)) {
+				signal.notes = cleanOrDefault(signal.notes, "") + " MTF stack aligned.";
+				filtered.add(signal);
+			}
+		}
+		return filtered;
+	}
+
+	private static boolean multiTimeframeStackApplies(FuturesStrategySettings settings, Signal signal) {
+		String codes = settings == null ? "" : cleanOrDefault(settings.multiTimeframeStackStrategyCodes, "");
+		if (codes.length() == 0) {
+			return true;
+		}
+		String signalCode = signal == null ? "" : cleanOrDefault(signal.strategyCode, "");
+		for (String part : codes.split(",")) {
+			if (signalCode.equalsIgnoreCase(part.trim())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean multiTimeframeStackAligned(
+		Signal signal,
+		InstrumentSpec spec,
+		List<Bar> bars,
+		List<Bar> fifteenMinuteBars,
+		List<Bar> oneHourBars
+	) {
+		if (signal == null || bars == null || signal.entryIndex < 0 || signal.entryIndex >= bars.size()) {
+			return false;
+		}
+		Bar entry = bars.get(signal.entryIndex);
+		if (entry == null || entry.marketTime == null) {
+			return false;
+		}
+		String side = cleanOrDefault(signal.side, "").toUpperCase(Locale.US);
+		if (!"LONG".equals(side) && !"SHORT".equals(side)) {
+			return false;
+		}
+		return multiTimeframeFourHourBiasAligned(side, oneHourBars, entry.marketTime)
+			&& multiTimeframeOneHourStructureAligned(side, oneHourBars, entry.marketTime)
+			&& multiTimeframeFifteenMinuteStructureAligned(side, fifteenMinuteBars, entry.marketTime)
+			&& multiTimeframeFiveMinuteTriggerAligned(side, spec, bars, signal.entryIndex);
+	}
+
+	private static boolean multiTimeframeFourHourBiasAligned(String side, List<Bar> oneHourBars, LocalTime entryTime) {
+		int endIndex = latestClosedBarIndex(oneHourBars, entryTime, 60);
+		if (endIndex < 3) {
+			return false;
+		}
+		int startIndex = endIndex - 3;
+		Bar first = oneHourBars.get(startIndex);
+		Bar last = oneHourBars.get(endIndex);
+		double high = highestHighBetween(oneHourBars, startIndex, endIndex);
+		double low = lowestLowBetween(oneHourBars, startIndex, endIndex);
+		double range = Math.max(0.000001, high - low);
+		double closeLocation = (last.close - low) / range;
+		boolean longSide = "LONG".equals(side);
+		if (longSide) {
+			return closeLocation >= 0.50 && (last.close > first.open || last.ema20 <= 0.0 || last.close >= last.ema20);
+		}
+		return closeLocation <= 0.50 && (last.close < first.open || last.ema20 <= 0.0 || last.close <= last.ema20);
+	}
+
+	private static boolean multiTimeframeOneHourStructureAligned(String side, List<Bar> oneHourBars, LocalTime entryTime) {
+		int endIndex = latestClosedBarIndex(oneHourBars, entryTime, 60);
+		if (endIndex < 2) {
+			return false;
+		}
+		Bar latest = oneHourBars.get(endIndex);
+		int lookbackStart = Math.max(0, endIndex - 6);
+		double priorHigh = highestHighBetween(oneHourBars, lookbackStart, endIndex - 1);
+		double priorLow = lowestLowBetween(oneHourBars, lookbackStart, endIndex - 1);
+		boolean longSide = "LONG".equals(side);
+		if (longSide) {
+			return latest.close >= priorHigh || (latest.ema20 <= 0.0 || latest.close > latest.ema20);
+		}
+		return latest.close <= priorLow || (latest.ema20 <= 0.0 || latest.close < latest.ema20);
+	}
+
+	private static boolean multiTimeframeFifteenMinuteStructureAligned(String side, List<Bar> fifteenMinuteBars, LocalTime entryTime) {
+		int endIndex = latestClosedBarIndex(fifteenMinuteBars, entryTime, 15);
+		if (endIndex < 2) {
+			return false;
+		}
+		Bar latest = fifteenMinuteBars.get(endIndex);
+		int lookbackStart = Math.max(0, endIndex - 4);
+		double priorHigh = highestHighBetween(fifteenMinuteBars, lookbackStart, endIndex - 1);
+		double priorLow = lowestLowBetween(fifteenMinuteBars, lookbackStart, endIndex - 1);
+		boolean longSide = "LONG".equals(side);
+		if (longSide) {
+			return (latest.ema20 <= 0.0 || latest.close > latest.ema20)
+				&& (latest.close >= priorHigh || closeLocation(latest) >= 0.55);
+		}
+		return (latest.ema20 <= 0.0 || latest.close < latest.ema20)
+			&& (latest.close <= priorLow || closeLocation(latest) <= 0.45);
+	}
+
+	private static boolean multiTimeframeFiveMinuteTriggerAligned(String side, InstrumentSpec spec, List<Bar> bars, int entryIndex) {
+		if (bars == null || entryIndex < 4 || entryIndex >= bars.size()) {
+			return false;
+		}
+		int startIndex = entryIndex - 4;
+		Bar first = bars.get(startIndex);
+		Bar last = bars.get(entryIndex);
+		if (first == null || last == null) {
+			return false;
+		}
+		double high = highestHighBetween(bars, startIndex, entryIndex);
+		double low = lowestLowBetween(bars, startIndex, entryIndex);
+		double midpoint = (high + low) / 2.0;
+		double tick = spec == null ? 0.0 : Math.max(0.0, spec.tickSize);
+		boolean longSide = "LONG".equals(side);
+		if (longSide) {
+			return last.close >= midpoint
+				&& last.close >= highestHighBetween(bars, Math.max(0, startIndex - 5), startIndex - 1) - (2.0 * tick);
+		}
+		return last.close <= midpoint
+			&& last.close <= lowestLowBetween(bars, Math.max(0, startIndex - 5), startIndex - 1) + (2.0 * tick);
+	}
+
 	private static Bar latestClosedBar(List<Bar> bars, LocalTime entryTime, int timeframeMinutes) {
 		if (bars == null || bars.isEmpty() || entryTime == null) {
 			return null;
@@ -25528,6 +26019,24 @@ public class FuturesManager {
 			}
 		}
 		return latest;
+	}
+
+	private static int latestClosedBarIndex(List<Bar> bars, LocalTime entryTime, int timeframeMinutes) {
+		if (bars == null || bars.isEmpty() || entryTime == null) {
+			return -1;
+		}
+		int latestIndex = -1;
+		for (int index = 0; index < bars.size(); index++) {
+			Bar bar = bars.get(index);
+			if (bar == null || bar.marketTime == null) {
+				continue;
+			}
+			LocalTime closeTime = bar.marketTime.plusMinutes(timeframeMinutes);
+			if (!closeTime.isAfter(entryTime)) {
+				latestIndex = index;
+			}
+		}
+		return latestIndex;
 	}
 
 	private static double highest(List<Bar> bars) {

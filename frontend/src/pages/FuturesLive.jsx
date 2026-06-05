@@ -33,8 +33,8 @@ const LIVE_TRADE_CACHE_VERSION = 1;
 const LIVE_TRADE_CACHE_MAX_ROWS = 10000;
 const LIVE_HISTORY_REQUEST_LIMIT = 10000;
 const LIVE_ALL_TRADES_PAGE_SIZE = 500;
-const DEFAULT_PROFILE = "TOPSTEP_150K";
-const DEFAULT_ACCOUNT_PROFILE = "TOPSTEP_150K";
+const DEFAULT_PROFILE = "TOPSTEP_50K";
+const DEFAULT_ACCOUNT_PROFILE = "TOPSTEP_50K";
 const DEFAULT_STRATEGY_PRESET = "bestbiasfree";
 const BIAS_FREE_STRATEGY_PRESET = "biasfree92k";
 const BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
@@ -116,32 +116,32 @@ const EMPTY_TRADE_METRICS = {
   avgMonth: 0,
 };
 const FALLBACK_PROFILE = {
-  code: "TOPSTEP_150K",
-  name: "150K",
-  accountSize: 150000,
-  maxTrailingDrawdown: 4500,
-  dailyLossLimit: 3000,
-  maxRiskPerTrade: 2100,
-  maxContracts: 15,
-  maxMicroContracts: 150,
+  code: "TOPSTEP_50K",
+  name: "50K",
+  accountSize: 50000,
+  maxTrailingDrawdown: 2000,
+  dailyLossLimit: 1000,
+  maxRiskPerTrade: 700,
+  maxContracts: 5,
+  maxMicroContracts: 50,
   maxOpenPositions: 3,
-  maxAggregateContracts: 150,
-  maxAggregateMiniUnits: 15,
+  maxAggregateContracts: 50,
+  maxAggregateMiniUnits: 5,
   profitTarget: 0,
 };
 const DEFAULT_LIVE_RISK_CONFIG = {
   referenceSymbol: "MNQ",
-  accountSize: "150000",
-  maxTrailingDrawdown: "4500",
-  dailyLossLimit: "3000",
-  maxRiskPerTrade: "2100",
-  maxContracts: "150",
+  accountSize: "50000",
+  maxTrailingDrawdown: "2000",
+  dailyLossLimit: "1000",
+  maxRiskPerTrade: "700",
+  maxContracts: "50",
   commissionPerContract: "1.24",
   slippageTicks: "1",
   profitTarget: "0",
   maxOpenPositions: "3",
-  maxAggregateContracts: "150",
-  maxAggregateMiniUnits: "15",
+  maxAggregateContracts: "50",
+  maxAggregateMiniUnits: "5",
 };
 
 export default function FuturesLive() {
@@ -210,10 +210,10 @@ export default function FuturesLive() {
 
   const topstepAccountProfiles = useMemo(() => {
     const profileSource = fundedProfiles.length ? fundedProfiles : [
-      { ...FALLBACK_PROFILE, code: DEFAULT_ACCOUNT_PROFILE, name: "150K" },
+      { ...FALLBACK_PROFILE, code: DEFAULT_ACCOUNT_PROFILE, name: FALLBACK_PROFILE.name },
     ];
     const profiles = profileSource.filter((profile) => LIVE_ACCOUNT_PROFILE_CODES.has(profile.code) && PROFILE_ACCOUNTS[profile.code]?.accountId);
-    return profiles.length ? profiles : [{ ...FALLBACK_PROFILE, code: DEFAULT_ACCOUNT_PROFILE, name: "150K" }];
+    return profiles.length ? profiles : [{ ...FALLBACK_PROFILE, code: DEFAULT_ACCOUNT_PROFILE, name: FALLBACK_PROFILE.name }];
   }, [fundedProfiles]);
 
   const selectedProfile = useMemo(() => {

@@ -64,7 +64,7 @@ final class FuturesMarketDataStore {
 		initializeStore();
 		String normalizedType = clean(eventType);
 		if (!"GatewayDepth".equalsIgnoreCase(normalizedType)) {
-			recordLevel1Event(symbol, payloadJson, receivedAt);
+			recordLevel1Event(symbol, normalizedType, payloadJson, receivedAt);
 		}
 		recordLevel2Snapshot(symbol);
 	}
@@ -90,6 +90,25 @@ final class FuturesMarketDataStore {
 			+ "\"endDate\":" + jsonString(cleanEndDate) + ","
 			+ "\"level1CaptureMerge\":" + stopFlush + ","
 			+ "\"topstepGapFill\":" + topstep + ","
+			+ "\"level2GapFill\":" + level2 + ","
+			+ "\"message\":" + jsonString(summary)
+			+ "}";
+	}
+
+	static String reconcileLiveCapturedMarketDataOnStop(String symbols) {
+		initializeStore();
+		String cleanSymbols = cleanSymbols(symbols);
+		String startedAt = displayTime();
+		String level1 = flushCapturedLevel1ToNativeHistory(cleanSymbols);
+		String level2 = fillLevel2Gaps(cleanSymbols);
+		boolean success = !level1.contains("\"success\":false") && !level2.contains("\"success\":false");
+		String summary = "Stop-live market data reconciliation. Level 1 live capture merge: " + jsonSummary(level1)
+			+ "; Level 2 captured/derived gap fill: " + jsonSummary(level2);
+		insertReconciliation(cleanSymbols, startedAt, displayTime(), success ? "COMPLETED" : "NEEDS_ATTENTION", summary);
+		return "{"
+			+ "\"success\":" + success + ","
+			+ "\"symbols\":" + jsonString(cleanSymbols) + ","
+			+ "\"level1CaptureMerge\":" + level1 + ","
 			+ "\"level2GapFill\":" + level2 + ","
 			+ "\"message\":" + jsonString(summary)
 			+ "}";
@@ -182,6 +201,20 @@ final class FuturesMarketDataStore {
 		return json.toString();
 	}
 
+	static String liveCapturedRowsBySymbolJson(List<String> symbols) {
+		initializeStore();
+		StringBuilder json = new StringBuilder("{");
+		for (int index = 0; index < symbols.size(); index++) {
+			String symbol = normalizeSymbol(symbols.get(index));
+			if (index > 0) {
+				json.append(",");
+			}
+			json.append(jsonString(symbol)).append(":").append(liveCapturedStatsJson(symbol));
+		}
+		json.append("}");
+		return json.toString();
+	}
+
 	static String latestReconciliationSummaryJson() {
 		initializeStore();
 		String sql = "SELECT symbols, startedAt, completedAt, status, summary FROM FuturesMarketDataReconciliations ORDER BY reconciliationID DESC LIMIT 1";
@@ -241,12 +274,12 @@ final class FuturesMarketDataStore {
 		);
 	}
 
-	private static void recordLevel1Event(String symbol, String payloadJson, String receivedAt) {
+	private static void recordLevel1Event(String symbol, String eventType, String payloadJson, String receivedAt) {
 		double price = realtimePriceFromPayload(payloadJson);
 		if (price <= 0.0) {
 			return;
 		}
-		double volume = realtimeVolumeFromPayload(payloadJson);
+		double volume = realtimeVolumeFromPayload(eventType, payloadJson);
 		String timestamp = bucketTimestamp(receivedAt);
 		if (timestamp.length() == 0) {
 			return;
@@ -327,6 +360,27 @@ final class FuturesMarketDataStore {
 		return captured.size();
 	}
 
+	static List<FuturesConnectionManager.InternalBar> readCapturedBarsForRange(String symbol, Instant startInclusive, Instant endInclusive) throws SQLException {
+		List<FuturesConnectionManager.InternalBar> bars = new ArrayList<FuturesConnectionManager.InternalBar>();
+		if (startInclusive == null || endInclusive == null || endInclusive.isBefore(startInclusive)) {
+			return bars;
+		}
+		String sql = "SELECT timestamp, open, high, low, close, volume FROM FuturesLiveCapturedBars "
+			+ "WHERE symbol = ? AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp";
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
+			pstmt.setString(1, normalizeSymbol(symbol));
+			pstmt.setString(2, normalizedTimestamp(startInclusive.toString()));
+			pstmt.setString(3, normalizedTimestamp(endInclusive.toString()));
+			try (ResultSet rs = pstmt.executeQuery()) {
+				while (rs.next()) {
+					bars.add(capturedBarFromRow(rs));
+				}
+			}
+		}
+		return bars;
+	}
+
 	private static List<FuturesConnectionManager.InternalBar> readCapturedBars(String symbol) throws SQLException {
 		List<FuturesConnectionManager.InternalBar> bars = new ArrayList<FuturesConnectionManager.InternalBar>();
 		String sql = "SELECT timestamp, open, high, low, close, volume FROM FuturesLiveCapturedBars WHERE symbol = ? ORDER BY timestamp";
@@ -335,20 +389,46 @@ final class FuturesMarketDataStore {
 			pstmt.setString(1, normalizeSymbol(symbol));
 			try (ResultSet rs = pstmt.executeQuery()) {
 				while (rs.next()) {
-					FuturesConnectionManager.InternalBar bar = new FuturesConnectionManager.InternalBar();
-					bar.timestampText = rs.getString("timestamp");
-					bar.timestamp = parseInstant(bar.timestampText);
-					bar.open = rs.getDouble("open");
-					bar.high = rs.getDouble("high");
-					bar.low = rs.getDouble("low");
-					bar.close = rs.getDouble("close");
-					bar.volume = rs.getDouble("volume");
-					bar.vwap = (bar.high + bar.low + bar.close) / 3.0;
-					bars.add(bar);
+					bars.add(capturedBarFromRow(rs));
 				}
 			}
 		}
 		return bars;
+	}
+
+	private static FuturesConnectionManager.InternalBar capturedBarFromRow(ResultSet rs) throws SQLException {
+		FuturesConnectionManager.InternalBar bar = new FuturesConnectionManager.InternalBar();
+		bar.timestampText = rs.getString("timestamp");
+		bar.timestamp = parseInstant(bar.timestampText);
+		bar.open = rs.getDouble("open");
+		bar.high = rs.getDouble("high");
+		bar.low = rs.getDouble("low");
+		bar.close = rs.getDouble("close");
+		bar.volume = rs.getDouble("volume");
+		bar.vwap = (bar.high + bar.low + bar.close) / 3.0;
+		return bar;
+	}
+
+	private static String liveCapturedStatsJson(String symbol) {
+		String sql = "SELECT COUNT(*) AS rows, MIN(timestamp) AS firstTimestamp, MAX(timestamp) AS lastTimestamp, MAX(updatedAt) AS lastUpdated "
+			+ "FROM FuturesLiveCapturedBars WHERE symbol = ?";
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
+			pstmt.setString(1, normalizeSymbol(symbol));
+			try (ResultSet rs = pstmt.executeQuery()) {
+				if (rs.next()) {
+					return "{"
+						+ "\"rows\":" + rs.getInt("rows") + ","
+						+ "\"firstTimestamp\":" + jsonString(rs.getString("firstTimestamp")) + ","
+						+ "\"lastTimestamp\":" + jsonString(rs.getString("lastTimestamp")) + ","
+						+ "\"lastUpdated\":" + jsonString(rs.getString("lastUpdated"))
+						+ "}";
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return "{\"rows\":0,\"firstTimestamp\":\"\",\"lastTimestamp\":\"\",\"lastUpdated\":\"\"}";
 	}
 
 	private static String level2StatsJson(String symbol) {
@@ -624,8 +704,19 @@ final class FuturesMarketDataStore {
 		return Math.max(bid, ask);
 	}
 
-	private static double realtimeVolumeFromPayload(String payloadJson) {
-		return jsonFirstNumber(payloadJson, new String[] {"volume", "Volume", "size", "Size", "lastSize", "LastSize", "v"}, 0.0);
+	private static double realtimeVolumeFromPayload(String eventType, String payloadJson) {
+		if (!"GatewayTrade".equalsIgnoreCase(clean(eventType))) {
+			return 0.0;
+		}
+		double volume = jsonNumberSum(payloadJson, "volume") + jsonNumberSum(payloadJson, "Volume");
+		if (volume > 0.0) {
+			return volume;
+		}
+		volume = jsonNumberSum(payloadJson, "size") + jsonNumberSum(payloadJson, "Size");
+		if (volume > 0.0) {
+			return volume;
+		}
+		return jsonFirstNumber(payloadJson, new String[] {"lastSize", "LastSize", "v"}, 0.0);
 	}
 
 	private static double jsonFirstNumber(String json, String[] keys, double defaultValue) {
@@ -672,6 +763,27 @@ final class FuturesMarketDataStore {
 		} catch (Exception ignored) {
 			return defaultValue;
 		}
+	}
+
+	private static double jsonNumberSum(String json, String key) {
+		if (json == null || key == null || key.length() == 0) {
+			return 0.0;
+		}
+		String pattern = "\"" + key + "\"";
+		int searchFrom = 0;
+		double total = 0.0;
+		while (searchFrom < json.length()) {
+			int keyIndex = json.indexOf(pattern, searchFrom);
+			if (keyIndex < 0) {
+				break;
+			}
+			double value = jsonNumber(json.substring(keyIndex), key, Double.NaN);
+			if (!Double.isNaN(value) && value > 0.0) {
+				total += value;
+			}
+			searchFrom = keyIndex + pattern.length();
+		}
+		return total;
 	}
 
 	private static double derivedSpreadTicks(FuturesConnectionManager.InternalBar bar, double tickSize) {
