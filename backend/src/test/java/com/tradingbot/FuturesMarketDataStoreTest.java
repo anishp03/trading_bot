@@ -87,6 +87,34 @@ public class FuturesMarketDataStoreTest {
 	}
 
 	@Test
+	public void level2GapFillDerivesOnlyRthMinutesInsideRequestedDateRange() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		Path futuresDir = tempDir.resolve("futures");
+		Path oneMinuteDir = futuresDir.resolve("1min");
+		Files.createDirectories(oneMinuteDir);
+		System.setProperty("tradingbot.futuresDataDir", futuresDir.toString());
+		Files.write(
+			oneMinuteDir.resolve("MNQ.csv"),
+			(
+				"timestamp,open,high,low,close,volume\n"
+					+ "2026-06-04T12:00:00Z,19000.00,19001.00,18999.00,19000.50,100\n"
+					+ "2026-06-04T13:30:00Z,19002.00,19005.00,19001.00,19004.00,120\n"
+					+ "2026-06-04T19:59:00Z,19004.00,19006.00,19003.00,19005.00,130\n"
+					+ "2026-06-04T20:00:00Z,19005.00,19007.00,19004.00,19006.00,140\n"
+			).getBytes(StandardCharsets.UTF_8)
+		);
+
+		String result = FuturesMarketDataStore.fillLevel2GapsForSymbol("MNQ", "2026-06-04", "2026-06-04");
+
+		assertTrue(result.contains("\"createdDerivedRows\":2"), result);
+		assertEquals(2, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesHistoricalLevel2Snapshots WHERE symbol = 'MNQ' AND source = 'DERIVED_GAP_FILL'"));
+		assertEquals(0, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesHistoricalLevel2Snapshots WHERE symbol = 'MNQ' AND timestamp = '2026-06-04T12:00:00Z'"));
+		assertEquals(1, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesHistoricalLevel2Snapshots WHERE symbol = 'MNQ' AND timestamp = '2026-06-04T13:30:00Z'"));
+		assertEquals(1, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesHistoricalLevel2Snapshots WHERE symbol = 'MNQ' AND timestamp = '2026-06-04T19:59:00Z'"));
+		assertEquals(0, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesHistoricalLevel2Snapshots WHERE symbol = 'MNQ' AND timestamp = '2026-06-04T20:00:00Z'"));
+	}
+
+	@Test
 	public void marketDataStatusIncludesLevel2CoverageStats() throws Exception {
 		TestDatabaseSupport.useTempDatabase(tempDir);
 		Path futuresDir = tempDir.resolve("futures");
@@ -186,6 +214,58 @@ public class FuturesMarketDataStoreTest {
 	}
 
 	@Test
+	public void liveCaptureStoresOnlyRthRowsForBacktestData() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		FuturesMarketDataStore.initializeStore();
+
+		FuturesMarketDataStore.recordRealtimeEvent(
+			"market",
+			"GatewayTrade",
+			"MES",
+			"[{\"price\":5300.0,\"volume\":1.0}]",
+			"2026-06-04 08:00:00"
+		);
+		FuturesMarketDataStore.recordRealtimeEvent(
+			"market",
+			"GatewayTrade",
+			"MES",
+			"[{\"price\":5301.0,\"volume\":2.0}]",
+			"2026-06-04 09:30:00"
+		);
+		FuturesMarketDataStore.recordRealtimeEvent(
+			"market",
+			"GatewayTrade",
+			"MES",
+			"[{\"price\":5302.0,\"volume\":3.0}]",
+			"2026-06-04 16:00:00"
+		);
+
+		assertEquals(1, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesLiveCapturedBars WHERE symbol = 'MES'"));
+		assertEquals(1, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesLiveCapturedBars WHERE symbol = 'MES' AND timestamp = '2026-06-04T13:30:00Z'"));
+		assertEquals(2.0, queryDouble("SELECT volume FROM FuturesLiveCapturedBars WHERE symbol = 'MES'"), 0.0001);
+	}
+
+	@Test
+	public void capturedMergePromotesOnlyRthRowsToBacktestCsv() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		Path futuresDir = tempDir.resolve("futures");
+		Files.createDirectories(futuresDir.resolve("1min"));
+		System.setProperty("tradingbot.futuresDataDir", futuresDir.toString());
+		FuturesMarketDataStore.initializeStore();
+		insertCapturedBar("MES", "2026-06-04T12:00:00Z", 5299.0);
+		insertCapturedBar("MES", "2026-06-04T13:30:00Z", 5301.0);
+		insertCapturedBar("MES", "2026-06-04T20:00:00Z", 5302.0);
+
+		String result = FuturesMarketDataStore.flushCapturedLevel1ToNativeHistory("MES");
+
+		String csv = Files.readString(futuresDir.resolve("1min").resolve("MES.csv"));
+		assertTrue(result.contains("\"capturedRows\":1"), result);
+		assertTrue(csv.contains("2026-06-04T13:30:00Z"), csv);
+		assertTrue(!csv.contains("2026-06-04T12:00:00Z"), csv);
+		assertTrue(!csv.contains("2026-06-04T20:00:00Z"), csv);
+	}
+
+	@Test
 	public void tradeAnalysisFallsBackToLiveCapturedBarsWhenNativeCsvIsMissingTradeWindow() throws Exception {
 		TestDatabaseSupport.useTempDatabase(tempDir);
 		Path futuresDir = tempDir.resolve("futures");
@@ -234,9 +314,19 @@ public class FuturesMarketDataStoreTest {
 
 	private double queryDouble(String sql) throws Exception {
 		try (Connection conn = DatabaseManager.getConnection();
-			 Statement stmt = conn.createStatement();
-			 ResultSet rs = stmt.executeQuery(sql)) {
+				 Statement stmt = conn.createStatement();
+				 ResultSet rs = stmt.executeQuery(sql)) {
 			return rs.next() ? rs.getDouble(1) : 0.0;
+		}
+	}
+
+	private void insertCapturedBar(String symbol, String timestamp, double price) throws Exception {
+		try (Connection conn = DatabaseManager.getConnection();
+			 Statement stmt = conn.createStatement()) {
+			stmt.executeUpdate(
+				"INSERT INTO FuturesLiveCapturedBars (symbol, timestamp, open, high, low, close, volume, updatedAt) VALUES ('"
+					+ symbol + "', '" + timestamp + "', " + price + ", " + price + ", " + price + ", " + price + ", 1.0, 'test')"
+			);
 		}
 	}
 }

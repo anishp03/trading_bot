@@ -21,11 +21,7 @@ final class SystemRoutes {
         });
 
         app.get("/api/system/health", ctx -> {
-            ctx.contentType("application/json").result("{"
-                + "\"ok\":true,"
-                + "\"uptimeSeconds\":" + Math.max(0L, (System.currentTimeMillis() - startedAtMs) / 1000L) + ","
-                + "\"version\":" + ApiRequestUtils.jsonString(appVersion)
-                + "}");
+            ctx.contentType("application/json").result(healthJson(appVersion, startedAtMs));
         });
 
         app.get("/api/system/backend-update", ctx -> {
@@ -33,5 +29,21 @@ final class SystemRoutes {
         });
 
         app.post("/api/system/backend-update", BackendUpdateService::triggerUpdate);
+    }
+
+    static String healthJson(String appVersion, long startedAtMs) {
+        return "{"
+            + "\"ok\":true,"
+            + "\"uptimeSeconds\":" + Math.max(0L, (System.currentTimeMillis() - startedAtMs) / 1000L) + ","
+            + "\"version\":" + ApiRequestUtils.jsonString(appVersion) + ","
+            + "\"storage\":{"
+                + "\"runtimeRoot\":" + ApiRequestUtils.jsonString(RuntimePaths.runtimeRoot()) + ","
+                + "\"runtimeRole\":" + ApiRequestUtils.jsonString(RuntimePaths.runtimeRole()) + ","
+                + "\"databasePath\":" + ApiRequestUtils.jsonString(RuntimePaths.databasePath()) + ","
+                + "\"equityMarketDataDir\":" + ApiRequestUtils.jsonString(RuntimePaths.equityMarketDataDir()) + ","
+                + "\"futuresDataDir\":" + ApiRequestUtils.jsonString(RuntimePaths.futuresDataDir()) + ","
+                + "\"liveTradeCacheDir\":" + ApiRequestUtils.jsonString(RuntimePaths.liveTradeCacheDir())
+            + "}"
+            + "}";
     }
 }

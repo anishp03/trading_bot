@@ -8,19 +8,24 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 final class FuturesMarketDataStore {
 	static final String SOURCE_LIVE_CAPTURED = "LIVE_CAPTURED";
 	static final String SOURCE_DERIVED_GAP_FILL = "DERIVED_GAP_FILL";
 	private static final ZoneId NEW_YORK_ZONE = ZoneId.of("America/New_York");
+	private static final LocalTime RTH_START = LocalTime.of(9, 30);
+	private static final LocalTime RTH_END = LocalTime.of(16, 0);
 	private static final DateTimeFormatter DISPLAY_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 	private static final DateTimeFormatter DISPLAY_MINUTE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 	private FuturesMarketDataStore() {
@@ -173,23 +178,30 @@ final class FuturesMarketDataStore {
 			LocalDate end = parseRequestedDate(endDate);
 			int beforeCaptured = countLevel2Rows(normalized, SOURCE_LIVE_CAPTURED);
 			int beforeDerived = countLevel2Rows(normalized, SOURCE_DERIVED_GAP_FILL);
+			Set<String> existingLevel2Timestamps = level2Timestamps(normalized);
 			int created = 0;
+			int rthBars = 0;
 			for (FuturesConnectionManager.InternalBar bar : bars) {
 				if (!barInsideDateRange(bar, start, end)) {
 					continue;
 				}
+				if (!isRthInstant(bar.timestamp)) {
+					continue;
+				}
+				rthBars++;
 				String timestamp = normalizedTimestamp(bar.timestampText);
-				if (timestamp.length() == 0 || hasLevel2Row(normalized, timestamp)) {
+				if (timestamp.length() == 0 || existingLevel2Timestamps.contains(timestamp)) {
 					continue;
 				}
 				upsertDerivedLevel2(normalized, timestamp, bar);
+				existingLevel2Timestamps.add(timestamp);
 				created++;
 			}
 			int finalRows = countLevel2Rows(normalized, null);
 			return "{"
 				+ "\"symbol\":" + jsonString(normalized) + ","
 				+ "\"success\":true,"
-				+ "\"level1Rows\":" + bars.size() + ","
+				+ "\"level1Rows\":" + rthBars + ","
 				+ "\"capturedRows\":" + beforeCaptured + ","
 				+ "\"derivedRows\":" + (beforeDerived + created) + ","
 				+ "\"createdDerivedRows\":" + created + ","
@@ -297,6 +309,9 @@ final class FuturesMarketDataStore {
 		if (timestamp.length() == 0) {
 			return;
 		}
+		if (!isRthTimestamp(timestamp)) {
+			return;
+		}
 		String sql = "INSERT INTO FuturesLiveCapturedBars (symbol, timestamp, open, high, low, close, volume, updatedAt) "
 			+ "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
 			+ "ON CONFLICT(symbol, timestamp) DO UPDATE SET "
@@ -324,6 +339,9 @@ final class FuturesMarketDataStore {
 		}
 		String timestamp = bucketTimestamp(snapshot.lastUpdatedAt);
 		if (timestamp.length() == 0) {
+			return;
+		}
+		if (!isRthTimestamp(timestamp)) {
 			return;
 		}
 		upsertLevel2Snapshot(
@@ -365,12 +383,12 @@ final class FuturesMarketDataStore {
 			}
 		}
 		for (FuturesConnectionManager.InternalBar bar : captured) {
-			if (bar.timestamp != null) {
+			if (isRthInstant(bar.timestamp)) {
 				merged.put(bar.timestamp, bar);
 			}
 		}
 		FuturesConnectionManager.writeInternalFuturesBars(normalized, new ArrayList<FuturesConnectionManager.InternalBar>(merged.values()));
-		return captured.size();
+		return countRthBars(captured);
 	}
 
 	static List<FuturesConnectionManager.InternalBar> readCapturedBarsForRange(String symbol, Instant startInclusive, Instant endInclusive) throws SQLException {
@@ -423,20 +441,33 @@ final class FuturesMarketDataStore {
 	}
 
 	private static String liveCapturedStatsJson(String symbol) {
-		String sql = "SELECT COUNT(*) AS rows, MIN(timestamp) AS firstTimestamp, MAX(timestamp) AS lastTimestamp, MAX(updatedAt) AS lastUpdated "
-			+ "FROM FuturesLiveCapturedBars WHERE symbol = ?";
+		String sql = "SELECT timestamp, updatedAt FROM FuturesLiveCapturedBars WHERE symbol = ? ORDER BY timestamp";
 		try (Connection conn = DatabaseManager.getConnection();
 			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
 			pstmt.setString(1, normalizeSymbol(symbol));
 			try (ResultSet rs = pstmt.executeQuery()) {
-				if (rs.next()) {
-					return "{"
-						+ "\"rows\":" + rs.getInt("rows") + ","
-						+ "\"firstTimestamp\":" + jsonString(rs.getString("firstTimestamp")) + ","
-						+ "\"lastTimestamp\":" + jsonString(rs.getString("lastTimestamp")) + ","
-						+ "\"lastUpdated\":" + jsonString(rs.getString("lastUpdated"))
-						+ "}";
+				int rows = 0;
+				String firstTimestamp = "";
+				String lastTimestamp = "";
+				String lastUpdated = "";
+				while (rs.next()) {
+					String timestamp = clean(rs.getString("timestamp"));
+					if (!isRthTimestamp(timestamp)) {
+						continue;
+					}
+					rows++;
+					if (firstTimestamp.length() == 0) {
+						firstTimestamp = timestamp;
+					}
+					lastTimestamp = timestamp;
+					lastUpdated = clean(rs.getString("updatedAt"));
 				}
+				return "{"
+					+ "\"rows\":" + rows + ","
+					+ "\"firstTimestamp\":" + jsonString(firstTimestamp) + ","
+					+ "\"lastTimestamp\":" + jsonString(lastTimestamp) + ","
+					+ "\"lastUpdated\":" + jsonString(lastUpdated)
+					+ "}";
 			}
 		} catch (SQLException e) {
 			e.printStackTrace();
@@ -451,7 +482,7 @@ final class FuturesMarketDataStore {
 		int total = captured + derived;
 		int level1Rows = 0;
 		try {
-			level1Rows = FuturesConnectionManager.readInternalFuturesBars(normalized).size();
+			level1Rows = countRthBars(FuturesConnectionManager.readInternalFuturesBars(normalized));
 		} catch (Exception ignored) {
 		}
 		String[] range = level2Range(normalized);
@@ -583,18 +614,23 @@ final class FuturesMarketDataStore {
 		}
 	}
 
-	private static boolean hasLevel2Row(String symbol, String timestamp) {
-		String sql = "SELECT 1 FROM FuturesHistoricalLevel2Snapshots WHERE symbol = ? AND timestamp = ? LIMIT 1";
+	private static Set<String> level2Timestamps(String symbol) {
+		Set<String> timestamps = new HashSet<String>();
+		String sql = "SELECT timestamp FROM FuturesHistoricalLevel2Snapshots WHERE symbol = ?";
 		try (Connection conn = DatabaseManager.getConnection();
 			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
 			pstmt.setString(1, normalizeSymbol(symbol));
-			pstmt.setString(2, timestamp);
 			try (ResultSet rs = pstmt.executeQuery()) {
-				return rs.next();
+				while (rs.next()) {
+					String timestamp = clean(rs.getString("timestamp"));
+					if (timestamp.length() > 0) {
+						timestamps.add(timestamp);
+					}
+				}
 			}
 		} catch (SQLException e) {
-			return false;
 		}
+		return timestamps;
 	}
 
 	private static boolean hasLiveCapturedLevel2Row(String symbol, String timestamp) {
@@ -614,8 +650,8 @@ final class FuturesMarketDataStore {
 
 	private static int countLevel2Rows(String symbol, String source) {
 		String sql = source == null
-			? "SELECT COUNT(*) FROM FuturesHistoricalLevel2Snapshots WHERE symbol = ?"
-			: "SELECT COUNT(*) FROM FuturesHistoricalLevel2Snapshots WHERE symbol = ? AND source = ?";
+			? "SELECT timestamp FROM FuturesHistoricalLevel2Snapshots WHERE symbol = ?"
+			: "SELECT timestamp FROM FuturesHistoricalLevel2Snapshots WHERE symbol = ? AND source = ?";
 		try (Connection conn = DatabaseManager.getConnection();
 			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
 			pstmt.setString(1, normalizeSymbol(symbol));
@@ -623,7 +659,13 @@ final class FuturesMarketDataStore {
 				pstmt.setString(2, source);
 			}
 			try (ResultSet rs = pstmt.executeQuery()) {
-				return rs.next() ? rs.getInt(1) : 0;
+				int count = 0;
+				while (rs.next()) {
+					if (isRthTimestamp(rs.getString("timestamp"))) {
+						count++;
+					}
+				}
+				return count;
 			}
 		} catch (SQLException e) {
 			return 0;
@@ -632,14 +674,20 @@ final class FuturesMarketDataStore {
 
 	private static String[] level2Range(String symbol) {
 		String[] range = {"", ""};
-		String sql = "SELECT MIN(timestamp) AS firstTimestamp, MAX(timestamp) AS lastTimestamp FROM FuturesHistoricalLevel2Snapshots WHERE symbol = ?";
+		String sql = "SELECT timestamp FROM FuturesHistoricalLevel2Snapshots WHERE symbol = ? ORDER BY timestamp";
 		try (Connection conn = DatabaseManager.getConnection();
 			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
 			pstmt.setString(1, normalizeSymbol(symbol));
 			try (ResultSet rs = pstmt.executeQuery()) {
-				if (rs.next()) {
-					range[0] = clean(rs.getString("firstTimestamp"));
-					range[1] = clean(rs.getString("lastTimestamp"));
+				while (rs.next()) {
+					String timestamp = clean(rs.getString("timestamp"));
+					if (!isRthTimestamp(timestamp)) {
+						continue;
+					}
+					if (range[0].length() == 0) {
+						range[0] = timestamp;
+					}
+					range[1] = timestamp;
 				}
 			}
 		} catch (SQLException e) {
@@ -678,6 +726,31 @@ final class FuturesMarketDataStore {
 			return "";
 		}
 		return Instant.ofEpochSecond((instant.getEpochSecond() / 60L) * 60L).toString();
+	}
+
+	private static int countRthBars(List<FuturesConnectionManager.InternalBar> bars) {
+		int count = 0;
+		if (bars == null) {
+			return count;
+		}
+		for (FuturesConnectionManager.InternalBar bar : bars) {
+			if (bar != null && isRthInstant(bar.timestamp)) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	private static boolean isRthTimestamp(String value) {
+		return isRthInstant(parseInstant(value));
+	}
+
+	private static boolean isRthInstant(Instant instant) {
+		if (instant == null) {
+			return false;
+		}
+		LocalTime marketTime = instant.atZone(NEW_YORK_ZONE).toLocalTime().withSecond(0).withNano(0);
+		return !marketTime.isBefore(RTH_START) && marketTime.isBefore(RTH_END);
 	}
 
 	private static boolean barInsideDateRange(FuturesConnectionManager.InternalBar bar, LocalDate startDate, LocalDate endDate) {

@@ -1906,7 +1906,7 @@ public class FuturesManager {
 			.append("\"commonStartDate\":").append(jsonDate(commonStartDate)).append(",")
 			.append("\"commonEndDate\":").append(jsonDate(commonEndDate)).append(",")
 			.append("\"message\":")
-			.append(jsonString("Futures data lives under backend/market_data/futures. Production backtests use native 1-minute bars plus derived 5-minute, 15-minute, and 1-hour context."))
+			.append(jsonString("Futures data lives under " + dataDir + ". Production backtests use native 1-minute bars plus derived 5-minute, 15-minute, and 1-hour context."))
 			.append("}");
 		return json.toString();
 	}
@@ -5646,7 +5646,7 @@ public class FuturesManager {
 			.append("},");
 		json.append("\"comparison\":{")
 			.append("\"futuresRawRowsBySymbol\":").append(rowsBySymbolJson(futuresDataDir() + "/" + TIMEFRAME_FOLDER, supportedInstrumentSymbols())).append(",")
-			.append("\"stockRowsBySymbol\":").append(rowsBySymbolJson("market_data/1min", stockComparisonSymbols()))
+			.append("\"stockRowsBySymbol\":").append(rowsBySymbolJson(RuntimePaths.equityMarketDataDir() + "/1min", stockComparisonSymbols()))
 			.append("},");
 		json.append("\"signals\":[");
 		List<SignalStats> orderedStats = new ArrayList<SignalStats>(stats.values());
@@ -15663,7 +15663,8 @@ public class FuturesManager {
 			trade.dtmRunnerDecision = position.dtmRunnerDecision;
 			return;
 		}
-		trade.pnl = round(trade.pnl + state.realizedPnl);
+		// Trade builders own PnL accounting, including realized DTM partial exits.
+		// This method only attaches the final DTM timeline/action metadata.
 		trade.dtmTimelineJson = state.timelineJson;
 		trade.dtmFinalAction = firstNonBlank(finalActionOverride, state.finalAction);
 		trade.dtmPartialDecision = state.partialDecision;
@@ -25214,7 +25215,7 @@ public class FuturesManager {
 		if (!futures.bars.isEmpty()) {
 			return futures;
 		}
-		DataBundle proxy = loadCsv(new File("market_data/1min/" + spec.proxySymbol + ".csv"), startDate, endDate, spec.proxyScale, "equity proxy " + spec.proxySymbol + " scaled for futures development");
+		DataBundle proxy = loadCsv(new File(RuntimePaths.equityMarketDataDir() + "/1min/" + spec.proxySymbol + ".csv"), startDate, endDate, spec.proxyScale, "equity proxy " + spec.proxySymbol + " scaled for futures development");
 		if (!proxy.bars.isEmpty()) {
 			return proxy;
 		}
@@ -26682,14 +26683,7 @@ public class FuturesManager {
 	}
 
 	private static File liveTradeCacheDir() {
-		File cwd = new File("").getAbsoluteFile();
-		File base = ("backend".equals(cwd.getName()) || "live_backend".equals(cwd.getName()))
-			? cwd
-			: new File(cwd, "backend");
-		if (!base.exists()) {
-			base = cwd;
-		}
-		return new File(base, "data/live_trade_cache");
+		return new File(RuntimePaths.liveTradeCacheDir());
 	}
 
 	private static String cleanLiveTradeCacheAccountId(String accountId) {

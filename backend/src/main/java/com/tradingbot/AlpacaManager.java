@@ -27,7 +27,6 @@ public class AlpacaManager {
 
 	private static final String BASE_URL = "https://paper-api.alpaca.markets/v2";
 	private static final String MARKET_DATA_URL = "https://data.alpaca.markets/v2";
-	private static final String MARKET_DATA_DIR = "market_data";
 	private static final String[] SUPPORTED_SYMBOLS = {"SPY", "QQQ", "AAPL", "NVDA", "TSLA"};
 	private static final String[] SUPPORTED_TIMEFRAME_FOLDERS = {"1min", "5min", "30min", "1hour"};
 	private static final String[] SUPPORTED_TIMEFRAME_VALUES = {"1Min", "5Min", "30Min", "1Hour"};
@@ -287,7 +286,7 @@ public class AlpacaManager {
 			+ "\"endDate\":" + jsonString(endDate) + ","
 			+ "\"lastUpdatedAt\":" + jsonString(lastUpdatedAt) + ","
 			+ "\"totalBars\":" + totalBars + ","
-			+ "\"storagePath\":" + jsonString(MARKET_DATA_DIR) + ","
+			+ "\"storagePath\":" + jsonString(marketDataDirectory().getPath()) + ","
 			+ "\"fields\":" + jsonString("timestamp,open,high,low,close,volume,vwap,trade_count") + ","
 			+ "\"feed\":" + jsonString(feed) + ","
 			+ "\"adjustment\":" + jsonString(adjustment) + ","
@@ -813,13 +812,7 @@ public class AlpacaManager {
 	}
 
 	private static File marketDataDirectory() {
-		File currentDirectory = new File(System.getProperty("user.dir")).getAbsoluteFile();
-
-		if ("backend".equals(currentDirectory.getName())) {
-			return new File(currentDirectory, MARKET_DATA_DIR);
-		}
-
-		return new File(currentDirectory, "trading_bot/backend/" + MARKET_DATA_DIR);
+		return new File(RuntimePaths.equityMarketDataDir());
 	}
 
 	private static File timeframeDataDirectory(String timeframeFolder) {

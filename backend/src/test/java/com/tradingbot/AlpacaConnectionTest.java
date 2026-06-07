@@ -5,14 +5,27 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 public class AlpacaConnectionTest {
+	@TempDir
+	Path tempDir;
+
+	@AfterEach
+	public void clearRuntimeProperties() {
+		System.clearProperty("tradingbot.runtimeRoot");
+		System.clearProperty("tradingbot.equityMarketDataDir");
+	}
 	
 	@Test
 	public void alpacaMetadataStaysConsistent() {
@@ -90,8 +103,31 @@ public class AlpacaConnectionTest {
 		String json = AlpacaManager.getMarketDataStatusJson();
 
 		assertTrue(json.contains("\"symbols\":[\"SPY\",\"QQQ\",\"AAPL\",\"NVDA\",\"TSLA\"]"));
-		assertTrue(json.contains("\"storagePath\":\"market_data\""));
+		assertTrue(json.contains("\"storagePath\":"));
+		assertTrue(json.contains("market_data"));
 		assertTrue(json.contains("\"hasData\":true"));
+	}
+
+	@Test
+	public void runtimeRootRoutesAlpacaMarketDataStatus() throws Exception {
+		System.setProperty("tradingbot.runtimeRoot", tempDir.toString());
+		Path marketData = tempDir.resolve("market_data");
+		Files.createDirectories(marketData);
+		Files.write(marketData.resolve("status.properties"), (
+			"startDate=2024-04-22\n"
+				+ "endDate=2024-04-22\n"
+				+ "lastUpdatedAt=2026-06-06T14:20:00Z\n"
+				+ "totalBars=5\n"
+		).getBytes(StandardCharsets.UTF_8));
+
+		String json = AlpacaManager.getMarketDataStatusJson();
+
+		assertTrue(json.contains("\"storagePath\":\"" + jsonEscape(marketData.toString()) + "\""), json);
+		assertTrue(json.contains("\"hasData\":true"), json);
+	}
+
+	private static String jsonEscape(String value) {
+		return value.replace("\\", "\\\\").replace("\"", "\\\"");
 	}
 
 	private static class StubAlpacaManager extends AlpacaManager {

@@ -60,6 +60,11 @@ final class FuturesConnectionRoutes {
         });
 
         app.post("/api/futures/market-data/update-backtest-data", ctx -> {
+            RuntimeMutationGuard.Decision guard = RuntimeMutationGuard.marketDataMutationAllowed("backtest market-data update");
+            if (!guard.allowed) {
+                ctx.status(423).contentType("application/json").result(RuntimeMutationGuard.blockedJson(guard));
+                return;
+            }
             String symbols = ApiRequestUtils.valueOrDefault(ctx.queryParam("symbols"), defaultPortfolioSymbols + ",GC");
             String startDate = ApiRequestUtils.valueOrDefault(ctx.queryParam("startDate"), LocalDate.now().minusYears(1).toString());
             String endDate = ApiRequestUtils.valueOrDefault(ctx.queryParam("endDate"), LocalDate.now().toString());
@@ -72,6 +77,11 @@ final class FuturesConnectionRoutes {
         });
 
         app.post("/api/futures/market-data/topstepx/import", ctx -> {
+            RuntimeMutationGuard.Decision guard = RuntimeMutationGuard.marketDataMutationAllowed("TopstepX market-data import");
+            if (!guard.allowed) {
+                ctx.status(423).contentType("application/json").result(RuntimeMutationGuard.blockedJson(guard));
+                return;
+            }
             String symbols = ApiRequestUtils.valueOrDefault(ctx.queryParam("symbols"), defaultPortfolioSymbols + ",GC");
             String startDate = ApiRequestUtils.valueOrDefault(ctx.queryParam("startDate"), LocalDate.now().minusYears(1).toString());
             String endDate = ApiRequestUtils.valueOrDefault(ctx.queryParam("endDate"), LocalDate.now().toString());
@@ -80,6 +90,11 @@ final class FuturesConnectionRoutes {
         });
 
         app.post("/api/futures/market-data/rebuild-derived", ctx -> {
+            RuntimeMutationGuard.Decision guard = RuntimeMutationGuard.marketDataMutationAllowed("derived market-data rebuild");
+            if (!guard.allowed) {
+                ctx.status(423).contentType("application/json").result(RuntimeMutationGuard.blockedJson(guard));
+                return;
+            }
             String symbol = ApiRequestUtils.valueOrDefault(ctx.queryParam("symbol"), "MNQ");
             ctx.contentType("application/json").result(FuturesConnectionManager.rebuildDerivedFuturesData(symbol));
         });

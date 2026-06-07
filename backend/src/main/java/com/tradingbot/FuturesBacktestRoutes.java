@@ -8,6 +8,11 @@ final class FuturesBacktestRoutes {
 
     static void register(Javalin app, String defaultPortfolioSymbols) {
         app.post("/api/futures/backtests/generate", ctx -> {
+            RuntimeMutationGuard.Decision guard = RuntimeMutationGuard.backtestMutationAllowed("futures backtest generation");
+            if (!guard.allowed) {
+                ctx.status(423).contentType("application/json").result(RuntimeMutationGuard.blockedJson(guard));
+                return;
+            }
             String symbol = ApiRequestUtils.valueOrDefault(ctx.queryParam("symbol"), "MNQ");
             String startDate = ctx.queryParam("startDate");
             String endDate = ctx.queryParam("endDate");
@@ -49,6 +54,11 @@ final class FuturesBacktestRoutes {
         });
 
         app.post("/api/futures/portfolio-backtests/generate", ctx -> {
+            RuntimeMutationGuard.Decision guard = RuntimeMutationGuard.backtestMutationAllowed("futures portfolio backtest generation");
+            if (!guard.allowed) {
+                ctx.status(423).contentType("application/json").result(RuntimeMutationGuard.blockedJson(guard));
+                return;
+            }
             String symbols = ApiRequestUtils.valueOrDefault(ctx.queryParam("symbols"), defaultPortfolioSymbols);
             String startDate = ctx.queryParam("startDate");
             String endDate = ctx.queryParam("endDate");

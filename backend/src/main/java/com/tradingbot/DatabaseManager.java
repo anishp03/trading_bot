@@ -15,8 +15,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 public class DatabaseManager {
-	private static final String DB_FILE_NAME = "tradingbot.db";
-	private static final String DB_PATH_PROPERTY = "tradingbot.db.path";
 	private static final int SQLITE_BUSY_TIMEOUT_MS = 30000;
 	private static volatile boolean sqliteWalConfigured = false;
 
@@ -82,18 +80,12 @@ public class DatabaseManager {
 	}
 
 	private static File databaseFile() {
-		String configuredPath = System.getProperty(DB_PATH_PROPERTY);
-		if (configuredPath != null && !configuredPath.trim().isEmpty()) {
-			return new File(configuredPath.trim()).getAbsoluteFile();
+		File db = new File(RuntimePaths.databasePath()).getAbsoluteFile();
+		File parent = db.getParentFile();
+		if (parent != null && !parent.exists()) {
+			parent.mkdirs();
 		}
-
-		File currentDirectory = new File(System.getProperty("user.dir")).getAbsoluteFile();
-
-		if ("backend".equals(currentDirectory.getName())) {
-			return new File(currentDirectory, DB_FILE_NAME);
-		}
-
-		return new File(currentDirectory, "trading_bot/backend/" + DB_FILE_NAME);
+		return db;
 	}
 	public static void initializeDatabase() 
 	{
