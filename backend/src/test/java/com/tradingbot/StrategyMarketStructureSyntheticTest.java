@@ -40,6 +40,31 @@ public class StrategyMarketStructureSyntheticTest {
 	}
 
 	@Test
+	public void syntheticMalformedStructureMatrixRejectsBadDecisionPathsAcrossStrategyEngines() throws Exception {
+		for (String code : directStrategyCodes()) {
+			Scenario valid = validScenario(code);
+			String controlSide = firstSignalSideFor(invokeBuildSignals(valid), code);
+			assertFalse(controlSide.isEmpty(), code + " control setup should approve the intended decision");
+
+			Scenario flat = invalidScenario(code);
+			assertFalse(hasSignalCodeAndSide(invokeBuildSignals(flat), code, controlSide), code + " should reject a flat no-structure decision path");
+
+			Scenario disabled = validScenario(code);
+			disableAllToggles(disabled.settings);
+			assertFalse(hasSignalCode(invokeBuildSignals(disabled), code), code + " should reject when its strategy toggle is disabled");
+
+			Scenario mirrored = mirroredScenario(code);
+			assertFalse(hasSignalCodeAndSide(invokeBuildSignals(mirrored), code, controlSide), code + " should not approve the control decision from mirrored opposite-side candles");
+
+			Scenario missingConfirmation = missingRecentConfirmationScenario(code);
+			assertFalse(
+				hasSignalCodeAndSide(invokeBuildSignals(missingConfirmation), code, controlSide),
+				code + " should reject when recent confirmation candles are flattened out of the valid setup"
+			);
+		}
+	}
+
+	@Test
 	public void orbRetestAllowsSameCandleBreakoutRetestAgain() throws Exception {
 		assertTrue(hasSignalCode(invokeBuildSignals(validScenario("ORB2")), "ORB2"), "ORB2 should accept a later retest after an earlier breakout");
 		assertTrue(hasSignalCode(invokeBuildSignals(sameCandleOrb2Scenario()), "ORB2"), "ORB2 should accept the same-candle breakout/retest entries restored for this sprint");
@@ -252,6 +277,48 @@ public class StrategyMarketStructureSyntheticTest {
 		setCandle(bars, 91, base + (2 * tick), base + (7 * tick), base - (2 * tick), base - tick, Trend.SHORT, symbol);
 		setCandle(bars, 92, base + (6 * tick), base + (9 * tick), base + (5 * tick), base + (8 * tick), Trend.LONG, symbol);
 		return new Scenario(symbol, bars, previousBars(symbol), settings);
+	}
+
+	private static Scenario mirroredScenario(String code) throws Exception {
+		Scenario scenario = validScenario(code);
+		double base = basePrice(scenario.symbol);
+		double tick = tickSize(scenario.symbol);
+		for (int index = 0; index < scenario.bars.size(); index++) {
+			Object candle = scenario.bars.get(index);
+			if (!isFlatSyntheticCandle(candle, base, tick)) {
+				double originalVwap = getDouble(candle, "vwap");
+				double originalEma9 = getDouble(candle, "ema9");
+				double originalEma20 = getDouble(candle, "ema20");
+				double originalEma50 = getDouble(candle, "ema50");
+				double originalRsi = getDouble(candle, "rsi14");
+				double open = mirroredPrice(base, getDouble(candle, "open"));
+				double high = mirroredPrice(base, getDouble(candle, "low"));
+				double low = mirroredPrice(base, getDouble(candle, "high"));
+				double close = mirroredPrice(base, getDouble(candle, "close"));
+				setCandle(scenario.bars, index, open, high, low, close, Trend.SHORT, scenario.symbol);
+				set(scenario.bars.get(index), "vwap", mirroredPrice(base, originalVwap));
+				set(scenario.bars.get(index), "ema9", mirroredPrice(base, originalEma9));
+				set(scenario.bars.get(index), "ema20", mirroredPrice(base, originalEma20));
+				set(scenario.bars.get(index), "ema50", mirroredPrice(base, originalEma50));
+				set(scenario.bars.get(index), "rsi14", 100.0 - originalRsi);
+			}
+		}
+		return scenario;
+	}
+
+	private static Scenario missingRecentConfirmationScenario(String code) throws Exception {
+		Scenario scenario = validScenario(code);
+		double base = basePrice(scenario.symbol);
+		double tick = tickSize(scenario.symbol);
+		int flattened = 0;
+		for (int index = scenario.bars.size() - 1; index >= 0 && flattened < 5; index--) {
+			Object candle = scenario.bars.get(index);
+			if (!isFlatSyntheticCandle(candle, base, tick)) {
+				flattenCandle(scenario.bars, index, base, scenario.symbol);
+				flattened++;
+			}
+		}
+		return scenario;
 	}
 
 	private static FuturesManager.FuturesStrategySettings settingsFor(String code) throws Exception {
@@ -606,6 +673,24 @@ public class StrategyMarketStructureSyntheticTest {
 		return false;
 	}
 
+	private static boolean hasSignalCodeAndSide(List<Object> signals, String code, String side) throws Exception {
+		for (Object signal : signals) {
+			if (code.equals(getString(signal, "strategyCode")) && side.equals(getString(signal, "side"))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static String firstSignalSideFor(List<Object> signals, String code) throws Exception {
+		for (Object signal : signals) {
+			if (code.equals(getString(signal, "strategyCode"))) {
+				return getString(signal, "side");
+			}
+		}
+		return "";
+	}
+
 	private static Object sourceSignal(String code, String name, String side, int signalIndex, int executionIndex, double base) throws Exception {
 		Object signal = newPrivate("com.tradingbot.FuturesManager$Signal");
 		set(signal, "strategyCode", code);
@@ -735,6 +820,21 @@ public class StrategyMarketStructureSyntheticTest {
 		LocalDate day = (LocalDate) get(existing, "marketDate");
 		LocalTime time = (LocalTime) get(existing, "marketTime");
 		bars.set(index, bar(symbol, day, time, open, high, low, close, trend));
+	}
+
+	private static void flattenCandle(List<Object> bars, int index, double base, String symbol) throws Exception {
+		setCandle(bars, index, base, base + (2 * tickSize(symbol)), base - (2 * tickSize(symbol)), base, Trend.FLAT, symbol);
+	}
+
+	private static boolean isFlatSyntheticCandle(Object candle, double base, double tick) throws Exception {
+		return Math.abs(getDouble(candle, "open") - base) < (tick * 0.01)
+			&& Math.abs(getDouble(candle, "high") - (base + (2 * tick))) < (tick * 0.01)
+			&& Math.abs(getDouble(candle, "low") - (base - (2 * tick))) < (tick * 0.01)
+			&& Math.abs(getDouble(candle, "close") - base) < (tick * 0.01);
+	}
+
+	private static double mirroredPrice(double base, double price) {
+		return base - (price - base);
 	}
 
 	private static void openingRange(List<Object> bars, double high, double low) throws Exception {

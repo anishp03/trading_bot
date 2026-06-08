@@ -5928,7 +5928,7 @@ public class FuturesManager {
 		}
 
 		Bar entryBar = bars.get(executionIndex);
-		if (!entryBar.marketTime.isBefore(FORCED_EXIT_TIME)) {
+		if (!isLiveEntryWindowTime(entryBar.marketTime)) {
 			stat.lateRejected++;
 			return;
 		}
@@ -11671,7 +11671,7 @@ public class FuturesManager {
 		}
 		int currentIndex = bars.size() - 1;
 		Bar entryBar = bars.get(currentIndex);
-		if (entryBar == null || entryBar.marketTime == null || !entryBar.marketTime.isBefore(FORCED_EXIT_TIME)) {
+		if (entryBar == null || !isLiveEntryWindowTime(entryBar.marketTime)) {
 			return current;
 		}
 		for (int index = 0; index < signals.size(); index++) {
@@ -13563,6 +13563,10 @@ public class FuturesManager {
 		return status;
 	}
 
+	private static boolean isLiveEntryWindowTime(LocalTime time) {
+		return time != null && !time.isBefore(LIVE_ENTRY_WINDOW_START) && time.isBefore(LIVE_ENTRY_WINDOW_END);
+	}
+
 	private static String marketSessionJson(MarketSessionStatus status) {
 		MarketSessionStatus safe = status == null ? currentMarketSessionStatus() : status;
 		return "{"
@@ -14243,6 +14247,7 @@ public class FuturesManager {
 			scan.daySignalEvents += todaysEvents == null ? 0 : todaysEvents.size();
 			scan.contexts.put(symbol, context);
 		}
+		addMymBreadthConfirmationSignalEvents(scan.contexts);
 		addMicroShadowSignalEvents(scan.contexts);
 		addMicroEchoSignalEvents(scan.contexts);
 		scan.candidates.addAll(currentLiveSignalCandidates(session.sessionId, snapshot.snapshotId, scan.contexts, scan.currentBarsBySymbol, false));
@@ -14555,13 +14560,14 @@ public class FuturesManager {
 					todaysEvents == null ? 0 : todaysEvents.size(),
 					signalBar.displayTime,
 					entryBar.displayTime,
-					!entryBar.marketTime.isBefore(FORCED_EXIT_TIME) ? "AFTER_FORCED_EXIT_CUTOFF" : "READY"
+					!isLiveEntryWindowTime(entryBar.marketTime) ? "OUTSIDE_LIVE_ENTRY_WINDOW" : "READY"
 				));
 				liveContexts.put(symbol, context);
-				if (!entryBar.marketTime.isBefore(FORCED_EXIT_TIME)) {
+				if (!isLiveEntryWindowTime(entryBar.marketTime)) {
 					continue;
+				}
 			}
-		}
+			addMymBreadthConfirmationSignalEvents(liveContexts);
 			addMicroShadowSignalEvents(liveContexts);
 			addMicroEchoSignalEvents(liveContexts);
 			candidates.addAll(currentLiveSignalCandidates(session.sessionId, snapshot.snapshotId, liveContexts, currentBarsBySymbol));
@@ -16350,7 +16356,7 @@ public class FuturesManager {
 					continue;
 				}
 				Bar entryBar = bars.get(executionIndex);
-				if (!entryBar.marketTime.isBefore(FORCED_EXIT_TIME)) {
+				if (!isLiveEntryWindowTime(entryBar.marketTime)) {
 					continue;
 				}
 				SignalEvent event = new SignalEvent();
@@ -16431,7 +16437,7 @@ public class FuturesManager {
 			if (entryBar == null || entryBar.marketDate == null || entryBar.marketTime == null) {
 				continue;
 			}
-			if (enforceForcedExitCutoff && !entryBar.marketTime.isBefore(FORCED_EXIT_TIME)) {
+			if (enforceForcedExitCutoff && !isLiveEntryWindowTime(entryBar.marketTime)) {
 				continue;
 			}
 			Integer currentIndex = barIndex(context, entryBar.marketDate, entryBar.marketTime);
@@ -19209,7 +19215,7 @@ public class FuturesManager {
 					continue;
 				}
 				Bar entryBar = bars.get(executionIndex);
-				if (!entryBar.marketTime.isBefore(FORCED_EXIT_TIME)) {
+				if (!isLiveEntryWindowTime(entryBar.marketTime)) {
 					continue;
 				}
 				SignalEvent event = new SignalEvent();
@@ -19278,7 +19284,7 @@ public class FuturesManager {
 				if (bar == null || entryBar == null || bar.marketTime == null || entryBar.marketTime == null || bar.vwap <= 0.0 || bar.ema20 <= 0.0 || bar.ema50 <= 0.0) {
 					continue;
 				}
-				if (!entryBar.marketTime.isBefore(FORCED_EXIT_TIME)) {
+				if (!isLiveEntryWindowTime(entryBar.marketTime)) {
 					continue;
 				}
 				int minute = minuteOfDay(bar);
@@ -19760,7 +19766,7 @@ public class FuturesManager {
 		}
 		Bar signalBar = bars.get(signalIndex);
 		Bar entryBar = bars.get(executionIndex);
-		if (signalBar == null || entryBar == null || !entryBar.marketTime.isBefore(FORCED_EXIT_TIME)) {
+		if (signalBar == null || entryBar == null || !isLiveEntryWindowTime(entryBar.marketTime)) {
 			return;
 		}
 		int minuteOfDay = (entryBar.marketTime.getHour() * 60) + entryBar.marketTime.getMinute();
@@ -20977,7 +20983,7 @@ public class FuturesManager {
 		}
 
 		Bar entryBar = bars.get(executionIndex);
-		if (!entryBar.marketTime.isBefore(FORCED_EXIT_TIME)) {
+		if (!isLiveEntryWindowTime(entryBar.marketTime)) {
 			return null;
 		}
 
