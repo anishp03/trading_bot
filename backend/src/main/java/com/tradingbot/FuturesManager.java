@@ -336,8 +336,11 @@ public class FuturesManager {
 		private String symbol;
 		private String strategyCode;
 		private String strategyName;
+		private String sourceStrategyCode = "";
+		private String sourceStrategyName = "";
 		private String side;
 		private int contracts;
+		private int originalContracts;
 		private double entryPrice;
 		private double exitPrice;
 		private double stopPrice;
@@ -353,6 +356,9 @@ public class FuturesManager {
 		private String dtmFinalAction = "";
 		private String dtmPartialDecision = "";
 		private String dtmRunnerDecision = "";
+		private int dtmPartialContractsClosed;
+		private double dtmRealizedPnl;
+		private double finalLegPnl;
 		private int entryIndex;
 		private int exitIndex;
 		private LocalTime openedMarketTime;
@@ -1238,6 +1244,8 @@ public class FuturesManager {
 					+ "FOREIGN KEY (portfolioBacktestID) REFERENCES FuturesPortfolioBacktests(portfolioBacktestID)"
 					+ ")"
 			);
+			ensureTradeDetailColumns(stmt, "FuturesTrades");
+			ensureTradeDetailColumns(stmt, "FuturesPortfolioTrades");
 			stmt.execute(
 				"CREATE TABLE IF NOT EXISTS FuturesPortfolioBacktestSettings ("
 					+ "portfolioBacktestID INTEGER, settingKey TEXT, settingValue TEXT, "
@@ -1793,6 +1801,15 @@ public class FuturesManager {
 				e.printStackTrace();
 			}
 		}
+	}
+
+	private static void ensureTradeDetailColumns(Statement stmt, String tableName) {
+		ensureColumn(stmt, tableName, "sourceStrategyCode", "TEXT DEFAULT ''");
+		ensureColumn(stmt, tableName, "sourceStrategyName", "TEXT DEFAULT ''");
+		ensureColumn(stmt, tableName, "originalContracts", "INTEGER DEFAULT 0");
+		ensureColumn(stmt, tableName, "dtmPartialContractsClosed", "INTEGER DEFAULT 0");
+		ensureColumn(stmt, tableName, "dtmRealizedPnl", "REAL DEFAULT 0");
+		ensureColumn(stmt, tableName, "finalLegPnl", "REAL DEFAULT 0");
 	}
 
 	public static String getInstrumentJson() {
@@ -5135,28 +5152,34 @@ public class FuturesManager {
 			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
 			pstmt.setInt(1, backtestId);
 			try (ResultSet rs = pstmt.executeQuery()) {
-				while (rs.next()) {
-					if (json.length() > 1) {
-						json.append(",");
-					}
-					json.append("{")
-						.append("\"id\":").append(rs.getInt("futuresTradeID")).append(",")
-						.append("\"symbol\":").append(jsonString(rs.getString("symbol"))).append(",")
-						.append("\"strategyCode\":").append(jsonString(rs.getString("strategyCode"))).append(",")
-						.append("\"strategyName\":").append(jsonString(rs.getString("strategyName"))).append(",")
-						.append("\"side\":").append(jsonString(rs.getString("side"))).append(",")
-						.append("\"contracts\":").append(rs.getInt("contracts")).append(",")
-						.append("\"entry\":").append(rs.getDouble("entryPrice")).append(",")
-						.append("\"exit\":").append(rs.getDouble("exitPrice")).append(",")
-						.append("\"stop\":").append(rs.getDouble("stopPrice")).append(",")
-						.append("\"target\":").append(rs.getDouble("targetPrice")).append(",")
-						.append("\"openedAt\":").append(jsonString(rs.getString("openedAt"))).append(",")
-						.append("\"closedAt\":").append(jsonString(rs.getString("closedAt"))).append(",")
-						.append("\"pnl\":").append(rs.getDouble("pnl")).append(",")
-						.append("\"mfe\":").append(rs.getDouble("mfe")).append(",")
-						.append("\"mae\":").append(rs.getDouble("mae")).append(",")
-						.append("\"exitReason\":").append(jsonString(rs.getString("exitReason"))).append(",")
-						.append("\"tradeNotes\":").append(jsonString(rs.getString("tradeNotes")))
+					while (rs.next()) {
+						if (json.length() > 1) {
+							json.append(",");
+						}
+						json.append("{")
+							.append("\"id\":").append(rs.getInt("futuresTradeID")).append(",")
+							.append("\"symbol\":").append(jsonString(rs.getString("symbol"))).append(",")
+							.append("\"strategyCode\":").append(jsonString(rs.getString("strategyCode"))).append(",")
+							.append("\"strategyName\":").append(jsonString(rs.getString("strategyName"))).append(",")
+							.append("\"sourceStrategyCode\":").append(jsonString(rs.getString("sourceStrategyCode"))).append(",")
+							.append("\"sourceStrategyName\":").append(jsonString(rs.getString("sourceStrategyName"))).append(",")
+							.append("\"side\":").append(jsonString(rs.getString("side"))).append(",")
+							.append("\"contracts\":").append(rs.getInt("contracts")).append(",")
+							.append("\"originalContracts\":").append(rs.getInt("originalContracts")).append(",")
+							.append("\"entry\":").append(rs.getDouble("entryPrice")).append(",")
+							.append("\"exit\":").append(rs.getDouble("exitPrice")).append(",")
+							.append("\"stop\":").append(rs.getDouble("stopPrice")).append(",")
+							.append("\"target\":").append(rs.getDouble("targetPrice")).append(",")
+							.append("\"openedAt\":").append(jsonString(rs.getString("openedAt"))).append(",")
+							.append("\"closedAt\":").append(jsonString(rs.getString("closedAt"))).append(",")
+							.append("\"pnl\":").append(rs.getDouble("pnl")).append(",")
+							.append("\"finalLegPnl\":").append(rs.getDouble("finalLegPnl")).append(",")
+							.append("\"dtmRealizedPnl\":").append(rs.getDouble("dtmRealizedPnl")).append(",")
+							.append("\"dtmPartialContractsClosed\":").append(rs.getInt("dtmPartialContractsClosed")).append(",")
+							.append("\"mfe\":").append(rs.getDouble("mfe")).append(",")
+							.append("\"mae\":").append(rs.getDouble("mae")).append(",")
+							.append("\"exitReason\":").append(jsonString(rs.getString("exitReason"))).append(",")
+							.append("\"tradeNotes\":").append(jsonString(rs.getString("tradeNotes")))
 						.append("}");
 				}
 			}
@@ -5197,8 +5220,11 @@ public class FuturesManager {
 						.append("\"contractName\":").append(jsonString(contractNameForSymbol(rs.getString("symbol")))).append(",")
 						.append("\"strategyCode\":").append(jsonString(rs.getString("strategyCode"))).append(",")
 						.append("\"strategyName\":").append(jsonString(rs.getString("strategyName"))).append(",")
+						.append("\"sourceStrategyCode\":").append(jsonString(rs.getString("sourceStrategyCode"))).append(",")
+						.append("\"sourceStrategyName\":").append(jsonString(rs.getString("sourceStrategyName"))).append(",")
 						.append("\"side\":").append(jsonString(rs.getString("side"))).append(",")
 						.append("\"contracts\":").append(rs.getInt("contracts")).append(",")
+						.append("\"originalContracts\":").append(rs.getInt("originalContracts")).append(",")
 						.append("\"entry\":").append(rs.getDouble("entryPrice")).append(",")
 						.append("\"exit\":").append(rs.getDouble("exitPrice")).append(",")
 						.append("\"stop\":").append(rs.getDouble("stopPrice")).append(",")
@@ -5206,6 +5232,9 @@ public class FuturesManager {
 						.append("\"openedAt\":").append(jsonString(rs.getString("openedAt"))).append(",")
 						.append("\"closedAt\":").append(jsonString(rs.getString("closedAt"))).append(",")
 						.append("\"pnl\":").append(rs.getDouble("pnl")).append(",")
+						.append("\"finalLegPnl\":").append(rs.getDouble("finalLegPnl")).append(",")
+						.append("\"dtmRealizedPnl\":").append(rs.getDouble("dtmRealizedPnl")).append(",")
+						.append("\"dtmPartialContractsClosed\":").append(rs.getInt("dtmPartialContractsClosed")).append(",")
 						.append("\"mfe\":").append(rs.getDouble("mfe")).append(",")
 						.append("\"mae\":").append(rs.getDouble("mae")).append(",")
 						.append("\"exitReason\":").append(jsonString(rs.getString("exitReason"))).append(",")
@@ -7878,34 +7907,40 @@ public class FuturesManager {
 			}
 			pstmt.setInt(paramIndex, safeLimit);
 			try (ResultSet rs = pstmt.executeQuery()) {
-				while (rs.next()) {
-					String payload = rs.getString("payloadJson");
-					String brokerOrderId = brokerOrderIdFromJson(payload);
-					String customTag = jsonText(payload, "customTag", "");
-					String tradeReasonJson = jsonObjectForKey(payload, "tradeReason");
-					if (json.length() > 1) {
-						json.append(",");
-					}
-					json.append("{")
-						.append("\"id\":").append(rs.getInt("decisionID")).append(",")
-						.append("\"sessionId\":").append(rs.getInt("sessionID")).append(",")
-						.append("\"snapshotId\":").append(rs.getInt("snapshotID")).append(",")
-						.append("\"accountId\":").append(jsonString(rs.getString("decisionAccountId"))).append(",")
-						.append("\"fundedProfile\":").append(jsonString(rs.getString("decisionFundedProfile"))).append(",")
-						.append("\"symbol\":").append(jsonString(rs.getString("symbol"))).append(",")
-						.append("\"strategyCode\":").append(jsonString(rs.getString("strategyCode"))).append(",")
-						.append("\"strategyName\":").append(jsonString(rs.getString("strategyName"))).append(",")
-						.append("\"side\":").append(jsonString(rs.getString("side"))).append(",")
-						.append("\"signalTime\":").append(jsonString(rs.getString("signalTime"))).append(",")
-						.append("\"entryTime\":").append(jsonString(rs.getString("entryTime"))).append(",")
-						.append("\"contracts\":").append(rs.getInt("contracts")).append(",")
-						.append("\"entryPrice\":").append(round(rs.getDouble("entryPrice"))).append(",")
-						.append("\"stopPrice\":").append(round(rs.getDouble("stopPrice"))).append(",")
-						.append("\"targetPrice\":").append(round(rs.getDouble("targetPrice"))).append(",")
-						.append("\"fundedMiniUnits\":").append(round(rs.getDouble("fundedMiniUnits"))).append(",")
-						.append("\"status\":").append(jsonString(rs.getString("status"))).append(",")
-						.append("\"pnl\":").append(round(jsonNumber(payload, "pnl", 0.0))).append(",")
-						.append("\"mfe\":").append(round(jsonNumber(payload, "mfe", 0.0))).append(",")
+					while (rs.next()) {
+						String payload = rs.getString("payloadJson");
+						String brokerOrderId = brokerOrderIdFromJson(payload);
+						String customTag = jsonText(payload, "customTag", "");
+						String tradeReasonJson = jsonObjectForKey(payload, "tradeReason");
+						double displayPnl = liveDecisionRealizedPnl(rs.getString("status"), payload);
+						boolean pnlAuthoritative = liveDecisionPnlAuthoritative(rs.getString("status"), payload);
+						if (json.length() > 1) {
+							json.append(",");
+						}
+						json.append("{")
+							.append("\"id\":").append(rs.getInt("decisionID")).append(",")
+							.append("\"sessionId\":").append(rs.getInt("sessionID")).append(",")
+							.append("\"snapshotId\":").append(rs.getInt("snapshotID")).append(",")
+							.append("\"accountId\":").append(jsonString(rs.getString("decisionAccountId"))).append(",")
+							.append("\"fundedProfile\":").append(jsonString(rs.getString("decisionFundedProfile"))).append(",")
+							.append("\"symbol\":").append(jsonString(rs.getString("symbol"))).append(",")
+							.append("\"strategyCode\":").append(jsonString(rs.getString("strategyCode"))).append(",")
+							.append("\"strategyName\":").append(jsonString(rs.getString("strategyName"))).append(",")
+							.append("\"sourceStrategyCode\":").append(jsonString(jsonText(payload, "sourceStrategyCode", jsonText(jsonObjectForKey(tradeReasonJson, "entry"), "sourceStrategyCode", "")))).append(",")
+							.append("\"sourceStrategyName\":").append(jsonString(jsonText(payload, "sourceStrategyName", jsonText(jsonObjectForKey(tradeReasonJson, "entry"), "sourceStrategyName", "")))).append(",")
+							.append("\"side\":").append(jsonString(rs.getString("side"))).append(",")
+							.append("\"signalTime\":").append(jsonString(rs.getString("signalTime"))).append(",")
+							.append("\"entryTime\":").append(jsonString(rs.getString("entryTime"))).append(",")
+							.append("\"contracts\":").append(rs.getInt("contracts")).append(",")
+							.append("\"entryPrice\":").append(round(rs.getDouble("entryPrice"))).append(",")
+							.append("\"stopPrice\":").append(round(rs.getDouble("stopPrice"))).append(",")
+							.append("\"targetPrice\":").append(round(rs.getDouble("targetPrice"))).append(",")
+							.append("\"fundedMiniUnits\":").append(round(rs.getDouble("fundedMiniUnits"))).append(",")
+							.append("\"status\":").append(jsonString(rs.getString("status"))).append(",")
+							.append("\"pnl\":").append(round(displayPnl)).append(",")
+							.append("\"rawPnl\":").append(round(jsonNumber(payload, "pnl", 0.0))).append(",")
+							.append("\"pnlAuthoritative\":").append(pnlAuthoritative).append(",")
+							.append("\"mfe\":").append(round(jsonNumber(payload, "mfe", 0.0))).append(",")
 							.append("\"mae\":").append(round(jsonNumber(payload, "mae", 0.0))).append(",")
 							.append("\"exitPrice\":").append(round(jsonNumber(payload, "exitPrice", 0.0))).append(",")
 							.append("\"exitReason\":").append(jsonString(jsonText(payload, "exitReason", ""))).append(",")
@@ -7919,8 +7954,8 @@ public class FuturesManager {
 							.append("\"customTag\":").append(jsonString(customTag)).append(",")
 							.append("\"sizingDiagnostics\":").append(jsonObjectOrDefault(jsonObjectForKey(payload, "sizingDiagnostics"), "{}")).append(",")
 							.append("\"reason\":").append(jsonString(rs.getString("reason"))).append(",")
-						.append("\"createdAt\":").append(jsonString(rs.getString("createdAt")))
-						.append("}");
+							.append("\"createdAt\":").append(jsonString(rs.getString("createdAt")))
+							.append("}");
 				}
 			}
 		} catch (SQLException e) {
@@ -8429,16 +8464,17 @@ public class FuturesManager {
 						if (status.contains("REJECTED")) {
 							rejected++;
 						}
-						if (status.startsWith("SIMULATED") || status.contains("EXIT") || status.contains("CLOSED") || status.contains("FLAT") || status.contains("SOLD")) {
-							double tradePnl = jsonNumber(rs.getString("payloadJson"), "pnl", 0.0);
+						String payload = rs.getString("payloadJson");
+						if (liveDecisionExitStatus(status) && liveDecisionPnlAuthoritative(status, payload)) {
+							double tradePnl = liveDecisionRealizedPnl(status, payload);
 							pnl = round(pnl + tradePnl);
-						exitTrades++;
-						if (tradePnl > 0.0) {
-							winners++;
+							exitTrades++;
+							if (tradePnl > 0.0) {
+								winners++;
+							}
+							peakPnl = Math.max(peakPnl, pnl);
+							maxDrawdown = Math.max(maxDrawdown, peakPnl - pnl);
 						}
-						peakPnl = Math.max(peakPnl, pnl);
-						maxDrawdown = Math.max(maxDrawdown, peakPnl - pnl);
-					}
 					lastUpdated = cleanOrDefault(rs.getString("createdAt"), lastUpdated);
 				}
 			}
@@ -8518,9 +8554,39 @@ public class FuturesManager {
 			+ "\"rejected\":" + rejected + ","
 			+ "\"decisions\":" + totalDecisions + ","
 			+ "\"accountSize\":" + round(accountSize) + ","
-			+ "\"broker\":" + jsonObjectOrDefault(brokerMetricsJson, "{}") + ","
+				+ "\"broker\":" + jsonObjectOrDefault(brokerMetricsJson, "{}") + ","
 				+ "\"lastUpdated\":" + jsonString(lastUpdated)
 				+ "}";
+		}
+
+	private static double liveDecisionRealizedPnl(String status, String payloadJson) {
+		if (!liveDecisionExitStatus(status) || !liveDecisionPnlAuthoritative(status, payloadJson)) {
+			return 0.0;
+		}
+		return round(jsonNumber(payloadJson, "pnl", 0.0));
+	}
+
+	private static boolean liveDecisionExitStatus(String status) {
+		String cleanStatus = cleanOrDefault(status, "").toUpperCase(Locale.US);
+		return cleanStatus.startsWith("SIMULATED")
+			|| cleanStatus.contains("EXIT")
+			|| cleanStatus.contains("CLOSED")
+			|| cleanStatus.contains("FLAT")
+			|| cleanStatus.contains("SOLD");
+	}
+
+	private static boolean liveDecisionPnlAuthoritative(String status, String payloadJson) {
+		String cleanStatus = cleanOrDefault(status, "").toUpperCase(Locale.US);
+		if (!liveDecisionExitStatus(cleanStatus)) {
+			return false;
+		}
+		if (cleanStatus.startsWith("SIMULATED") || !cleanStatus.contains("TOPSTEPX")) {
+			return true;
+		}
+		String payload = cleanOrDefault(payloadJson, "");
+		return payload.contains("\"authoritative\":true")
+			|| payload.contains("\"source\":\"TOPSTEPX_METRICS_RECONCILE\"")
+			|| payload.contains("\"finalRealizedPnlSource\":\"BROKER_FILL\"");
 	}
 
 	public static String getLiveMarksJson(String symbols, String timeframe) {
@@ -11975,13 +12041,18 @@ public class FuturesManager {
 			? ""
 			: ",\"brokerClose\":" + jsonObjectOrDefault(brokerCloseJson, "{}");
 		String tradeReasonJson = liveExitTradeReasoningJson(trade, status, reason, brokerCloseJson);
-		return "{"
-			+ "\"openedAt\":" + jsonString(trade.openedAt) + ","
-			+ "\"closedAt\":" + jsonString(trade.closedAt) + ","
-			+ "\"entryPrice\":" + round(trade.entryPrice) + ","
-			+ "\"exitPrice\":" + round(trade.exitPrice) + ","
-			+ "\"pnl\":" + round(trade.pnl) + ","
-			+ "\"mfe\":" + round(trade.mfe) + ","
+			return "{"
+				+ "\"openedAt\":" + jsonString(trade.openedAt) + ","
+				+ "\"closedAt\":" + jsonString(trade.closedAt) + ","
+				+ "\"sourceStrategyCode\":" + jsonString(cleanOrDefault(trade.sourceStrategyCode, "")) + ","
+				+ "\"sourceStrategyName\":" + jsonString(cleanOrDefault(trade.sourceStrategyName, "")) + ","
+				+ "\"entryPrice\":" + round(trade.entryPrice) + ","
+				+ "\"exitPrice\":" + round(trade.exitPrice) + ","
+				+ "\"pnl\":" + round(trade.pnl) + ","
+				+ "\"finalLegPnl\":" + round(trade.finalLegPnl) + ","
+				+ "\"dtmRealizedPnl\":" + round(trade.dtmRealizedPnl) + ","
+				+ "\"dtmPartialContractsClosed\":" + trade.dtmPartialContractsClosed + ","
+				+ "\"mfe\":" + round(trade.mfe) + ","
 			+ "\"mae\":" + round(trade.mae) + ","
 			+ "\"exitReason\":" + jsonString(trade.exitReason)
 			+ ",\"tradeReason\":" + tradeReasonJson
@@ -14931,19 +15002,23 @@ public class FuturesManager {
 
 	private static FuturesTrade liveFlatSyncTrade(PortfolioPosition position, BrokerCloseFill closeFill) {
 		FuturesTrade trade = new FuturesTrade();
-		trade.symbol = normalizeSymbol(position.symbol);
-		trade.strategyCode = position.signal == null ? "" : cleanOrDefault(position.signal.strategyCode, "");
-		trade.strategyName = position.signal == null ? "" : cleanOrDefault(position.signal.strategyName, "");
-		trade.side = cleanOrDefault(position.side, "LONG");
-		trade.contracts = position.contracts;
-		trade.entryPrice = position.entryPrice;
+			trade.symbol = normalizeSymbol(position.symbol);
+			trade.strategyCode = position.signal == null ? "" : cleanOrDefault(position.signal.strategyCode, "");
+			trade.strategyName = position.signal == null ? "" : cleanOrDefault(position.signal.strategyName, "");
+			trade.sourceStrategyCode = position.signal == null ? "" : cleanOrDefault(position.signal.sourceStrategyCode, "");
+			trade.sourceStrategyName = position.signal == null ? "" : cleanOrDefault(position.signal.sourceStrategyName, "");
+			trade.side = cleanOrDefault(position.side, "LONG");
+			trade.contracts = position.contracts;
+			trade.originalContracts = position.originalContracts <= 0 ? position.contracts + position.dtmPartialContractsClosed : position.originalContracts;
+			trade.entryPrice = position.entryPrice;
 		trade.exitPrice = closeFill != null && closeFill.price > 0.0 ? closeFill.price : position.entryPrice;
 		trade.stopPrice = position.stopPrice;
 		trade.targetPrice = position.targetPrice;
 		trade.openedAt = cleanOrDefault(position.openedAt, "");
-		trade.closedAt = closeFill != null && closeFill.createdAt.length() > 0 ? closeFill.createdAt : LocalDateTime.now().format(DISPLAY_TIME_FORMAT);
-		trade.pnl = closeFill == null ? 0.0 : closeFill.pnl;
-		trade.mfe = 0.0;
+			trade.closedAt = closeFill != null && closeFill.createdAt.length() > 0 ? closeFill.createdAt : LocalDateTime.now().format(DISPLAY_TIME_FORMAT);
+			trade.pnl = closeFill == null ? 0.0 : closeFill.pnl;
+			trade.finalLegPnl = trade.pnl;
+			trade.mfe = 0.0;
 		trade.mae = 0.0;
 		trade.exitReason = brokerFlatSyncExitReason(position, closeFill, trade.exitPrice);
 		trade.openedMarketTime = position.openedMarketTime;
@@ -15637,13 +15712,16 @@ public class FuturesManager {
 		if (position == null) {
 			return trade;
 		}
-		trade.symbol = position.symbol;
-		trade.strategyCode = position.signal == null ? "" : position.signal.strategyCode;
-		trade.strategyName = position.signal == null ? "" : position.signal.strategyName;
-		trade.side = position.side;
-		trade.contracts = position.contracts;
-		trade.entryPrice = position.entryPrice;
-		trade.exitPrice = bar == null ? 0.0 : bar.close;
+			trade.symbol = position.symbol;
+			trade.strategyCode = position.signal == null ? "" : position.signal.strategyCode;
+			trade.strategyName = position.signal == null ? "" : position.signal.strategyName;
+			trade.sourceStrategyCode = position.signal == null ? "" : cleanOrDefault(position.signal.sourceStrategyCode, "");
+			trade.sourceStrategyName = position.signal == null ? "" : cleanOrDefault(position.signal.sourceStrategyName, "");
+			trade.side = position.side;
+			trade.contracts = position.contracts;
+			trade.originalContracts = position.originalContracts <= 0 ? position.contracts + position.dtmPartialContractsClosed : position.originalContracts;
+			trade.entryPrice = position.entryPrice;
+			trade.exitPrice = bar == null ? 0.0 : bar.close;
 		trade.stopPrice = position.stopPrice;
 		trade.targetPrice = position.targetPrice;
 		trade.openedAt = position.openedAt;
@@ -15656,20 +15734,24 @@ public class FuturesManager {
 			return;
 		}
 		DynamicTradeState state = dynamicTradeState(sessionId, snapshotId, position, false);
-		if (state == null) {
-			trade.dtmTimelineJson = position.dtmTimelineJson;
-			trade.dtmFinalAction = firstNonBlank(finalActionOverride, position.dtmFinalAction);
-			trade.dtmPartialDecision = position.dtmPartialDecision;
-			trade.dtmRunnerDecision = position.dtmRunnerDecision;
-			return;
-		}
+			if (state == null) {
+				trade.dtmTimelineJson = position.dtmTimelineJson;
+				trade.dtmFinalAction = firstNonBlank(finalActionOverride, position.dtmFinalAction);
+				trade.dtmPartialDecision = position.dtmPartialDecision;
+				trade.dtmRunnerDecision = position.dtmRunnerDecision;
+				trade.dtmPartialContractsClosed = position.dtmPartialContractsClosed;
+				trade.dtmRealizedPnl = round(position.dtmRealizedPnl);
+				return;
+			}
 		// Trade builders own PnL accounting, including realized DTM partial exits.
 		// This method only attaches the final DTM timeline/action metadata.
 		trade.dtmTimelineJson = state.timelineJson;
-		trade.dtmFinalAction = firstNonBlank(finalActionOverride, state.finalAction);
-		trade.dtmPartialDecision = state.partialDecision;
-		trade.dtmRunnerDecision = state.runnerDecision;
-	}
+			trade.dtmFinalAction = firstNonBlank(finalActionOverride, state.finalAction);
+			trade.dtmPartialDecision = state.partialDecision;
+			trade.dtmRunnerDecision = state.runnerDecision;
+			trade.dtmPartialContractsClosed = state.partialContractsClosed;
+			trade.dtmRealizedPnl = round(state.realizedPnl);
+		}
 
 	private static int currentIndexOrEntry(PortfolioPosition position, PortfolioSymbolContext context, Bar bar) {
 		if (position == null || context == null || bar == null || bar.marketDate == null || bar.marketTime == null) {
@@ -18769,11 +18851,19 @@ public class FuturesManager {
 							continue;
 						}
 						LivePortfolioSignalCandidate candidate = portfolioSignalCandidate(context, event, entryBar);
-						if (hasOpenSymbol(openPositions, event.symbol) || openPositions.size() >= config.maxOpenPositions) {
-							result.overlapRejections++;
-							continue;
-						}
-						int openContracts = openContractCount(openPositions);
+							if (hasOpenSymbol(openPositions, event.symbol)) {
+								result.overlapRejections++;
+								continue;
+							}
+							if (backtestHasCorrelatedPortfolioExposure(openPositions, event.symbol)) {
+								result.exposureRejections++;
+								continue;
+							}
+							if (openPositions.size() >= config.maxOpenPositions) {
+								result.overlapRejections++;
+								continue;
+							}
+							int openContracts = openContractCount(openPositions);
 						double openMiniUnits = openMiniUnitCount(openPositions);
 						if (openContracts >= config.maxAggregateContracts || fundedMiniUnitLimitReached(config, openMiniUnits)) {
 							result.exposureRejections++;
@@ -20114,6 +20204,10 @@ public class FuturesManager {
 		return false;
 	}
 
+	private static boolean backtestHasCorrelatedPortfolioExposure(List<PortfolioPosition> positions, String symbol) {
+		return hasOpenCorrelatedPosition(positions, symbol);
+	}
+
 	private static boolean hasOpenCorrelatedSymbol(String symbols, String symbol) {
 		String family = correlatedSymbolFamily(symbol);
 		if (family.length() == 0 || symbols == null || symbols.trim().isEmpty()) {
@@ -20669,25 +20763,33 @@ public class FuturesManager {
 		int exitIndex,
 		double rawExitPrice,
 		String exitReason
-	) {
-		double exitPrice = applySlippage(position.spec, rawExitPrice, position.side, context.config.slippageTicks, false);
-		double grossPnl = pnlForPrice(position.spec, position.side, position.entryPrice, exitPrice, position.contracts);
-		double commissions = roundTripCommission(position);
+		) {
+			double exitPrice = applySlippage(position.spec, rawExitPrice, position.side, context.config.slippageTicks, false);
+			double grossPnl = pnlForPrice(position.spec, position.side, position.entryPrice, exitPrice, position.contracts);
+			double commissions = roundTripCommission(position);
+			double finalLegPnl = round(grossPnl - commissions);
+			double dtmRealizedPnl = round(position.dtmRealizedPnl);
 
-		FuturesTrade trade = new FuturesTrade();
-		trade.symbol = position.symbol;
-		trade.strategyCode = position.signal.strategyCode;
-		trade.strategyName = position.signal.strategyName;
-		trade.side = position.side;
-		trade.contracts = position.contracts;
-		trade.entryPrice = roundToTick(position.spec, position.entryPrice);
-		trade.exitPrice = roundToTick(position.spec, exitPrice);
+			FuturesTrade trade = new FuturesTrade();
+			trade.symbol = position.symbol;
+			trade.strategyCode = position.signal.strategyCode;
+			trade.strategyName = position.signal.strategyName;
+			trade.sourceStrategyCode = cleanOrDefault(position.signal.sourceStrategyCode, "");
+			trade.sourceStrategyName = cleanOrDefault(position.signal.sourceStrategyName, "");
+			trade.side = position.side;
+			trade.contracts = position.contracts;
+			trade.originalContracts = position.originalContracts <= 0 ? position.contracts + position.dtmPartialContractsClosed : position.originalContracts;
+			trade.entryPrice = roundToTick(position.spec, position.entryPrice);
+			trade.exitPrice = roundToTick(position.spec, exitPrice);
 		trade.stopPrice = roundToTick(position.spec, position.stopPrice);
-		trade.targetPrice = roundToTick(position.spec, position.targetPrice);
-		trade.openedAt = position.openedAt;
-		trade.closedAt = bar.displayTime;
-		trade.pnl = round(grossPnl - commissions + position.dtmRealizedPnl);
-		trade.mfe = round(position.maxFavorable);
+			trade.targetPrice = roundToTick(position.spec, position.targetPrice);
+			trade.openedAt = position.openedAt;
+			trade.closedAt = bar.displayTime;
+			trade.finalLegPnl = finalLegPnl;
+			trade.dtmRealizedPnl = dtmRealizedPnl;
+			trade.dtmPartialContractsClosed = position.dtmPartialContractsClosed;
+			trade.pnl = round(finalLegPnl + dtmRealizedPnl);
+			trade.mfe = round(position.maxFavorable);
 		trade.mae = round(position.maxAdverse);
 		trade.exitReason = exitReason;
 		trade.dtmTimelineJson = position.dtmTimelineJson;
@@ -20702,14 +20804,20 @@ public class FuturesManager {
 			? ""
 			: ", DTM evals " + position.dtmEvaluationCount
 				+ ", DTM L2 available " + position.dtmOrderFlowAvailableCount
-				+ ", DTM decisions " + position.dtmDecisionCount
-				+ ", DTM final action " + cleanOrDefault(position.dtmFinalAction, "DTM_NO_OVERRIDE");
-		trade.notes = position.signal.notes
-			+ " Portfolio event-driven entry; concurrent positions " + position.concurrentPositionsAtEntry
-			+ ", concurrent contracts " + position.concurrentContractsAtEntry
-			+ ", entered next bar open"
-			+ dtmNote
-			+ ", risk/contract $" + round(position.riskPerContract)
+					+ ", DTM decisions " + position.dtmDecisionCount
+					+ ", DTM final action " + cleanOrDefault(position.dtmFinalAction, "DTM_NO_OVERRIDE");
+			String dtmPnlNote = position.dtmPartialContractsClosed <= 0 && Math.abs(position.dtmRealizedPnl) <= 0.0
+				? ""
+				: ", DTM partial contracts " + position.dtmPartialContractsClosed
+					+ ", DTM realized PnL $" + round(dtmRealizedPnl)
+					+ ", final leg PnL $" + round(finalLegPnl);
+			trade.notes = position.signal.notes
+				+ " Portfolio event-driven entry; concurrent positions " + position.concurrentPositionsAtEntry
+				+ ", concurrent contracts " + position.concurrentContractsAtEntry
+				+ ", entered next bar open"
+				+ dtmNote
+				+ dtmPnlNote
+				+ ", risk/contract $" + round(position.riskPerContract)
 			+ ", MAE sizing multiplier " + round(context.config.strategySettings.openMaeRiskMultiplier)
 			+ ", commission $" + round(commissions)
 			+ ", MFE $" + trade.mfe
@@ -21013,20 +21121,24 @@ public class FuturesManager {
 		double grossPnl = pnlForPrice(spec, signal.side, entryPrice, exitPrice, contracts);
 		double commissions = config.commissionPerContract * contracts * 2.0;
 
-		FuturesTrade trade = new FuturesTrade();
-		trade.symbol = spec.symbol;
-		trade.strategyCode = signal.strategyCode;
-		trade.strategyName = signal.strategyName;
-		trade.side = signal.side;
-		trade.contracts = contracts;
+			FuturesTrade trade = new FuturesTrade();
+			trade.symbol = spec.symbol;
+			trade.strategyCode = signal.strategyCode;
+			trade.strategyName = signal.strategyName;
+			trade.sourceStrategyCode = cleanOrDefault(signal.sourceStrategyCode, "");
+			trade.sourceStrategyName = cleanOrDefault(signal.sourceStrategyName, "");
+			trade.side = signal.side;
+			trade.contracts = contracts;
+			trade.originalContracts = contracts;
 		trade.entryPrice = roundToTick(spec, entryPrice);
 		trade.exitPrice = roundToTick(spec, exitPrice);
 		trade.stopPrice = roundToTick(spec, stopPrice);
 		trade.targetPrice = roundToTick(spec, targetPrice);
 		trade.openedAt = bars.get(executionIndex).displayTime;
-		trade.closedAt = bars.get(exitIndex).displayTime;
-		trade.pnl = round(grossPnl - commissions);
-		trade.mfe = round(maxFavorable);
+			trade.closedAt = bars.get(exitIndex).displayTime;
+			trade.pnl = round(grossPnl - commissions);
+			trade.finalLegPnl = trade.pnl;
+			trade.mfe = round(maxFavorable);
 		trade.mae = round(maxAdverse);
 		trade.exitReason = exitReason;
 		trade.entryIndex = executionIndex;
@@ -24516,8 +24628,8 @@ public class FuturesManager {
 	}
 
 	private static void insertTrades(Connection conn, int backtestId, List<FuturesTrade> trades) throws SQLException {
-		String sql = "INSERT INTO FuturesTrades (futuresBacktestID, symbol, strategyCode, strategyName, side, contracts, entryPrice, exitPrice, stopPrice, targetPrice, openedAt, closedAt, pnl, mfe, mae, exitReason, tradeNotes) "
-			+ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+		String sql = "INSERT INTO FuturesTrades (futuresBacktestID, symbol, strategyCode, strategyName, sourceStrategyCode, sourceStrategyName, side, contracts, originalContracts, entryPrice, exitPrice, stopPrice, targetPrice, openedAt, closedAt, pnl, finalLegPnl, dtmRealizedPnl, dtmPartialContractsClosed, mfe, mae, exitReason, tradeNotes) "
+			+ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 		try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
 			for (int index = 0; index < trades.size(); index++) {
 				FuturesTrade trade = trades.get(index);
@@ -24525,19 +24637,25 @@ public class FuturesManager {
 				pstmt.setString(2, trade.symbol);
 				pstmt.setString(3, trade.strategyCode);
 				pstmt.setString(4, trade.strategyName);
-				pstmt.setString(5, trade.side);
-				pstmt.setInt(6, trade.contracts);
-				pstmt.setDouble(7, trade.entryPrice);
-				pstmt.setDouble(8, trade.exitPrice);
-				pstmt.setDouble(9, trade.stopPrice);
-				pstmt.setDouble(10, trade.targetPrice);
-				pstmt.setString(11, trade.openedAt);
-				pstmt.setString(12, trade.closedAt);
-				pstmt.setDouble(13, trade.pnl);
-				pstmt.setDouble(14, trade.mfe);
-				pstmt.setDouble(15, trade.mae);
-				pstmt.setString(16, trade.exitReason);
-				pstmt.setString(17, trade.notes);
+				pstmt.setString(5, cleanOrDefault(trade.sourceStrategyCode, ""));
+				pstmt.setString(6, cleanOrDefault(trade.sourceStrategyName, ""));
+				pstmt.setString(7, trade.side);
+				pstmt.setInt(8, trade.contracts);
+				pstmt.setInt(9, trade.originalContracts);
+				pstmt.setDouble(10, trade.entryPrice);
+				pstmt.setDouble(11, trade.exitPrice);
+				pstmt.setDouble(12, trade.stopPrice);
+				pstmt.setDouble(13, trade.targetPrice);
+				pstmt.setString(14, trade.openedAt);
+				pstmt.setString(15, trade.closedAt);
+				pstmt.setDouble(16, trade.pnl);
+				pstmt.setDouble(17, trade.finalLegPnl);
+				pstmt.setDouble(18, trade.dtmRealizedPnl);
+				pstmt.setInt(19, trade.dtmPartialContractsClosed);
+				pstmt.setDouble(20, trade.mfe);
+				pstmt.setDouble(21, trade.mae);
+				pstmt.setString(22, trade.exitReason);
+				pstmt.setString(23, trade.notes);
 				pstmt.addBatch();
 			}
 			pstmt.executeBatch();
@@ -24545,8 +24663,8 @@ public class FuturesManager {
 	}
 
 	private static void insertPortfolioTrades(Connection conn, int backtestId, List<FuturesTrade> trades) throws SQLException {
-		String sql = "INSERT INTO FuturesPortfolioTrades (portfolioBacktestID, symbol, strategyCode, strategyName, side, contracts, entryPrice, exitPrice, stopPrice, targetPrice, openedAt, closedAt, pnl, mfe, mae, exitReason, tradeNotes) "
-			+ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+		String sql = "INSERT INTO FuturesPortfolioTrades (portfolioBacktestID, symbol, strategyCode, strategyName, sourceStrategyCode, sourceStrategyName, side, contracts, originalContracts, entryPrice, exitPrice, stopPrice, targetPrice, openedAt, closedAt, pnl, finalLegPnl, dtmRealizedPnl, dtmPartialContractsClosed, mfe, mae, exitReason, tradeNotes) "
+			+ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 		try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
 			for (int index = 0; index < trades.size(); index++) {
 				FuturesTrade trade = trades.get(index);
@@ -24554,19 +24672,25 @@ public class FuturesManager {
 				pstmt.setString(2, trade.symbol);
 				pstmt.setString(3, trade.strategyCode);
 				pstmt.setString(4, trade.strategyName);
-				pstmt.setString(5, trade.side);
-				pstmt.setInt(6, trade.contracts);
-				pstmt.setDouble(7, trade.entryPrice);
-				pstmt.setDouble(8, trade.exitPrice);
-				pstmt.setDouble(9, trade.stopPrice);
-				pstmt.setDouble(10, trade.targetPrice);
-				pstmt.setString(11, trade.openedAt);
-				pstmt.setString(12, trade.closedAt);
-				pstmt.setDouble(13, trade.pnl);
-				pstmt.setDouble(14, trade.mfe);
-				pstmt.setDouble(15, trade.mae);
-				pstmt.setString(16, trade.exitReason);
-				pstmt.setString(17, trade.notes);
+				pstmt.setString(5, cleanOrDefault(trade.sourceStrategyCode, ""));
+				pstmt.setString(6, cleanOrDefault(trade.sourceStrategyName, ""));
+				pstmt.setString(7, trade.side);
+				pstmt.setInt(8, trade.contracts);
+				pstmt.setInt(9, trade.originalContracts);
+				pstmt.setDouble(10, trade.entryPrice);
+				pstmt.setDouble(11, trade.exitPrice);
+				pstmt.setDouble(12, trade.stopPrice);
+				pstmt.setDouble(13, trade.targetPrice);
+				pstmt.setString(14, trade.openedAt);
+				pstmt.setString(15, trade.closedAt);
+				pstmt.setDouble(16, trade.pnl);
+				pstmt.setDouble(17, trade.finalLegPnl);
+				pstmt.setDouble(18, trade.dtmRealizedPnl);
+				pstmt.setInt(19, trade.dtmPartialContractsClosed);
+				pstmt.setDouble(20, trade.mfe);
+				pstmt.setDouble(21, trade.mae);
+				pstmt.setString(22, trade.exitReason);
+				pstmt.setString(23, trade.notes);
 				pstmt.addBatch();
 			}
 			pstmt.executeBatch();
