@@ -111,6 +111,8 @@ export function liveWorkspaceRenderSignature(props) {
     Boolean(props?.warmupPending),
     Boolean(props?.backendOffline),
     Boolean(props?.marketIdle),
+    props?.dataSource || "",
+    Number(props?.capturedBars || 0),
     props?.graphReadiness?.ready === true ? "ready" : props?.graphReadiness?.message || "",
   ].join(":");
   return [
@@ -226,7 +228,13 @@ function tradesSignature(trades) {
       trade?.entryPrice,
       trade?.currentPrice,
       trade?.stopPrice,
+      trade?.originalStopPrice,
+      trade?.managedStopPrice,
+      trade?.dtmStopManaged,
       trade?.targetPrice,
+      trade?.originalTargetPrice,
+      trade?.managedTargetPrice,
+      trade?.dtmTargetManaged,
       trade?.unrealizedPnl,
       trade?.closed,
       stableText(trade?.dtmDetails),

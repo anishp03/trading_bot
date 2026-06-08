@@ -412,6 +412,25 @@ final class FuturesMarketDataStore {
 		return bars;
 	}
 
+	static List<FuturesConnectionManager.InternalBar> readRecentCapturedBars(String symbol, int limit) throws SQLException {
+		List<FuturesConnectionManager.InternalBar> bars = new ArrayList<FuturesConnectionManager.InternalBar>();
+		String sql = "SELECT timestamp, open, high, low, close, volume FROM ("
+			+ "SELECT timestamp, open, high, low, close, volume FROM FuturesLiveCapturedBars "
+			+ "WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?"
+			+ ") ORDER BY timestamp";
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
+			pstmt.setString(1, normalizeSymbol(symbol));
+			pstmt.setInt(2, Math.max(1, limit));
+			try (ResultSet rs = pstmt.executeQuery()) {
+				while (rs.next()) {
+					bars.add(capturedBarFromRow(rs));
+				}
+			}
+		}
+		return bars;
+	}
+
 	private static List<FuturesConnectionManager.InternalBar> readCapturedBars(String symbol) throws SQLException {
 		List<FuturesConnectionManager.InternalBar> bars = new ArrayList<FuturesConnectionManager.InternalBar>();
 		String sql = "SELECT timestamp, open, high, low, close, volume FROM FuturesLiveCapturedBars WHERE symbol = ? ORDER BY timestamp";

@@ -37,6 +37,8 @@ function LiveTradingWorkspaceComponent({
   serverTime,
   lastRealtimeEventAt,
   feedStaleSeconds,
+  dataSource,
+  capturedBars,
   warmupPending,
   graphReadiness,
   backendOffline,
@@ -77,6 +79,7 @@ function LiveTradingWorkspaceComponent({
     graphReadiness,
   });
   const feedStatus = feedHealthLabel(feedStaleSeconds, lastRealtimeEventAt, serverTime);
+  const sourceStatus = chartSourceStatus(dataSource, capturedBars);
   const visibleHover = latestCandle;
 
   const syncChartCandles = useCallback((nextCandles, options = {}) => {
@@ -278,6 +281,7 @@ function LiveTradingWorkspaceComponent({
           <div>
             <strong>{symbol || "Chart"}</strong>
             <span>{timeframeLabel(timeframe)} candles · {EASTERN_TIME_LABEL}</span>
+            <span className={`live-workspace-source-pill ${sourceStatus.tone}`}>{sourceStatus.label}</span>
           </div>
         </div>
 
@@ -320,7 +324,10 @@ function LiveTradingWorkspaceComponent({
                 {" "}{formatSigned(priceChange)} ({formatSigned(priceChangePct)}%)
               </span>
             </div>
-            <span>{feedStatus}</span>
+            <div className="live-workspace-feed-stack">
+              <span>{feedStatus}</span>
+              <span>{sourceStatus.detail}</span>
+            </div>
           </div>
 
           <div
@@ -379,6 +386,12 @@ function TradeInspector({ selectedTrade, latestPrice, compact = false }) {
 
   const pnl = Number(selectedTrade.unrealizedPnl || 0);
   const dtmHistory = dtmHistoryItems(selectedTrade.dtmDetails);
+  const stopPrice = Number(selectedTrade.managedStopPrice || selectedTrade.stopPrice || 0);
+  const originalStopPrice = Number(selectedTrade.originalStopPrice || 0);
+  const stopManaged = Boolean(selectedTrade.dtmStopManaged && stopPrice > 0);
+  const targetPrice = Number(selectedTrade.managedTargetPrice || selectedTrade.targetPrice || 0);
+  const originalTargetPrice = Number(selectedTrade.originalTargetPrice || 0);
+  const targetManaged = Boolean(selectedTrade.dtmTargetManaged && targetPrice > 0);
 
   return (
     <aside className={`live-workspace-inspector ${compact ? "is-compact" : ""}`}>
@@ -393,8 +406,14 @@ function TradeInspector({ selectedTrade, latestPrice, compact = false }) {
         <Metric label="Live PnL" value={formatCurrency(pnl)} positive={pnl > 0} negative={pnl < 0} />
         <Metric label="Entry Price" value={formatPrice(selectedTrade.entryPrice)} />
         <Metric label="Current Mark Price" value={formatPrice(selectedTrade.currentPrice || latestPrice)} />
-        <Metric label="Stop Loss" value={formatPrice(selectedTrade.stopPrice)} negative />
-        <Metric label="Take Profit" value={formatPrice(selectedTrade.targetPrice)} positive />
+        <Metric label={stopManaged ? "DTM Stop" : "Stop Loss"} value={formatPrice(stopPrice)} negative />
+        {stopManaged && originalStopPrice > 0 && originalStopPrice !== stopPrice && (
+          <Metric label="Original Stop" value={formatPrice(originalStopPrice)} negative />
+        )}
+        <Metric label={targetManaged ? "DTM Target" : "Take Profit"} value={formatPrice(targetPrice)} positive />
+        {targetManaged && originalTargetPrice > 0 && originalTargetPrice !== targetPrice && (
+          <Metric label="Original Target" value={formatPrice(originalTargetPrice)} positive />
+        )}
       </div>
       {dtmHistory.length > 0 && (
         <div className="live-workspace-dtm">
@@ -508,10 +527,14 @@ function isNoDtmText(value) {
 function buildTradePriceLines(series, trade, latestPrice) {
   const lines = [];
   if (!trade) return lines;
+  const stopPrice = Number(trade.managedStopPrice || trade.stopPrice || 0);
+  const targetPrice = Number(trade.managedTargetPrice || trade.targetPrice || 0);
+  const stopTitle = trade.dtmStopManaged && stopPrice > 0 ? "DTM STOP" : "STOP";
+  const targetTitle = trade.dtmTargetManaged && targetPrice > 0 ? "DTM TARGET" : "TARGET";
   const levels = [
     { price: trade.entryPrice, color: "#7dd3fc", title: "ENTRY", style: LineStyle.Solid },
-    { price: trade.stopPrice, color: "#ff4d64", title: "STOP", style: LineStyle.Dashed },
-    { price: trade.targetPrice, color: "#6ee7a8", title: "TARGET", style: LineStyle.Dashed },
+    { price: stopPrice, color: "#ff4d64", title: stopTitle, style: LineStyle.Dashed },
+    { price: targetPrice, color: "#6ee7a8", title: targetTitle, style: LineStyle.Dashed },
     { price: trade.currentPrice || latestPrice, color: "#f8fafc", title: "MARK", style: LineStyle.Dotted },
   ];
   levels.forEach((level) => {
@@ -570,6 +593,37 @@ function feedHealthLabel(feedStaleSeconds, lastRealtimeEventAt, serverTime) {
   return `Feed syncing · Last ${formatEstTime(lastRealtimeEventAt || serverTime)}`;
 }
 
+function chartSourceStatus(dataSource, capturedBars) {
+  const source = String(dataSource || "").trim().toUpperCase();
+  const capturedCount = Number(capturedBars || 0);
+  if (source.includes("LIVE_CAPTURED_BARS") || capturedCount > 0) {
+    return {
+      label: "Captured bars",
+      detail: capturedCount > 0 ? `${formatInteger(capturedCount)} captured candles` : "Captured minute bars",
+      tone: "is-live",
+    };
+  }
+  if (source.includes("SIGNALR")) {
+    return {
+      label: source.includes("WAITING") ? "Waiting" : "Live stream",
+      detail: source.includes("WAITING") ? "Waiting for live candles" : "Realtime aggregate fallback",
+      tone: source.includes("WAITING") ? "is-waiting" : "is-fallback",
+    };
+  }
+  if (source.includes("WARMUP") || source.includes("HISTORY")) {
+    return {
+      label: "Warmup",
+      detail: "History warmup candles",
+      tone: "is-waiting",
+    };
+  }
+  return {
+    label: "Source pending",
+    detail: "Chart source pending",
+    tone: "is-waiting",
+  };
+}
+
 function timeframeLabel(value) {
   if (value === "5m") return "5 minute";
   if (value === "30m") return "30 minute";
@@ -592,6 +646,11 @@ function formatCurrency(value) {
   const numeric = Number(value || 0);
   const sign = numeric > 0 ? "+" : numeric < 0 ? "-" : "";
   return `${sign}$${Math.abs(numeric).toFixed(2)}`;
+}
+
+function formatInteger(value) {
+  const numeric = Number(value || 0);
+  return Number.isFinite(numeric) ? Math.round(numeric).toLocaleString("en-US") : "0";
 }
 
 function formatDuration(seconds) {

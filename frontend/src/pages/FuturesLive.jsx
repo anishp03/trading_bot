@@ -22,8 +22,8 @@ const TIMEFRAME_OPTIONS = [
   { value: "1h", label: "1h" },
 ];
 const LIVE_MARKS_REFRESH_MS = 1000;
-const LIVE_MARKS_UI_REFRESH_MS = 10000;
-const CHART_UI_REFRESH_MS = 2500;
+const LIVE_MARKS_UI_REFRESH_MS = LIVE_MARKS_REFRESH_MS;
+const CHART_UI_REFRESH_MS = LIVE_MARKS_REFRESH_MS;
 const LIVE_RECONCILE_REFRESH_MS = 10000;
 const HEALTH_WARN_HOLD_MS = 25000;
 const MARKET_DATA_STALE_SECONDS = 30;
@@ -1310,6 +1310,8 @@ export default function FuturesLive() {
           serverTime={liveMonitor?.serverTime}
           lastRealtimeEventAt={liveMonitor?.lastRealtimeEventAt}
           feedStaleSeconds={feedStaleSeconds}
+          dataSource={selectedSymbolState?.dataSource || liveMonitor?.dataSource || ""}
+          capturedBars={Number(selectedSymbolState?.capturedBars || 0)}
           warmupPending={warmupPending}
           graphReadiness={graphReadiness}
           backendOffline={backendOffline}
@@ -2863,24 +2865,25 @@ function liveDecisionSidecarSignature(status) {
 }
 
 function mergeMonitorWithMarks(monitor, marks, timeframe) {
-  if (!monitor || !marks?.success || !marks.symbols) return monitor;
-  const normalizedTimeframe = normalizeClientTimeframe(timeframe || marks.timeframe || monitor.timeframe);
+  if (!marks?.success || !marks.symbols) return monitor;
+  const normalizedTimeframe = normalizeClientTimeframe(timeframe || marks.timeframe || monitor?.timeframe);
   if (marks.timeframe && normalizeClientTimeframe(marks.timeframe) !== normalizedTimeframe) return monitor;
-  const marketData = { ...(monitor.marketData || {}) };
+  const baseMonitor = monitor || { timeframe: normalizedTimeframe, marketData: {}, symbolStates: [] };
+  const marketData = { ...(baseMonitor.marketData || {}) };
   Object.entries(marks.symbols || {}).forEach(([rawSymbol, patch]) => {
     const symbol = String(rawSymbol || "").toUpperCase();
     if (!symbol || !patch?.currentCandle) return;
     marketData[symbol] = mergeCurrentCandleIntoSeries(marketData[symbol], patch.currentCandle);
   });
   return {
-    ...monitor,
-    timeframe: normalizeClientTimeframe(monitor.timeframe || normalizedTimeframe),
-    realtimeRunning: monitor.realtimeRunning || Boolean(marks.feedFresh),
-    lastRealtimeEventAt: marks.lastEventAt || monitor.lastRealtimeEventAt,
-    serverTime: marks.serverTime || monitor.serverTime,
-    feedStaleSeconds: Number.isFinite(Number(marks.feedStaleSeconds)) ? Number(marks.feedStaleSeconds) : monitor.feedStaleSeconds,
+    ...baseMonitor,
+    timeframe: normalizeClientTimeframe(baseMonitor.timeframe || normalizedTimeframe),
+    realtimeRunning: baseMonitor.realtimeRunning || Boolean(marks.feedFresh),
+    lastRealtimeEventAt: marks.lastEventAt || baseMonitor.lastRealtimeEventAt,
+    serverTime: marks.serverTime || baseMonitor.serverTime,
+    feedStaleSeconds: Number.isFinite(Number(marks.feedStaleSeconds)) ? Number(marks.feedStaleSeconds) : baseMonitor.feedStaleSeconds,
     marketData,
-    symbolStates: mergeSymbolStatesWithMarks(monitor.symbolStates, marks),
+    symbolStates: mergeSymbolStatesWithMarks(baseMonitor.symbolStates, marks),
   };
 }
 
@@ -3056,14 +3059,19 @@ function augmentTopstepMetricsWithMarks(metrics, symbolStates) {
   if (!isAuthoritativeTopstepBrokerSnapshot(metrics?.broker, metrics)) return metrics;
   const stateBySymbol = new Map((Array.isArray(symbolStates) ? symbolStates : []).map((state) => [String(state.symbol || "").toUpperCase(), state]));
   const broker = metrics.broker;
+  let brokerPositionPnl = 0;
+  let markedPositionPnl = 0;
   const positions = (Array.isArray(broker.positions) ? broker.positions : []).map((position) => {
     const symbol = String(position?.symbol || "").toUpperCase();
     const markPrice = Number(stateBySymbol.get(symbol)?.lastPrice || position?.markPrice || 0);
     const entryPrice = Number(position?.averagePrice || position?.entryPrice || 0);
     const contracts = Number(position?.contracts || 0);
+    const brokerPnl = Number(position?.displayPnl ?? position?.markPnl ?? position?.unrealizedPnl ?? position?.pnl ?? 0);
     const markPnl = markPrice > 0 && entryPrice > 0 && contracts > 0
       ? calculateFuturesPnl(symbol, position.side, entryPrice, markPrice, contracts)
       : null;
+    brokerPositionPnl += brokerPnl;
+    markedPositionPnl += markPnl ?? brokerPnl;
     return {
       ...position,
       symbol,
@@ -3072,14 +3080,31 @@ function augmentTopstepMetricsWithMarks(metrics, symbolStates) {
       entryPrice,
       averagePrice: entryPrice,
       markPnl,
-      displayPnl: markPnl ?? Number(position?.unrealizedPnl ?? position?.pnl ?? 0),
+      displayPnl: markPnl ?? brokerPnl,
     };
   });
+  const positionPnlAdjustment = markedPositionPnl - brokerPositionPnl;
+  const brokerCurrentPnl = Number(broker.currentPnl ?? metrics.currentPnl ?? 0);
+  const brokerUnrealizedPnl = Number(broker.unrealizedPnl ?? brokerPositionPnl);
+  const markedCurrentPnl = brokerCurrentPnl + positionPnlAdjustment;
+  const markedUnrealizedPnl = brokerUnrealizedPnl + positionPnlAdjustment;
+  const currentBalance = Number(metrics.currentBalance ?? broker.currentBalance ?? 0);
+  const markedCurrentBalance = Number.isFinite(currentBalance) && currentBalance > 0
+    ? currentBalance + positionPnlAdjustment
+    : currentBalance;
+  const accountSize = Number(metrics.accountSize || broker.accountSize || 0);
   return {
     ...metrics,
+    currentPnl: markedCurrentPnl,
+    currentBalance: markedCurrentBalance,
+    unrealizedPnl: markedUnrealizedPnl,
+    returnPct: accountSize > 0 ? (markedCurrentPnl / accountSize) * 100 : metrics.returnPct,
     broker: {
       ...broker,
       positions,
+      currentPnl: markedCurrentPnl,
+      currentBalance: markedCurrentBalance,
+      unrealizedPnl: markedUnrealizedPnl,
       displayPnlSource: "LIVE_MARKS_PRICE_ONLY",
     },
   };
@@ -4554,6 +4579,9 @@ function buildChartTrades(decisions, symbol, latestPrice) {
     const markPrice = closed ? exitPrice || Number(trade.entryPrice || 0) : Number(latestPrice || trade.entryPrice || 0);
     const contracts = Number(trade.contracts || 0);
     const entryPrice = Number(trade.entryPrice || 0);
+    const managedStopPrice = Number(trade.managedStopPrice || 0);
+    const originalStopPrice = Number(trade.originalStopPrice || 0);
+    const stopPrice = Number(trade.stopPrice || 0);
     const livePnl = calculateFuturesPnl(selectedSymbol, trade.side, entryPrice, markPrice, contracts);
     const realizedPnl = Number(trade.pnl || 0);
     return {
@@ -4563,8 +4591,14 @@ function buildChartTrades(decisions, symbol, latestPrice) {
       side: String(trade.side || "").toUpperCase() === "SHORT" ? "SHORT" : "LONG",
       contracts,
       entryPrice,
-      stopPrice: Number(trade.stopPrice || 0),
+      stopPrice: managedStopPrice > 0 ? managedStopPrice : stopPrice,
+      originalStopPrice,
+      managedStopPrice,
+      dtmStopManaged: Boolean(trade.dtmStopManaged || managedStopPrice > 0),
       targetPrice: Number(trade.targetPrice || 0),
+      originalTargetPrice: Number(trade.originalTargetPrice || 0),
+      managedTargetPrice: Number(trade.managedTargetPrice || 0),
+      dtmTargetManaged: Boolean(trade.dtmTargetManaged || Number(trade.managedTargetPrice || 0) > 0),
       entryTime: stringifyChartValue(trade.entryTime || trade.signalTime || trade.createdAt),
       exitTime: stringifyChartValue(trade.exitTime || trade.closedAt || trade.updatedAt || trade.createdAt),
       currentPrice: markPrice,
@@ -5382,6 +5416,10 @@ function attachDtmThinkingToTrades(trades, dtmEvents) {
     const last = matchedEvents[matchedEvents.length - 1];
     const dtmSummary = matchedEvents.map(dtmThinkingEventText).filter(Boolean).join(" | ");
     const managedLevels = dtmManagedLevelsFromEvents(matchedEvents);
+    const originalStopPrice = firstPositiveNumber(trade.originalStopPrice, trade.stopPrice);
+    const originalTargetPrice = firstPositiveNumber(trade.originalTargetPrice, trade.targetPrice);
+    const managedStopPrice = managedLevels.stopPrice > 0 ? managedLevels.stopPrice : 0;
+    const managedTargetPrice = managedLevels.targetPrice > 0 ? managedLevels.targetPrice : 0;
     const currentReason = normalizeTradeReasonPayload(trade?.tradeReason);
     const currentExit = normalizeReasonSection(trade?.exitReasoning || currentReason.exit);
     const exitReasoning = {
@@ -5397,8 +5435,14 @@ function attachDtmThinkingToTrades(trades, dtmEvents) {
     };
     return {
       ...trade,
-      stopPrice: managedLevels.stopPrice > 0 ? managedLevels.stopPrice : trade.stopPrice,
-      targetPrice: managedLevels.targetPrice > 0 ? managedLevels.targetPrice : trade.targetPrice,
+      originalStopPrice: originalStopPrice > 0 ? originalStopPrice : trade.originalStopPrice,
+      managedStopPrice: managedStopPrice || trade.managedStopPrice,
+      dtmStopManaged: Boolean(managedStopPrice || trade.dtmStopManaged),
+      stopPrice: managedStopPrice || trade.stopPrice,
+      originalTargetPrice: originalTargetPrice > 0 ? originalTargetPrice : trade.originalTargetPrice,
+      managedTargetPrice: managedTargetPrice || trade.managedTargetPrice,
+      dtmTargetManaged: Boolean(managedTargetPrice || trade.dtmTargetManaged),
+      targetPrice: managedTargetPrice || trade.targetPrice,
       tradeReason,
       exitReasoning,
       dtmDetails: dtmSummary || (existingDtm && !isNoDtmText(existingDtm) ? existingDtm : ""),
@@ -5440,7 +5484,13 @@ function dtmEventMatchesTrade(event, trade) {
   if (event.side && side && event.side !== side) return false;
   const eventTime = parseChartTime(event.time);
   const entryTime = parseChartTime(trade.entryTime || trade.signalTime || trade.openedAt || trade.createdAt);
-  const exitTime = parseChartTime(trade.exitTime || trade.closedAt || trade.updatedAt || trade.createdAt);
+  const status = String(trade.status || "").toUpperCase();
+  const closed = Number(trade.exitPrice || 0) > 0
+    || status.includes("EXIT")
+    || status.includes("CLOSED")
+    || status.includes("FLAT")
+    || status.includes("SOLD");
+  const exitTime = parseChartTime(trade.exitTime || trade.closedAt || (closed ? trade.updatedAt || trade.createdAt : ""));
   if (!eventTime || !entryTime) return true;
   if (eventTime < entryTime - 60_000) return false;
   if (exitTime && eventTime > exitTime + 5 * 60_000) return false;

@@ -118,7 +118,7 @@ public class FuturesManager {
 	private static final String[] SEEDED_STRATEGY_PRESETS = new String[] { LEGACY_94K_STRATEGY_PRESET, WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET, WIP_STRATEGY_PRESET };
 	private static final String RESEARCH_RELAXED_WINDOWS_PROPERTY = "tradingbot.research.relaxedWindows";
 	private static final String[] TIME_NATIVE_STRATEGY_CODES = new String[] { "ORB", "ORB2", "LORB", "OMOM", "CMOM", "AFT", "MIM", "IPB" };
-	private static final String[] PATTERN_LEVEL_STRATEGY_CODES = new String[] { "FVG", "IFVG", "VWAP", "VRCL", "KREV", "PDB", "VPB", "SWEEP", "MSCALP", "SHDW", "ECHO", "WFT", "MRVWAP", "KELT", "TLAD", "RCB", "LIQREC", "RMC" };
+	private static final String[] PATTERN_LEVEL_STRATEGY_CODES = new String[] { "FVG", "IFVG", "VWAP", "VRCL", "KREV", "PDB", "VPB", "SWEEP", "MSCALP", "SHDW", "ECHO", "WFT", "MRVWAP", "KELT", "TLAD", "RCB", "LIQREC", "RMC", "BOSRT" };
 	private static final String[] DISABLED_RESEARCH_STRATEGY_CODES = new String[] { "MSCALP", "VPB", "SHDW", "ECHO", "WFT", "MRVWAP", "KELT", "TLAD", "RCB", "EIA", "COPEN", "IDXCONF", "MYMORB2", "MYMBR", "MCLTC" };
 	private static final double PORTFOLIO_BACKTEST_MAE_RULE_BUFFER = 100.0;
 	private static final String DEFAULT_LIVE_SYMBOLS = "MES,MNQ,NQ,MGC,ES,M2K,MYM,MCL";
@@ -158,7 +158,10 @@ public class FuturesManager {
 	private static final int LIVE_STRATEGY_ONE_MINUTE_BAR_LIMIT = 520;
 	private static final int LIVE_STALE_SIGNAL_AUDIT_LOOKBACK_BARS = 5;
 	private static final long LIVE_REALTIME_FRESH_SECONDS = 30L;
+	private static final long LIVE_AUTOMATION_INITIAL_DELAY_SECONDS = 1L;
+	private static final long LIVE_AUTOMATION_CYCLE_DELAY_SECONDS = 1L;
 	private static final long LIVE_POTENTIAL_SIGNAL_SCAN_INTERVAL_MS = TimeUnit.SECONDS.toMillis(10L);
+	private static final long LIVE_PRIOR_DAY_BARS_CACHE_TTL_MS = TimeUnit.MINUTES.toMillis(30L);
 	private static final double ORDER_FLOW_HARD_OPPOSING_IMBALANCE = 0.55;
 	private static final double ORDER_FLOW_HARD_OPPOSING_TAPE = 5.0;
 	private static final double ORDER_FLOW_SOFT_CONFIRM_TAPE = 3.0;
@@ -268,6 +271,7 @@ public class FuturesManager {
 		private String lastTime = "";
 		private String dataSource = "LOCAL_CACHED_BARS";
 		private int localBars;
+		private int capturedBars;
 		private int liveEvents;
 		private int pollEvents;
 	}
@@ -616,6 +620,7 @@ public class FuturesManager {
 		public StrategyToggle mclTrendContinuation = new StrategyToggle(false, 6);
 		public StrategyToggle liquidityReclaim = new StrategyToggle(false, 50);
 		public StrategyToggle rangeMidpointContinuation = new StrategyToggle(false, 8);
+		public StrategyToggle bosRetest = new StrategyToggle(false, 2);
 		public String liquidityReclaimSourceCodes = "FVG,VWAP,AFT,SWEEP,PDB,KREV,SHDW,VPB";
 		public int liquidityReclaimStartMinute = 570;
 		public int liquidityReclaimEndMinute = 930;
@@ -645,6 +650,24 @@ public class FuturesManager {
 		public double rangeMidpointMinTapeDelta = 45.0;
 		public int rangeMidpointMinOrderFlowVotes = 2;
 		public double rangeMidpointMinOrderFlowConfidence = 0.45;
+		public boolean allowBosRetestLongs = true;
+		public boolean allowBosRetestShorts = true;
+		public boolean bosRetestRequireHigherTimeframeAlignment = true;
+		public int bosRetestStartMinute = 570;
+		public int bosRetestEndMinute = 930;
+		public int bosRetestSwingLookbackBars = 36;
+		public int bosRetestPivotBars = 2;
+		public int bosRetestRetestBars = 8;
+		public int bosRetestConfirmationBars = 4;
+		public int bosRetestTargetLookbackBars = 48;
+		public double bosRetestMinBreakTicks = 2.0;
+		public double bosRetestRetestBufferTicks = 2.0;
+		public double bosRetestInvalidationBufferTicks = 2.0;
+		public double bosRetestMinDisplacementBodyPct = 55.0;
+		public double bosRetestMinDisplacementRangeRatio = 1.25;
+		public double bosRetestMinRewardRisk = 1.50;
+		public double bosRetestMaxRiskTicks = 60.0;
+		public int bosRetestMaxHoldBars = 90;
 		public boolean enableEarlySweep = true;
 		public boolean enableLateSweep = true;
 		public boolean enableSweepSecondChance = true;
@@ -2412,6 +2435,8 @@ public class FuturesManager {
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaim.maxTradesPerDay"), safeSettings.liquidityReclaim.maxTradesPerDay);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "rangeMidpointContinuation.enabled"), safeSettings.rangeMidpointContinuation.enabled);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "rangeMidpointContinuation.maxTradesPerDay"), safeSettings.rangeMidpointContinuation.maxTradesPerDay);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetest.enabled"), safeSettings.bosRetest.enabled);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetest.maxTradesPerDay"), safeSettings.bosRetest.maxTradesPerDay);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaimSourceCodes"), safeSettings.liquidityReclaimSourceCodes == null ? "" : safeSettings.liquidityReclaimSourceCodes);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaimStartMinute"), safeSettings.liquidityReclaimStartMinute);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaimEndMinute"), safeSettings.liquidityReclaimEndMinute);
@@ -2441,6 +2466,24 @@ public class FuturesManager {
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "rangeMidpointMinTapeDelta"), safeSettings.rangeMidpointMinTapeDelta);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "rangeMidpointMinOrderFlowVotes"), safeSettings.rangeMidpointMinOrderFlowVotes);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "rangeMidpointMinOrderFlowConfidence"), safeSettings.rangeMidpointMinOrderFlowConfidence);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "allowBosRetestLongs"), safeSettings.allowBosRetestLongs);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "allowBosRetestShorts"), safeSettings.allowBosRetestShorts);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestRequireHigherTimeframeAlignment"), safeSettings.bosRetestRequireHigherTimeframeAlignment);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestStartMinute"), safeSettings.bosRetestStartMinute);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestEndMinute"), safeSettings.bosRetestEndMinute);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestSwingLookbackBars"), safeSettings.bosRetestSwingLookbackBars);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestPivotBars"), safeSettings.bosRetestPivotBars);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestRetestBars"), safeSettings.bosRetestRetestBars);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestConfirmationBars"), safeSettings.bosRetestConfirmationBars);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestTargetLookbackBars"), safeSettings.bosRetestTargetLookbackBars);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestMinBreakTicks"), safeSettings.bosRetestMinBreakTicks);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestRetestBufferTicks"), safeSettings.bosRetestRetestBufferTicks);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestInvalidationBufferTicks"), safeSettings.bosRetestInvalidationBufferTicks);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestMinDisplacementBodyPct"), safeSettings.bosRetestMinDisplacementBodyPct);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestMinDisplacementRangeRatio"), safeSettings.bosRetestMinDisplacementRangeRatio);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestMinRewardRisk"), safeSettings.bosRetestMinRewardRisk);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestMaxRiskTicks"), safeSettings.bosRetestMaxRiskTicks);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestMaxHoldBars"), safeSettings.bosRetestMaxHoldBars);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "enableEarlySweep"), safeSettings.enableEarlySweep);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "enableLateSweep"), safeSettings.enableLateSweep);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "enableSweepSecondChance"), safeSettings.enableSweepSecondChance);
@@ -2938,6 +2981,7 @@ public class FuturesManager {
 			+ "\"mclTrendContinuation\":" + toggleJson(settings.mclTrendContinuation) + ","
 			+ "\"liquidityReclaim\":" + toggleJson(settings.liquidityReclaim) + ","
 			+ "\"rangeMidpointContinuation\":" + toggleJson(settings.rangeMidpointContinuation) + ","
+			+ "\"bosRetest\":" + toggleJson(settings.bosRetest) + ","
 			+ "\"liquidityReclaimSourceCodes\":" + jsonString(settings.liquidityReclaimSourceCodes) + ","
 			+ "\"liquidityReclaimStartMinute\":" + settings.liquidityReclaimStartMinute + ","
 			+ "\"liquidityReclaimEndMinute\":" + settings.liquidityReclaimEndMinute + ","
@@ -2967,6 +3011,24 @@ public class FuturesManager {
 			+ "\"rangeMidpointMinTapeDelta\":" + settings.rangeMidpointMinTapeDelta + ","
 			+ "\"rangeMidpointMinOrderFlowVotes\":" + settings.rangeMidpointMinOrderFlowVotes + ","
 			+ "\"rangeMidpointMinOrderFlowConfidence\":" + settings.rangeMidpointMinOrderFlowConfidence + ","
+			+ "\"allowBosRetestLongs\":" + settings.allowBosRetestLongs + ","
+			+ "\"allowBosRetestShorts\":" + settings.allowBosRetestShorts + ","
+			+ "\"bosRetestRequireHigherTimeframeAlignment\":" + settings.bosRetestRequireHigherTimeframeAlignment + ","
+			+ "\"bosRetestStartMinute\":" + settings.bosRetestStartMinute + ","
+			+ "\"bosRetestEndMinute\":" + settings.bosRetestEndMinute + ","
+			+ "\"bosRetestSwingLookbackBars\":" + settings.bosRetestSwingLookbackBars + ","
+			+ "\"bosRetestPivotBars\":" + settings.bosRetestPivotBars + ","
+			+ "\"bosRetestRetestBars\":" + settings.bosRetestRetestBars + ","
+			+ "\"bosRetestConfirmationBars\":" + settings.bosRetestConfirmationBars + ","
+			+ "\"bosRetestTargetLookbackBars\":" + settings.bosRetestTargetLookbackBars + ","
+			+ "\"bosRetestMinBreakTicks\":" + settings.bosRetestMinBreakTicks + ","
+			+ "\"bosRetestRetestBufferTicks\":" + settings.bosRetestRetestBufferTicks + ","
+			+ "\"bosRetestInvalidationBufferTicks\":" + settings.bosRetestInvalidationBufferTicks + ","
+			+ "\"bosRetestMinDisplacementBodyPct\":" + settings.bosRetestMinDisplacementBodyPct + ","
+			+ "\"bosRetestMinDisplacementRangeRatio\":" + settings.bosRetestMinDisplacementRangeRatio + ","
+			+ "\"bosRetestMinRewardRisk\":" + settings.bosRetestMinRewardRisk + ","
+			+ "\"bosRetestMaxRiskTicks\":" + settings.bosRetestMaxRiskTicks + ","
+			+ "\"bosRetestMaxHoldBars\":" + settings.bosRetestMaxHoldBars + ","
 			+ "\"enableEarlySweep\":" + settings.enableEarlySweep + ","
 			+ "\"enableLateSweep\":" + settings.enableLateSweep + ","
 			+ "\"enableSweepSecondChance\":" + settings.enableSweepSecondChance + ","
@@ -3854,6 +3916,8 @@ public class FuturesManager {
 		else if ("liquidityReclaim.maxTradesPerDay".equals(key)) settings.liquidityReclaim.maxTradesPerDay = parseInt(value, settings.liquidityReclaim.maxTradesPerDay);
 		else if ("rangeMidpointContinuation.enabled".equals(key)) settings.rangeMidpointContinuation.enabled = parseBoolean(value, settings.rangeMidpointContinuation.enabled);
 		else if ("rangeMidpointContinuation.maxTradesPerDay".equals(key)) settings.rangeMidpointContinuation.maxTradesPerDay = parseInt(value, settings.rangeMidpointContinuation.maxTradesPerDay);
+		else if ("bosRetest.enabled".equals(key)) settings.bosRetest.enabled = parseBoolean(value, settings.bosRetest.enabled);
+		else if ("bosRetest.maxTradesPerDay".equals(key)) settings.bosRetest.maxTradesPerDay = parseInt(value, settings.bosRetest.maxTradesPerDay);
 		else if ("liquidityReclaimSourceCodes".equals(key)) settings.liquidityReclaimSourceCodes = value == null ? "" : value.trim();
 		else if ("liquidityReclaimStartMinute".equals(key)) settings.liquidityReclaimStartMinute = parseInt(value, settings.liquidityReclaimStartMinute);
 		else if ("liquidityReclaimEndMinute".equals(key)) settings.liquidityReclaimEndMinute = parseInt(value, settings.liquidityReclaimEndMinute);
@@ -3883,6 +3947,24 @@ public class FuturesManager {
 		else if ("rangeMidpointMinTapeDelta".equals(key)) settings.rangeMidpointMinTapeDelta = parseDouble(value, settings.rangeMidpointMinTapeDelta);
 		else if ("rangeMidpointMinOrderFlowVotes".equals(key)) settings.rangeMidpointMinOrderFlowVotes = parseInt(value, settings.rangeMidpointMinOrderFlowVotes);
 		else if ("rangeMidpointMinOrderFlowConfidence".equals(key)) settings.rangeMidpointMinOrderFlowConfidence = parseDouble(value, settings.rangeMidpointMinOrderFlowConfidence);
+		else if ("allowBosRetestLongs".equals(key)) settings.allowBosRetestLongs = parseBoolean(value, settings.allowBosRetestLongs);
+		else if ("allowBosRetestShorts".equals(key)) settings.allowBosRetestShorts = parseBoolean(value, settings.allowBosRetestShorts);
+		else if ("bosRetestRequireHigherTimeframeAlignment".equals(key)) settings.bosRetestRequireHigherTimeframeAlignment = parseBoolean(value, settings.bosRetestRequireHigherTimeframeAlignment);
+		else if ("bosRetestStartMinute".equals(key)) settings.bosRetestStartMinute = parseInt(value, settings.bosRetestStartMinute);
+		else if ("bosRetestEndMinute".equals(key)) settings.bosRetestEndMinute = parseInt(value, settings.bosRetestEndMinute);
+		else if ("bosRetestSwingLookbackBars".equals(key)) settings.bosRetestSwingLookbackBars = parseInt(value, settings.bosRetestSwingLookbackBars);
+		else if ("bosRetestPivotBars".equals(key)) settings.bosRetestPivotBars = parseInt(value, settings.bosRetestPivotBars);
+		else if ("bosRetestRetestBars".equals(key)) settings.bosRetestRetestBars = parseInt(value, settings.bosRetestRetestBars);
+		else if ("bosRetestConfirmationBars".equals(key)) settings.bosRetestConfirmationBars = parseInt(value, settings.bosRetestConfirmationBars);
+		else if ("bosRetestTargetLookbackBars".equals(key)) settings.bosRetestTargetLookbackBars = parseInt(value, settings.bosRetestTargetLookbackBars);
+		else if ("bosRetestMinBreakTicks".equals(key)) settings.bosRetestMinBreakTicks = parseDouble(value, settings.bosRetestMinBreakTicks);
+		else if ("bosRetestRetestBufferTicks".equals(key)) settings.bosRetestRetestBufferTicks = parseDouble(value, settings.bosRetestRetestBufferTicks);
+		else if ("bosRetestInvalidationBufferTicks".equals(key)) settings.bosRetestInvalidationBufferTicks = parseDouble(value, settings.bosRetestInvalidationBufferTicks);
+		else if ("bosRetestMinDisplacementBodyPct".equals(key)) settings.bosRetestMinDisplacementBodyPct = parseDouble(value, settings.bosRetestMinDisplacementBodyPct);
+		else if ("bosRetestMinDisplacementRangeRatio".equals(key)) settings.bosRetestMinDisplacementRangeRatio = parseDouble(value, settings.bosRetestMinDisplacementRangeRatio);
+		else if ("bosRetestMinRewardRisk".equals(key)) settings.bosRetestMinRewardRisk = parseDouble(value, settings.bosRetestMinRewardRisk);
+		else if ("bosRetestMaxRiskTicks".equals(key)) settings.bosRetestMaxRiskTicks = parseDouble(value, settings.bosRetestMaxRiskTicks);
+		else if ("bosRetestMaxHoldBars".equals(key)) settings.bosRetestMaxHoldBars = parseInt(value, settings.bosRetestMaxHoldBars);
 		else if ("enableEarlySweep".equals(key)) settings.enableEarlySweep = parseBoolean(value, settings.enableEarlySweep);
 		else if ("enableLateSweep".equals(key)) settings.enableLateSweep = parseBoolean(value, settings.enableLateSweep);
 		else if ("enableSweepSecondChance".equals(key)) settings.enableSweepSecondChance = parseBoolean(value, settings.enableSweepSecondChance);
@@ -4361,6 +4443,7 @@ public class FuturesManager {
 		settings.mclTrendContinuation.maxTradesPerDay = boundedInt(settings.mclTrendContinuation.maxTradesPerDay, 6, 0, 20);
 		settings.liquidityReclaim.maxTradesPerDay = boundedInt(settings.liquidityReclaim.maxTradesPerDay, 50, 0, 100);
 		settings.rangeMidpointContinuation.maxTradesPerDay = boundedInt(settings.rangeMidpointContinuation.maxTradesPerDay, 8, 0, 30);
+		settings.bosRetest.maxTradesPerDay = boundedInt(settings.bosRetest.maxTradesPerDay, 2, 0, 4);
 		settings.liquidityReclaimStartMinute = boundedInt(settings.liquidityReclaimStartMinute, 570, 0, 930);
 		settings.liquidityReclaimEndMinute = boundedInt(settings.liquidityReclaimEndMinute, 930, 0, 930);
 		if (settings.liquidityReclaimEndMinute < settings.liquidityReclaimStartMinute) {
@@ -4392,6 +4475,24 @@ public class FuturesManager {
 		settings.rangeMidpointMinTapeDelta = clamp(settings.rangeMidpointMinTapeDelta, 0.0, 2000.0);
 		settings.rangeMidpointMinOrderFlowVotes = boundedInt(settings.rangeMidpointMinOrderFlowVotes, 2, 1, 5);
 		settings.rangeMidpointMinOrderFlowConfidence = clamp(settings.rangeMidpointMinOrderFlowConfidence, 0.0, 1.0);
+		settings.bosRetestStartMinute = boundedInt(settings.bosRetestStartMinute, 570, 0, 930);
+		settings.bosRetestEndMinute = boundedInt(settings.bosRetestEndMinute, 930, 0, 930);
+		if (settings.bosRetestEndMinute < settings.bosRetestStartMinute) {
+			settings.bosRetestEndMinute = settings.bosRetestStartMinute;
+		}
+		settings.bosRetestSwingLookbackBars = boundedInt(settings.bosRetestSwingLookbackBars, 36, 8, 120);
+		settings.bosRetestPivotBars = boundedInt(settings.bosRetestPivotBars, 2, 1, 5);
+		settings.bosRetestRetestBars = boundedInt(settings.bosRetestRetestBars, 8, 1, 30);
+		settings.bosRetestConfirmationBars = boundedInt(settings.bosRetestConfirmationBars, 4, 1, 12);
+		settings.bosRetestTargetLookbackBars = boundedInt(settings.bosRetestTargetLookbackBars, 48, 12, 240);
+		settings.bosRetestMinBreakTicks = clamp(settings.bosRetestMinBreakTicks, 0.0, 20.0);
+		settings.bosRetestRetestBufferTicks = clamp(settings.bosRetestRetestBufferTicks, 0.0, 10.0);
+		settings.bosRetestInvalidationBufferTicks = clamp(settings.bosRetestInvalidationBufferTicks, 0.0, 20.0);
+		settings.bosRetestMinDisplacementBodyPct = clamp(settings.bosRetestMinDisplacementBodyPct, 0.0, 100.0);
+		settings.bosRetestMinDisplacementRangeRatio = clamp(settings.bosRetestMinDisplacementRangeRatio, 0.0, 5.0);
+		settings.bosRetestMinRewardRisk = clamp(settings.bosRetestMinRewardRisk, 0.20, 5.0);
+		settings.bosRetestMaxRiskTicks = clamp(settings.bosRetestMaxRiskTicks, 2.0, 500.0);
+		settings.bosRetestMaxHoldBars = boundedInt(settings.bosRetestMaxHoldBars, 90, 1, 390);
 		settings.orbRetestStartMinutes = boundedInt(settings.orbRetestStartMinutes, 0, 0, 150);
 		settings.orbRetestEndMinutes = boundedInt(settings.orbRetestEndMinutes, 135, 0, 150);
 		if (settings.orbRetestEndMinutes < settings.orbRetestStartMinutes) {
@@ -6063,7 +6164,8 @@ public class FuturesManager {
 			|| safe.mymBreadthConfirmation.enabled
 			|| safe.mclTrendContinuation.enabled
 			|| safe.liquidityReclaim.enabled
-			|| safe.rangeMidpointContinuation.enabled;
+			|| safe.rangeMidpointContinuation.enabled
+			|| safe.bosRetest.enabled;
 	}
 
 	private static String jsonStringArray(List<String> values) {
@@ -6469,6 +6571,7 @@ public class FuturesManager {
 		copy.mclTrendContinuation = new StrategyToggle(safe.mclTrendContinuation.enabled, safe.mclTrendContinuation.maxTradesPerDay);
 		copy.liquidityReclaim = new StrategyToggle(safe.liquidityReclaim.enabled, safe.liquidityReclaim.maxTradesPerDay);
 		copy.rangeMidpointContinuation = new StrategyToggle(safe.rangeMidpointContinuation.enabled, safe.rangeMidpointContinuation.maxTradesPerDay);
+		copy.bosRetest = new StrategyToggle(safe.bosRetest.enabled, safe.bosRetest.maxTradesPerDay);
 		copy.liquidityReclaimSourceCodes = safe.liquidityReclaimSourceCodes;
 		copy.liquidityReclaimStartMinute = safe.liquidityReclaimStartMinute;
 		copy.liquidityReclaimEndMinute = safe.liquidityReclaimEndMinute;
@@ -6498,6 +6601,24 @@ public class FuturesManager {
 		copy.rangeMidpointMinTapeDelta = safe.rangeMidpointMinTapeDelta;
 		copy.rangeMidpointMinOrderFlowVotes = safe.rangeMidpointMinOrderFlowVotes;
 		copy.rangeMidpointMinOrderFlowConfidence = safe.rangeMidpointMinOrderFlowConfidence;
+		copy.allowBosRetestLongs = safe.allowBosRetestLongs;
+		copy.allowBosRetestShorts = safe.allowBosRetestShorts;
+		copy.bosRetestRequireHigherTimeframeAlignment = safe.bosRetestRequireHigherTimeframeAlignment;
+		copy.bosRetestStartMinute = safe.bosRetestStartMinute;
+		copy.bosRetestEndMinute = safe.bosRetestEndMinute;
+		copy.bosRetestSwingLookbackBars = safe.bosRetestSwingLookbackBars;
+		copy.bosRetestPivotBars = safe.bosRetestPivotBars;
+		copy.bosRetestRetestBars = safe.bosRetestRetestBars;
+		copy.bosRetestConfirmationBars = safe.bosRetestConfirmationBars;
+		copy.bosRetestTargetLookbackBars = safe.bosRetestTargetLookbackBars;
+		copy.bosRetestMinBreakTicks = safe.bosRetestMinBreakTicks;
+		copy.bosRetestRetestBufferTicks = safe.bosRetestRetestBufferTicks;
+		copy.bosRetestInvalidationBufferTicks = safe.bosRetestInvalidationBufferTicks;
+		copy.bosRetestMinDisplacementBodyPct = safe.bosRetestMinDisplacementBodyPct;
+		copy.bosRetestMinDisplacementRangeRatio = safe.bosRetestMinDisplacementRangeRatio;
+		copy.bosRetestMinRewardRisk = safe.bosRetestMinRewardRisk;
+		copy.bosRetestMaxRiskTicks = safe.bosRetestMaxRiskTicks;
+		copy.bosRetestMaxHoldBars = safe.bosRetestMaxHoldBars;
 		copy.enableEarlySweep = safe.enableEarlySweep;
 		copy.enableLateSweep = safe.enableLateSweep;
 		copy.enableSweepSecondChance = safe.enableSweepSecondChance;
@@ -10129,6 +10250,7 @@ public class FuturesManager {
 		recordLiveMonitorPollSnapshots(symbolList, realtimeFresh);
 		boolean hasRealtimeTicks = false;
 		boolean hasPollSnapshots = false;
+		boolean hasCapturedBars = false;
 		boolean hasWarmupBars = false;
 
 		StringBuilder marketData = new StringBuilder("{");
@@ -10140,46 +10262,47 @@ public class FuturesManager {
 			LiveRuntimeState.OrderFlowSnapshot orderFlow = LiveRuntimeState.orderFlowSnapshot(symbol);
 			hasRealtimeTicks = hasRealtimeTicks || series.liveEvents > 0;
 			hasPollSnapshots = hasPollSnapshots || series.pollEvents > 0;
+			hasCapturedBars = hasCapturedBars || series.capturedBars > 0;
 			hasWarmupBars = hasWarmupBars || series.localBars > 0;
 			double changePct = series.firstPrice <= 0.0 ? 0.0 : ((series.lastPrice - series.firstPrice) / series.firstPrice) * 100.0;
-				String status;
-				String healthStatus = "ok";
-				String errorCode = "";
-				String healthDetail = "ProjectX live candles are updating for " + symbol + ".";
-				if (!realtimeRunning && !historyPollingActive) {
-					status = "Not started";
-					healthStatus = "idle";
-					errorCode = "FEED_STOPPED";
-					healthDetail = "Market feed is stopped, so no live candles are expected.";
-				} else if (series.liveEvents > 0 || series.pollEvents > 0) {
-					status = "Tracking live candles";
-				} else if (series.localBars > 0) {
-					status = "Polling ProjectX history";
-					healthStatus = marketStatus.entryWindowOpen ? "warn" : "ok";
-					errorCode = marketStatus.entryWindowOpen ? "LIVE_CANDLE_BUILDING" : "";
-					healthDetail = marketStatus.entryWindowOpen
-						? "Warmup/history is present, but no live candle event has landed for " + symbol + " during the entry window."
-						: "History is available while the live entry window is closed.";
-				} else if (!marketStatus.entryWindowOpen) {
-					status = marketStatus.label;
-					healthStatus = "idle";
-					errorCode = "ENTRY_GATE_CLOSED";
-					healthDetail = marketStatus.detail;
-				} else {
-					status = "Waiting for live ticks";
-					healthStatus = "error";
-					errorCode = "LIVE_CANDLE_MISSING";
-					healthDetail = "No live ProjectX tick or fallback poll snapshot is available for " + symbol + ".";
-				}
-				if (realtimeRunning && feedStaleSeconds > LIVE_REALTIME_FRESH_SECONDS) {
-					status = "Market Data Stopped";
-					healthStatus = "error";
-					errorCode = "MARKET_DATA_STOPPED";
-					healthDetail = "Market Data Stopped";
-				}
+			String status;
+			String healthStatus = "ok";
+			String errorCode = "";
+			String healthDetail = "ProjectX live candles are updating for " + symbol + ".";
+			if (!realtimeRunning && !historyPollingActive) {
+				status = "Not started";
+				healthStatus = "idle";
+				errorCode = "FEED_STOPPED";
+				healthDetail = "Market feed is stopped, so no live candles are expected.";
+			} else if (series.capturedBars > 0 || series.liveEvents > 0 || series.pollEvents > 0) {
+				status = "Tracking live candles";
+			} else if (series.localBars > 0) {
+				status = "Polling ProjectX history";
+				healthStatus = marketStatus.entryWindowOpen ? "warn" : "ok";
+				errorCode = marketStatus.entryWindowOpen ? "LIVE_CANDLE_BUILDING" : "";
+				healthDetail = marketStatus.entryWindowOpen
+					? "Warmup/history is present, but no live candle event has landed for " + symbol + " during the entry window."
+					: "History is available while the live entry window is closed.";
+			} else if (!marketStatus.entryWindowOpen) {
+				status = marketStatus.label;
+				healthStatus = "idle";
+				errorCode = "ENTRY_GATE_CLOSED";
+				healthDetail = marketStatus.detail;
+			} else {
+				status = "Waiting for live ticks";
+				healthStatus = "error";
+				errorCode = "LIVE_CANDLE_MISSING";
+				healthDetail = "No live ProjectX tick or fallback poll snapshot is available for " + symbol + ".";
+			}
+			if (realtimeRunning && feedStaleSeconds > LIVE_REALTIME_FRESH_SECONDS) {
+				status = "Market Data Stopped";
+				healthStatus = "error";
+				errorCode = "MARKET_DATA_STOPPED";
+				healthDetail = "Market Data Stopped";
+			}
 
-				if (symbolIndex > 0) {
-					marketData.append(",");
+			if (symbolIndex > 0) {
+				marketData.append(",");
 				symbolStates.append(",");
 			}
 			marketData.append(jsonString(symbol)).append(":").append(series.pointsJson);
@@ -10191,34 +10314,37 @@ public class FuturesManager {
 					.append("\"errorCode\":").append(jsonString(errorCode)).append(",")
 					.append("\"healthDetail\":").append(jsonString(healthDetail)).append(",")
 					.append("\"lastPrice\":").append(round(series.lastPrice)).append(",")
-				.append("\"changePct\":").append(round(changePct)).append(",")
-				.append("\"lastBarTime\":").append(jsonString(series.lastTime)).append(",")
-				.append("\"bars\":").append(series.localBars).append(",")
-				.append("\"liveEvents\":").append(series.liveEvents).append(",")
-				.append("\"pollEvents\":").append(series.pollEvents).append(",")
-				.append("\"enabledStrategies\":").append(analysis.enabledCount).append(",")
-				.append("\"strategyCount\":12,")
-				.append("\"activeSignalCount\":").append(analysis.signalCount).append(",")
-				.append("\"currentSignalCount\":").append(analysis.currentSignalCount).append(",")
-				.append("\"lastSignalCode\":").append(jsonString(analysis.lastSignalCode)).append(",")
-				.append("\"lastSignalName\":").append(jsonString(analysis.lastSignalName)).append(",")
-				.append("\"lastSignalSide\":").append(jsonString(analysis.lastSignalSide)).append(",")
-				.append("\"lastSignalTime\":").append(jsonString(analysis.lastSignalTime)).append(",")
-				.append("\"currentSignalCode\":").append(jsonString(analysis.currentSignalCode)).append(",")
-				.append("\"currentSignalName\":").append(jsonString(analysis.currentSignalName)).append(",")
-				.append("\"currentSignalSide\":").append(jsonString(analysis.currentSignalSide)).append(",")
-				.append("\"currentSignalTime\":").append(jsonString(analysis.currentSignalTime)).append(",")
-				.append("\"strategies\":").append(analysis.strategiesJson).append(",")
-				.append("\"currentSignals\":").append(analysis.currentSignalsJson).append(",")
-				.append("\"latestSignals\":").append(analysis.latestSignalsJson).append(",")
-				.append("\"orderFlow\":").append(orderFlow.toJson())
-				.append("}");
+					.append("\"changePct\":").append(round(changePct)).append(",")
+					.append("\"lastBarTime\":").append(jsonString(series.lastTime)).append(",")
+					.append("\"bars\":").append(series.localBars).append(",")
+					.append("\"capturedBars\":").append(series.capturedBars).append(",")
+					.append("\"liveEvents\":").append(series.liveEvents).append(",")
+					.append("\"pollEvents\":").append(series.pollEvents).append(",")
+					.append("\"enabledStrategies\":").append(analysis.enabledCount).append(",")
+					.append("\"strategyCount\":12,")
+					.append("\"activeSignalCount\":").append(analysis.signalCount).append(",")
+					.append("\"currentSignalCount\":").append(analysis.currentSignalCount).append(",")
+					.append("\"lastSignalCode\":").append(jsonString(analysis.lastSignalCode)).append(",")
+					.append("\"lastSignalName\":").append(jsonString(analysis.lastSignalName)).append(",")
+					.append("\"lastSignalSide\":").append(jsonString(analysis.lastSignalSide)).append(",")
+					.append("\"lastSignalTime\":").append(jsonString(analysis.lastSignalTime)).append(",")
+					.append("\"currentSignalCode\":").append(jsonString(analysis.currentSignalCode)).append(",")
+					.append("\"currentSignalName\":").append(jsonString(analysis.currentSignalName)).append(",")
+					.append("\"currentSignalSide\":").append(jsonString(analysis.currentSignalSide)).append(",")
+					.append("\"currentSignalTime\":").append(jsonString(analysis.currentSignalTime)).append(",")
+					.append("\"strategies\":").append(analysis.strategiesJson).append(",")
+					.append("\"currentSignals\":").append(analysis.currentSignalsJson).append(",")
+					.append("\"latestSignals\":").append(analysis.latestSignalsJson).append(",")
+					.append("\"orderFlow\":").append(orderFlow.toJson())
+					.append("}");
 		}
 		marketData.append("}");
 		symbolStates.append("]");
-		String source = hasRealtimeTicks || hasPollSnapshots
-			? (hasWarmupBars ? "PROJECTX_SIGNALR_WITH_WARMUP" : "PROJECTX_SIGNALR")
-			: (hasWarmupBars ? "PROJECTX_HISTORY_WARMUP" : (realtimeRunning ? "PROJECTX_SIGNALR_WAITING" : "LIVE_NOT_STARTED"));
+		String source = hasCapturedBars
+			? (hasWarmupBars ? "LIVE_CAPTURED_BARS_WITH_WARMUP" : "LIVE_CAPTURED_BARS")
+			: hasRealtimeTicks || hasPollSnapshots
+				? (hasWarmupBars ? "PROJECTX_SIGNALR_WITH_WARMUP" : "PROJECTX_SIGNALR")
+				: (hasWarmupBars ? "PROJECTX_HISTORY_WARMUP" : (realtimeRunning ? "PROJECTX_SIGNALR_WAITING" : "LIVE_NOT_STARTED"));
 		return "{"
 			+ "\"success\":true,"
 			+ "\"symbols\":" + jsonStringArray(symbolList) + ","
@@ -10249,9 +10375,16 @@ public class FuturesManager {
 			? liveWarmupBarsForMonitorSymbol(symbol, timeframe, limit)
 			: warmupFromBars(bars, "LOCAL_INPUT_BARS");
 		List<RealtimeCandle> warmupCandles = realtimeCandlesFromBars(warmup.bars, warmup.dataSource);
-		List<RealtimePricePoint> realtimePoints = realtimePricePointsForSymbol(symbol, realtimePointLimitForCandles(limit, timeframe));
-		List<RealtimeCandle> realtimeCandles = aggregateRealtimeCandles(realtimePoints, timeframe, limit);
-		List<RealtimeCandle> candles = mergeMonitorCandles(warmupCandles, realtimeCandles, limit);
+		List<Bar> capturedBars = bars == null || bars.isEmpty()
+			? liveCapturedBarsForSymbol(symbol, timeframe, limit)
+			: new ArrayList<Bar>();
+		List<RealtimeCandle> capturedCandles = realtimeCandlesFromBars(capturedBars, "LIVE_CAPTURED_BARS");
+		List<RealtimeCandle> realtimeCandles = new ArrayList<RealtimeCandle>();
+		if (capturedCandles.isEmpty()) {
+			List<RealtimePricePoint> realtimePoints = realtimePricePointsForSymbol(symbol, realtimePointLimitForCandles(limit, timeframe));
+			realtimeCandles = aggregateRealtimeCandles(realtimePoints, timeframe, limit);
+		}
+		List<RealtimeCandle> candles = mergeMonitorCandles(warmupCandles, capturedCandles.isEmpty() ? realtimeCandles : capturedCandles, limit);
 		StringBuilder json = new StringBuilder("[");
 		int liveEvents = 0;
 		int warmupBars = 0;
@@ -10284,7 +10417,9 @@ public class FuturesManager {
 			series.lastTime = candle.time;
 			liveEvents += candle.events;
 			series.pollEvents += candle.pollEvents;
-			if (!candle.live) {
+			if ("LIVE_CAPTURED_BARS".equals(cleanOrDefault(candle.eventType, ""))) {
+				series.capturedBars++;
+			} else if (!candle.live) {
 				warmupBars++;
 			}
 		}
@@ -10292,7 +10427,9 @@ public class FuturesManager {
 		series.pointsJson = json.toString();
 		series.localBars = warmupBars;
 		series.liveEvents = liveEvents;
-		if (liveEvents > 0 || series.pollEvents > 0) {
+		if (series.capturedBars > 0) {
+			series.dataSource = warmupBars > 0 ? "LIVE_CAPTURED_BARS_WITH_WARMUP" : "LIVE_CAPTURED_BARS";
+		} else if (liveEvents > 0 || series.pollEvents > 0) {
 			series.dataSource = warmupBars > 0 ? "PROJECTX_SIGNALR_WITH_WARMUP" : "PROJECTX_SIGNALR";
 		} else if (warmupBars > 0) {
 			series.dataSource = warmup.dataSource;
@@ -10345,16 +10482,9 @@ public class FuturesManager {
 				return copyWarmupBars(cached);
 			}
 		}
-		empty.dataSource = ProjectXRealtimeManager.isRunning() ? "PROJECTX_SIGNALR_LIVE_ONLY" : "LIVE_NOT_STARTED";
+		empty.dataSource = liveMarketFeedActive() ? "PROJECTX_SIGNALR_LIVE_ONLY" : "LIVE_NOT_STARTED";
 		empty.loadedAt = now;
-		if (!liveMarketFeedActive()) {
-			return empty;
-		}
-		LiveWarmupBars loaded = loadProjectXWarmupBars(normalizedSymbol, normalizedTimeframe, limit);
-		synchronized (LIVE_WARMUP_CACHE) {
-			LIVE_WARMUP_CACHE.put(cacheKey, copyWarmupBars(loaded));
-		}
-		return loaded;
+		return empty;
 	}
 
 	private static boolean liveMarketFeedActive() {
@@ -10678,7 +10808,7 @@ public class FuturesManager {
 			candle.ema9 = bar.ema9;
 			candle.ema20 = bar.ema20;
 			candle.rsi14 = bar.rsi14;
-			candle.live = false;
+			candle.live = "LIVE_CAPTURED_BARS".equals(candle.eventType);
 			candles.add(candle);
 		}
 		return candles;
@@ -11574,6 +11704,7 @@ public class FuturesManager {
 		count += safe.mclTrendContinuation.enabled ? 1 : 0;
 		count += safe.liquidityReclaim.enabled ? 1 : 0;
 		count += safe.rangeMidpointContinuation.enabled ? 1 : 0;
+		count += safe.bosRetest.enabled ? 1 : 0;
 		return count;
 	}
 
@@ -11610,6 +11741,7 @@ public class FuturesManager {
 		appendStrategyWatch(json, 26, "MCLTC", "MCL Trend Fade", safe.mclTrendContinuation, signals, bars);
 		appendStrategyWatch(json, 27, "LIQREC", "Liquidity Reclaim", safe.liquidityReclaim, signals, bars);
 		appendStrategyWatch(json, 28, "RMC", "Range Midpoint Continuation", safe.rangeMidpointContinuation, signals, bars);
+		appendStrategyWatch(json, 29, "BOSRT", "BOS Retest", safe.bosRetest, signals, bars);
 		json.append("]");
 		return json.toString();
 	}
@@ -12635,7 +12767,9 @@ public class FuturesManager {
 		MarketSessionStatus marketStatus,
 		MarketFeedFreshness feed,
 		List<String> symbolAuditParts,
-		List<String> candidateAuditParts
+		List<String> candidateAuditParts,
+		long cycleDurationMs,
+		long latestBarLagSeconds
 	) {
 		MarketFeedFreshness safeFeed = feed == null ? new MarketFeedFreshness() : feed;
 		return "{"
@@ -12650,6 +12784,9 @@ public class FuturesManager {
 			+ "\"entryWindowOpen\":" + (marketStatus != null && marketStatus.entryWindowOpen) + ","
 			+ "\"feedFresh\":" + safeFeed.fresh + ","
 			+ "\"feedReason\":" + jsonString(cleanOrDefault(safeFeed.reason, "")) + ","
+			+ "\"cycleDelaySeconds\":" + LIVE_AUTOMATION_CYCLE_DELAY_SECONDS + ","
+			+ "\"cycleDurationMs\":" + Math.max(0L, cycleDurationMs) + ","
+			+ "\"latestBarLagSeconds\":" + Math.max(-1L, latestBarLagSeconds) + ","
 			+ "\"symbols\":[" + joinJsonParts(symbolAuditParts) + "],"
 			+ "\"candidates\":[" + joinJsonParts(candidateAuditParts) + "]"
 			+ "}";
@@ -13760,7 +13897,7 @@ public class FuturesManager {
 					recordLiveAudit("LIVE_AUTOMATION_ERROR", "ERROR", "Live automation cycle failed.", "{\"error\":" + jsonString(cleanOrDefault(e.getMessage(), "")) + "}");
 				}
 			}
-		}, 2, 5, TimeUnit.SECONDS);
+		}, LIVE_AUTOMATION_INITIAL_DELAY_SECONDS, LIVE_AUTOMATION_CYCLE_DELAY_SECONDS, TimeUnit.SECONDS);
 	}
 
 	private static synchronized void stopLiveAutomationLoop() {
@@ -14240,8 +14377,8 @@ public class FuturesManager {
 			prepareLivePortfolioSignalEvents(
 				context,
 				previousLocalDayBarsForLive(symbol, signalBar.marketDate),
-				realtimeBarsForSymbol(symbol, "15m", 96),
-				realtimeBarsForSymbol(symbol, "1h", 48)
+				liveHigherTimeframeBarsFromMinuteBars(bars, spec, "15m", 96),
+				liveHigherTimeframeBarsFromMinuteBars(bars, spec, "1h", 48)
 			);
 			List<SignalEvent> todaysEvents = context.eventsByDay.get(entryBar.marketDate);
 			scan.daySignalEvents += todaysEvents == null ? 0 : todaysEvents.size();
@@ -14345,6 +14482,7 @@ public class FuturesManager {
 	}
 
 	private static void runLiveRealtimeCycle() {
+		long cycleStartedAtMillis = System.currentTimeMillis();
 		FuturesLiveSession session;
 		synchronized (FuturesManager.class) {
 			if (!liveSession.running) {
@@ -14507,7 +14645,16 @@ public class FuturesManager {
 				"",
 				false,
 				"Live cycle skipped because Topstep realtime feed was not fresh.",
-				liveCycleAuditPayloadJson(session, snapshot, marketStatus, staleFeed, new ArrayList<String>(), new ArrayList<String>())
+				liveCycleAuditPayloadJson(
+					session,
+					snapshot,
+					marketStatus,
+					staleFeed,
+					new ArrayList<String>(),
+					new ArrayList<String>(),
+					System.currentTimeMillis() - cycleStartedAtMillis,
+					-1L
+				)
 			);
 			return;
 		}
@@ -14549,8 +14696,8 @@ public class FuturesManager {
 			prepareLivePortfolioSignalEvents(
 				context,
 				previousLocalDayBarsForLive(symbol, signalBar.marketDate),
-					realtimeBarsForSymbol(symbol, "15m", 96),
-					realtimeBarsForSymbol(symbol, "1h", 48)
+					liveHigherTimeframeBarsFromMinuteBars(bars, spec, "15m", 96),
+					liveHigherTimeframeBarsFromMinuteBars(bars, spec, "1h", 48)
 				);
 				List<SignalEvent> todaysEvents = context.eventsByDay.get(entryBar.marketDate);
 				daySignalEvents += todaysEvents == null ? 0 : todaysEvents.size();
@@ -14783,7 +14930,16 @@ public class FuturesManager {
 			lastProcessed,
 			cycleFeedFresh,
 			cycleAuditMessage,
-			liveCycleAuditPayloadJson(session, snapshot, marketStatus, cycleFeedFreshness, symbolAuditParts, candidateAuditParts)
+			liveCycleAuditPayloadJson(
+				session,
+				snapshot,
+				marketStatus,
+				cycleFeedFreshness,
+				symbolAuditParts,
+				candidateAuditParts,
+				System.currentTimeMillis() - cycleStartedAtMillis,
+				lastProcessed.length() == 0 ? -1L : secondsSinceDisplayTime(lastProcessed)
+			)
 		);
 	}
 
@@ -16669,6 +16825,9 @@ public class FuturesManager {
 		if ("RMC".equals(code)) {
 			return 0.60;
 		}
+		if ("BOSRT".equals(code)) {
+			return 1.25;
+		}
 		if ("FVG".equals(code) || "IFVG".equals(code) || "VWAP".equals(code) || "VRCL".equals(code) || "SWEEP".equals(code) || "PDB".equals(code)) {
 			return 0.60;
 		}
@@ -17111,6 +17270,13 @@ public class FuturesManager {
 	}
 
 	private static List<Bar> realtimeBarsForSymbol(String symbol, String timeframe, int limit) {
+		List<Bar> capturedBars = liveCapturedBarsForSymbol(symbol, timeframe, limit);
+		if (!capturedBars.isEmpty()) {
+			LiveWarmupBars warmup = cachedLiveWarmupBarsForSymbol(symbol, timeframe, limit);
+			List<Bar> bars = mergeBarSeries(warmup.bars, capturedBars, limit);
+			enrichLiveBars(bars, instrumentFor(symbol));
+			return bars;
+		}
 		LiveWarmupBars warmup = liveWarmupBarsForSymbol(symbol, timeframe, limit);
 		List<RealtimePricePoint> points = realtimePricePointsForSymbol(symbol, realtimePointLimitForCandles(limit, timeframe));
 		List<RealtimeCandle> candles = aggregateRealtimeCandles(points, timeframe, limit);
@@ -17119,6 +17285,56 @@ public class FuturesManager {
 		List<Bar> bars = mergeBarSeries(warmup.bars, liveBars, limit);
 		enrichLiveBars(bars, spec);
 		return bars;
+	}
+
+	private static List<Bar> liveHigherTimeframeBarsFromMinuteBars(List<Bar> minuteBars, InstrumentSpec spec, String timeframe, int limit) {
+		List<Bar> bars = aggregateBarsForTimeframe(minuteBars, timeframe, limit);
+		enrichLiveBars(bars, spec);
+		return bars;
+	}
+
+	private static LiveWarmupBars cachedLiveWarmupBarsForSymbol(String symbol, String timeframe, int limit) {
+		String startedAt = cleanOrDefault(ProjectXRealtimeManager.currentStartedAt(), "");
+		int sessionId;
+		synchronized (FuturesManager.class) {
+			sessionId = liveSession.sessionId;
+		}
+		if (startedAt.length() == 0 && sessionId <= 0) {
+			return new LiveWarmupBars();
+		}
+		String sessionKey = startedAt.length() > 0 ? startedAt : String.valueOf(sessionId);
+		String cacheKey = sessionKey + "|" + normalizeSymbol(symbol) + "|" + normalizeLiveMonitorTimeframe(timeframe) + "|" + Math.max(1, limit);
+		synchronized (LIVE_WARMUP_CACHE) {
+			LiveWarmupBars cached = LIVE_WARMUP_CACHE.get(cacheKey);
+			return cached == null ? new LiveWarmupBars() : copyWarmupBars(cached);
+		}
+	}
+
+	private static List<Bar> liveCapturedBarsForSymbol(String symbol, String timeframe, int limit) {
+		List<Bar> bars = new ArrayList<Bar>();
+		String normalizedTimeframe = normalizeLiveMonitorTimeframe(timeframe);
+		int minutesPerCandle = liveMonitorTimeframeMinutes(normalizedTimeframe);
+		int sourceLimit = Math.min(5000, Math.max(Math.max(1, limit), (Math.max(1, limit) * Math.max(1, minutesPerCandle)) + 120));
+		InstrumentSpec spec = instrumentFor(symbol);
+		try {
+			List<FuturesConnectionManager.InternalBar> captured = FuturesMarketDataStore.readRecentCapturedBars(spec.symbol, sourceLimit);
+			for (int index = 0; index < captured.size(); index++) {
+				Bar bar = barFromInternalCapturedBar(captured.get(index));
+				if (bar == null || bar.marketTime == null || bar.marketTime.isBefore(RTH_START) || !bar.marketTime.isBefore(RTH_END)) {
+					continue;
+				}
+				bars.add(bar);
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+			return new ArrayList<Bar>();
+		}
+		if (bars.isEmpty()) {
+			return bars;
+		}
+		List<Bar> timeframeBars = aggregateBarsForTimeframe(bars, normalizedTimeframe, limit);
+		enrichLiveBars(timeframeBars, spec);
+		return selectLastBars(timeframeBars, limit);
 	}
 
 	private static List<Bar> recordedRealtimeBarsForSymbol(String symbol, LocalDate day, String timeframe, int limit) {
@@ -17244,9 +17460,18 @@ public class FuturesManager {
 	}
 
 	private static List<Bar> previousLocalDayBarsForLive(String symbol, LocalDate currentDay) {
+		String cacheKey = livePriorDayBarsCacheKey(symbol, currentDay);
+		long now = System.currentTimeMillis();
+		synchronized (LIVE_WARMUP_CACHE) {
+			LiveWarmupBars cached = LIVE_WARMUP_CACHE.get(cacheKey);
+			if (cached != null && now - cached.loadedAt <= LIVE_PRIOR_DAY_BARS_CACHE_TTL_MS) {
+				return copyBars(cached.bars);
+			}
+		}
 		List<Bar> recordedBars = previousRecordedRealtimeBarsForLive(symbol, currentDay);
 		if (recordedBars.size() >= 60) {
-			return recordedBars;
+			cacheLivePriorDayBars(cacheKey, recordedBars);
+			return copyBars(recordedBars);
 		}
 		LocalDate endDate = currentDay == null ? LocalDate.now(NEW_YORK_ZONE) : currentDay;
 		DataBundle bundle = loadNativeFuturesBars(symbol, endDate.minusDays(10), endDate, TIMEFRAME_FOLDER);
@@ -17256,10 +17481,26 @@ public class FuturesManager {
 		for (int index = days.size() - 1; index >= 0; index--) {
 			LocalDate day = days.get(index);
 			if (currentDay == null || day.isBefore(currentDay)) {
-				return byDay.get(day);
+				List<Bar> previousBars = byDay.get(day);
+				cacheLivePriorDayBars(cacheKey, previousBars);
+				return copyBars(previousBars);
 			}
 		}
 		return new ArrayList<Bar>();
+	}
+
+	private static String livePriorDayBarsCacheKey(String symbol, LocalDate currentDay) {
+		LocalDate day = currentDay == null ? LocalDate.now(NEW_YORK_ZONE) : currentDay;
+		return "live-prior-day|" + normalizeSymbol(symbol) + "|" + day;
+	}
+
+	private static void cacheLivePriorDayBars(String cacheKey, List<Bar> bars) {
+		if (cacheKey == null || cacheKey.length() == 0 || bars == null || bars.isEmpty()) {
+			return;
+		}
+		synchronized (LIVE_WARMUP_CACHE) {
+			LIVE_WARMUP_CACHE.put(cacheKey, warmupFromBars(bars, "LIVE_PRIOR_DAY_BARS"));
+		}
 	}
 
 	private static List<Bar> previousRecordedRealtimeBarsForLive(String symbol, LocalDate currentDay) {
@@ -17654,6 +17895,7 @@ public class FuturesManager {
 		if ("MYMORB2".equals(code)) return Math.max(0, safe.mymOrbRetestMaxHoldBars);
 		if ("MYMBR".equals(code)) return Math.max(0, safe.mymBreadthMaxHoldBars);
 		if ("MCLTC".equals(code)) return Math.max(0, safe.mclTrendMaxHoldBars);
+		if ("BOSRT".equals(code)) return Math.max(0, safe.bosRetestMaxHoldBars);
 		return 0;
 	}
 
@@ -20180,6 +20422,8 @@ public class FuturesManager {
 			limit = Math.min(limit, safe.openingMomentumMaxRiskTicks);
 		} else if ("RMC".equals(code)) {
 			limit = Math.min(limit, safe.rangeMidpointMaxRiskTicks);
+		} else if ("BOSRT".equals(code)) {
+			limit = Math.min(limit, safe.bosRetestMaxRiskTicks);
 		}
 		return Math.max(1.0, limit);
 	}
@@ -21229,12 +21473,15 @@ public class FuturesManager {
 		if (settings.rangeCompressionBreakout.enabled) {
 			signals.addAll(findRangeCompressionBreakoutSignals(spec, bars, fifteenMinuteBars, oneHourBars, settings));
 		}
-		if (settings.rangeMidpointContinuation.enabled) {
-			signals.addAll(findRangeMidpointContinuationSignals(spec, bars, fifteenMinuteBars, settings, orderFlowByDayTime));
-		}
-		if (settings.valueAreaReclaim.enabled) {
-			signals.addAll(findValueAreaReclaimSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings));
-		}
+			if (settings.rangeMidpointContinuation.enabled) {
+				signals.addAll(findRangeMidpointContinuationSignals(spec, bars, fifteenMinuteBars, settings, orderFlowByDayTime));
+			}
+			if (settings.bosRetest.enabled) {
+				signals.addAll(findBosRetestSignals(spec, bars, fifteenMinuteBars, oneHourBars, settings));
+			}
+			if (settings.valueAreaReclaim.enabled) {
+				signals.addAll(findValueAreaReclaimSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings));
+			}
 		if (settings.vwapMeanReversion.enabled) {
 			signals.addAll(findMeanReversionSignals(spec, bars, settings));
 		}
@@ -21460,6 +21707,301 @@ public class FuturesManager {
 			}
 		}
 		return false;
+	}
+
+	private static class StructureSwing {
+		private boolean high;
+		private int index;
+		private double price;
+		private int strength;
+	}
+
+	private static class StructureSetup {
+		private String side;
+		private int breakIndex;
+		private int retestIndex;
+		private int confirmationIndex;
+		private double brokenLevel;
+		private double entry;
+		private double stop;
+		private double target;
+		private double rewardRisk;
+		private double displacementScore;
+		private String retestZone;
+	}
+
+	private static List<Signal> findBosRetestSignals(
+		InstrumentSpec spec,
+		List<Bar> bars,
+		List<Bar> fifteenMinuteBars,
+		List<Bar> oneHourBars,
+		FuturesStrategySettings settings
+	) {
+		List<Signal> signals = new ArrayList<Signal>();
+		FuturesStrategySettings safe = settings == null ? defaultFuturesStrategySettings() : settings;
+		if (spec == null || bars == null || bars.size() < 80) {
+			return signals;
+		}
+		List<StructureSetup> setups = classifyBosRetestSetups(spec, bars, fifteenMinuteBars, oneHourBars, safe);
+		for (int index = 0; index < setups.size(); index++) {
+			StructureSetup setup = setups.get(index);
+			signals.add(signal(
+				"BOSRT",
+				"BOS Retest",
+				setup.side,
+				setup.confirmationIndex,
+				setup.entry,
+				setup.stop,
+				setup.target,
+				safe.bosRetestMaxHoldBars,
+				bosRetestNotes(setup)
+			));
+		}
+		return limitSignalsByDailyCount(dedupeByHour(signals, safe.bosRetest.maxTradesPerDay), safe.bosRetest.maxTradesPerDay);
+	}
+
+	private static List<StructureSetup> classifyBosRetestSetups(
+		InstrumentSpec spec,
+		List<Bar> bars,
+		List<Bar> fifteenMinuteBars,
+		List<Bar> oneHourBars,
+		FuturesStrategySettings settings
+	) {
+		List<StructureSetup> setups = new ArrayList<StructureSetup>();
+		double tick = Math.max(0.000001, spec.tickSize);
+		int lookback = Math.max(12, settings.bosRetestSwingLookbackBars);
+		int pivotBars = Math.max(1, settings.bosRetestPivotBars);
+		int startIndex = Math.max(lookback + pivotBars + 1, 30);
+		for (int breakIndex = startIndex; breakIndex < bars.size() - 2; breakIndex++) {
+			Bar breakBar = bars.get(breakIndex);
+			if (breakBar == null || breakBar.marketTime == null) {
+				continue;
+			}
+			int minute = minuteOfDay(breakBar);
+			if (!inMinuteWindow(minute, settings.bosRetestStartMinute, settings.bosRetestEndMinute)) {
+				continue;
+			}
+			double displacementScore = bosRetestDisplacementScore(bars, breakIndex, settings);
+			if (displacementScore <= 0.0) {
+				continue;
+			}
+			if (settings.allowBosRetestLongs) {
+				StructureSwing swingHigh = latestConfirmedStructureSwing(bars, breakIndex - 1, lookback, pivotBars, true);
+				if (swingHigh != null && breakBar.close > swingHigh.price + (settings.bosRetestMinBreakTicks * tick) && closeLocation(breakBar) >= 0.58) {
+					StructureSetup setup = buildBosRetestSetup("LONG", spec, bars, fifteenMinuteBars, oneHourBars, settings, swingHigh, breakIndex, displacementScore);
+					if (setup != null) {
+						setups.add(setup);
+					}
+				}
+			}
+			if (settings.allowShorts && settings.allowBosRetestShorts) {
+				StructureSwing swingLow = latestConfirmedStructureSwing(bars, breakIndex - 1, lookback, pivotBars, false);
+				if (swingLow != null && breakBar.close < swingLow.price - (settings.bosRetestMinBreakTicks * tick) && closeLocation(breakBar) <= 0.42) {
+					StructureSetup setup = buildBosRetestSetup("SHORT", spec, bars, fifteenMinuteBars, oneHourBars, settings, swingLow, breakIndex, displacementScore);
+					if (setup != null) {
+						setups.add(setup);
+					}
+				}
+			}
+		}
+		return setups;
+	}
+
+	private static StructureSetup buildBosRetestSetup(
+		String side,
+		InstrumentSpec spec,
+		List<Bar> bars,
+		List<Bar> fifteenMinuteBars,
+		List<Bar> oneHourBars,
+		FuturesStrategySettings settings,
+		StructureSwing brokenSwing,
+		int breakIndex,
+		double displacementScore
+	) {
+		boolean longSide = "LONG".equals(side);
+		Bar breakBar = bars.get(breakIndex);
+		if (settings.bosRetestRequireHigherTimeframeAlignment) {
+			boolean htfAligned = longSide
+				? higherTimeframeBreakoutLong(fifteenMinuteBars, oneHourBars, breakBar.marketTime)
+				: higherTimeframeBearish(fifteenMinuteBars, oneHourBars, breakBar.marketTime);
+			if (!htfAligned) {
+				return null;
+			}
+		}
+		int retestIndex = bosRetestRetestIndex(bars, settings, brokenSwing.price, breakIndex, longSide, spec.tickSize);
+		if (retestIndex < 0) {
+			return null;
+		}
+		int confirmationIndex = bosRetestConfirmationIndex(bars, settings, brokenSwing.price, retestIndex, longSide);
+		if (confirmationIndex < 0) {
+			return null;
+		}
+		Bar confirmation = bars.get(confirmationIndex);
+		double tick = Math.max(0.000001, spec.tickSize);
+		double invalidation = longSide
+			? lowestLowBetween(bars, retestIndex, confirmationIndex)
+			: highestHighBetween(bars, retestIndex, confirmationIndex);
+		double stop = longSide
+			? invalidation - (settings.bosRetestInvalidationBufferTicks * tick)
+			: invalidation + (settings.bosRetestInvalidationBufferTicks * tick);
+		stop = roundToTick(spec, stop);
+		double risk = longSide ? confirmation.close - stop : stop - confirmation.close;
+		if (risk <= 0.0 || riskTicks(spec, confirmation.close, stop) > settings.bosRetestMaxRiskTicks) {
+			return null;
+		}
+		double target = bosRetestStructureTarget(spec, bars, settings, confirmationIndex, brokenSwing.price, longSide);
+		double reward = longSide ? target - confirmation.close : confirmation.close - target;
+		double rewardRisk = reward / risk;
+		if (target <= 0.0 || rewardRisk < settings.bosRetestMinRewardRisk) {
+			return null;
+		}
+		StructureSetup setup = new StructureSetup();
+		setup.side = side;
+		setup.breakIndex = breakIndex;
+		setup.retestIndex = retestIndex;
+		setup.confirmationIndex = confirmationIndex;
+		setup.brokenLevel = brokenSwing.price;
+		setup.entry = confirmation.close;
+		setup.stop = stop;
+		setup.target = roundToTick(spec, target);
+		setup.rewardRisk = rewardRisk;
+		setup.displacementScore = displacementScore;
+		setup.retestZone = "BROKEN_SWING";
+		return setup;
+	}
+
+	private static int bosRetestRetestIndex(List<Bar> bars, FuturesStrategySettings settings, double level, int breakIndex, boolean longSide, double tickSize) {
+		double buffer = Math.max(0.0, settings.bosRetestRetestBufferTicks) * Math.max(0.000001, tickSize);
+		int end = Math.min(bars.size() - 1, breakIndex + Math.max(1, settings.bosRetestRetestBars));
+		for (int index = breakIndex + 1; index <= end; index++) {
+			Bar bar = bars.get(index);
+			if (longSide) {
+				if (bar.close < level - buffer) {
+					return -1;
+				}
+				if (bar.low <= level + buffer && bar.close >= level - buffer) {
+					return index;
+				}
+			} else {
+				if (bar.close > level + buffer) {
+					return -1;
+				}
+				if (bar.high >= level - buffer && bar.close <= level + buffer) {
+					return index;
+				}
+			}
+		}
+		return -1;
+	}
+
+	private static int bosRetestConfirmationIndex(List<Bar> bars, FuturesStrategySettings settings, double level, int retestIndex, boolean longSide) {
+		Bar retest = bars.get(retestIndex);
+		int end = Math.min(bars.size() - 1, retestIndex + Math.max(1, settings.bosRetestConfirmationBars));
+		for (int index = retestIndex + 1; index <= end; index++) {
+			Bar bar = bars.get(index);
+			if (longSide) {
+				if (bar.close > bar.open && bar.close > level && bar.close > retest.close && closeLocation(bar) >= 0.58) {
+					return index;
+				}
+			} else if (bar.close < bar.open && bar.close < level && bar.close < retest.close && closeLocation(bar) <= 0.42) {
+				return index;
+			}
+		}
+		return -1;
+	}
+
+	private static double bosRetestStructureTarget(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int entryIndex, double brokenLevel, boolean longSide) {
+		int start = Math.max(0, entryIndex - Math.max(10, settings.bosRetestTargetLookbackBars));
+		int end = Math.max(0, entryIndex - 1);
+		double tick = Math.max(0.000001, spec.tickSize);
+		double target = 0.0;
+		for (int index = start; index <= end; index++) {
+			Bar bar = bars.get(index);
+			if (longSide && bar.high > brokenLevel + (settings.bosRetestMinBreakTicks * tick)) {
+				target = Math.max(target, bar.high);
+			} else if (!longSide && bar.low < brokenLevel - (settings.bosRetestMinBreakTicks * tick)) {
+				target = target <= 0.0 ? bar.low : Math.min(target, bar.low);
+			}
+		}
+		return target;
+	}
+
+	private static StructureSwing latestConfirmedStructureSwing(List<Bar> bars, int endIndex, int lookbackBars, int pivotBars, boolean highSwing) {
+		if (bars == null || bars.isEmpty()) {
+			return null;
+		}
+		int end = Math.min(endIndex - pivotBars, bars.size() - 1 - pivotBars);
+		int start = Math.max(pivotBars, endIndex - Math.max(1, lookbackBars));
+		for (int index = end; index >= start; index--) {
+			if (isConfirmedStructureSwing(bars, index, pivotBars, highSwing)) {
+				StructureSwing swing = new StructureSwing();
+				swing.high = highSwing;
+				swing.index = index;
+				swing.price = highSwing ? bars.get(index).high : bars.get(index).low;
+				swing.strength = pivotBars;
+				return swing;
+			}
+		}
+		return null;
+	}
+
+	private static boolean isConfirmedStructureSwing(List<Bar> bars, int index, int pivotBars, boolean highSwing) {
+		Bar candidate = bars.get(index);
+		double price = highSwing ? candidate.high : candidate.low;
+		for (int offset = 1; offset <= pivotBars; offset++) {
+			Bar left = bars.get(index - offset);
+			Bar right = bars.get(index + offset);
+			if (highSwing) {
+				if (left.high >= price || right.high >= price) {
+					return false;
+				}
+			} else if (left.low <= price || right.low <= price) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static double bosRetestDisplacementScore(List<Bar> bars, int index, FuturesStrategySettings settings) {
+		Bar bar = bars.get(index);
+		double bodyPct = bar.bodyPct > 0.0 ? bar.bodyPct : defaultBodyPct(bar);
+		if (bodyPct < settings.bosRetestMinDisplacementBodyPct) {
+			return 0.0;
+		}
+		double averageRangeTicks = averageRangeTicks(bars, index, 20);
+		if (averageRangeTicks <= 0.0) {
+			return 0.0;
+		}
+		double rangeRatio = bar.rangeTicks / averageRangeTicks;
+		if (rangeRatio < settings.bosRetestMinDisplacementRangeRatio) {
+			return 0.0;
+		}
+		return rangeRatio * (bodyPct / 100.0) * Math.max(0.5, volumeRatio(bar));
+	}
+
+	private static double averageRangeTicks(List<Bar> bars, int index, int period) {
+		int start = Math.max(0, index - Math.max(1, period));
+		int end = Math.max(start, index - 1);
+		double total = 0.0;
+		int count = 0;
+		for (int cursor = start; cursor <= end; cursor++) {
+			Bar bar = bars.get(cursor);
+			total += bar.rangeTicks;
+			count++;
+		}
+		return count == 0 ? 0.0 : total / count;
+	}
+
+	private static String bosRetestNotes(StructureSetup setup) {
+		return "BOS retest " + cleanOrDefault(setup.side, "").toLowerCase(Locale.US)
+			+ ": broke level " + round(setup.brokenLevel)
+			+ ", retest zone " + cleanOrDefault(setup.retestZone, "BROKEN_SWING")
+			+ ", break index " + setup.breakIndex
+			+ ", retest index " + setup.retestIndex
+			+ ", confirmation index " + setup.confirmationIndex
+			+ ", displacement score " + round(setup.displacementScore)
+			+ ", RR " + round(setup.rewardRisk)
+			+ ".";
 	}
 
 	private static List<Signal> findRangeMidpointContinuationSignals(
@@ -25845,6 +26387,9 @@ public class FuturesManager {
 		}
 		if ("LIQREC".equals(strategyCode)) {
 			return safeSettings.liquidityReclaim.maxTradesPerDay;
+		}
+		if ("BOSRT".equals(strategyCode)) {
+			return safeSettings.bosRetest.maxTradesPerDay;
 		}
 		return 1;
 	}

@@ -246,6 +246,57 @@ public class FuturesMarketDataStoreTest {
 	}
 
 	@Test
+	public void recentCapturedBarsReturnLatestRowsInAscendingOrder() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		FuturesMarketDataStore.initializeStore();
+		insertCapturedBar("MES", "2026-06-04T13:30:00Z", 5300.0);
+		insertCapturedBar("MES", "2026-06-04T13:31:00Z", 5301.0);
+		insertCapturedBar("MES", "2026-06-04T13:32:00Z", 5302.0);
+
+		java.util.List<FuturesConnectionManager.InternalBar> bars = FuturesMarketDataStore.readRecentCapturedBars("MES", 2);
+
+		assertEquals(2, bars.size());
+		assertEquals("2026-06-04T13:31:00Z", bars.get(0).timestampText);
+		assertEquals("2026-06-04T13:32:00Z", bars.get(1).timestampText);
+		assertEquals(5302.0, bars.get(1).close, 0.0001);
+	}
+
+	@Test
+	public void liveStrategyRealtimeBarsPreferRecentCapturedRows() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		FuturesMarketDataStore.initializeStore();
+		insertCapturedBar("MES", "2026-06-04T13:30:00Z", 5300.0);
+		insertCapturedBar("MES", "2026-06-04T13:31:00Z", 5301.0);
+		insertCapturedBar("MES", "2026-06-04T13:32:00Z", 5302.0);
+
+		java.lang.reflect.Method method = FuturesManager.class.getDeclaredMethod("realtimeBarsForSymbol", String.class, String.class, int.class);
+		method.setAccessible(true);
+		java.util.List<?> bars = (java.util.List<?>) method.invoke(null, "MES", "1m", 2);
+
+		assertEquals(2, bars.size());
+		assertEquals("2026-06-04 09:31", barDisplayTime(bars.get(0)));
+		assertEquals("2026-06-04 09:32", barDisplayTime(bars.get(1)));
+	}
+
+	@Test
+	public void liveMonitorCandlesPreferRecentCapturedRows() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		FuturesMarketDataStore.initializeStore();
+		insertCapturedBar("MES", "2026-06-04T13:30:00Z", 5300.0);
+		insertCapturedBar("MES", "2026-06-04T13:31:00Z", 5301.0);
+		insertCapturedBar("MES", "2026-06-04T13:32:00Z", 5302.0);
+
+		String json = FuturesManager.getLiveMonitorJson("MES", 2, "1m");
+
+		assertTrue(json.contains("\"dataSource\":\"LIVE_CAPTURED_BARS\""), json);
+		assertTrue(json.contains("\"capturedBars\":3"), json);
+		assertTrue(json.contains("\"time\":\"2026-06-04 09:30\""), json);
+		assertTrue(json.contains("\"time\":\"2026-06-04 09:31\""), json);
+		assertTrue(json.contains("\"time\":\"2026-06-04 09:32\""), json);
+		assertTrue(json.contains("\"eventType\":\"LIVE_CAPTURED_BARS\""), json);
+	}
+
+	@Test
 	public void capturedMergePromotesOnlyRthRowsToBacktestCsv() throws Exception {
 		TestDatabaseSupport.useTempDatabase(tempDir);
 		Path futuresDir = tempDir.resolve("futures");
@@ -328,5 +379,11 @@ public class FuturesMarketDataStoreTest {
 					+ symbol + "', '" + timestamp + "', " + price + ", " + price + ", " + price + ", " + price + ", 1.0, 'test')"
 			);
 		}
+	}
+
+	private String barDisplayTime(Object bar) throws Exception {
+		java.lang.reflect.Field field = bar.getClass().getDeclaredField("displayTime");
+		field.setAccessible(true);
+		return (String) field.get(bar);
 	}
 }

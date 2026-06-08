@@ -147,6 +147,47 @@ public class StrategyMarketStructureSyntheticTest {
 		assertFalse(hasSignalCode(invokeBuildSignals(scenario, orderFlow, fifteenMinuteBars), "RMC"), "RMC should reject a Level 2-confirmed midpoint short when the latest closed 15-minute auction is bullish.");
 	}
 
+	@Test
+	public void bosRetestAcceptsAlignedBreakRetestAndConfirmation() throws Exception {
+		Scenario scenario = validBosRetestScenario();
+		List<Object> signals = invokeBuildSignals(scenario, null, bullishHtfBars(scenario.symbol), bullishHtfBars(scenario.symbol));
+
+		assertTrue(
+			hasSignalCodeAndSide(signals, "BOSRT", "LONG"),
+			"BOSRT should accept aligned HTF bias, displaced 1m BOS, retest hold, confirmation close, and valid structure reward/risk. Signals: " + describeSignals(signals)
+		);
+	}
+
+	@Test
+	public void bosRetestRejectsRangeChopWithoutDisplacement() throws Exception {
+		Scenario scenario = rangeChopBosRetestScenario();
+
+		assertFalse(
+			hasSignalCode(invokeBuildSignals(scenario, null, bullishHtfBars(scenario.symbol), bullishHtfBars(scenario.symbol)), "BOSRT"),
+			"BOSRT should reject tiny range breaks that lack displacement."
+		);
+	}
+
+	@Test
+	public void bosRetestRejectsLowRewardStructureTarget() throws Exception {
+		Scenario scenario = lowRewardBosRetestScenario();
+
+		assertFalse(
+			hasSignalCode(invokeBuildSignals(scenario, null, bullishHtfBars(scenario.symbol), bullishHtfBars(scenario.symbol)), "BOSRT"),
+			"BOSRT should reject setups whose next structure target cannot pay at least the configured minimum R."
+		);
+	}
+
+	@Test
+	public void bosRetestRejectsHigherTimeframeMismatch() throws Exception {
+		Scenario scenario = validBosRetestScenario();
+
+		assertFalse(
+			hasSignalCode(invokeBuildSignals(scenario, null, bearishHtfBars(scenario.symbol), bearishHtfBars(scenario.symbol)), "BOSRT"),
+			"BOSRT should reject long setups when 15m and 1h bias disagree with the trade side."
+		);
+	}
+
 	private static List<String> directStrategyCodes() {
 		return Arrays.asList(
 			"ORB", "ORB2", "LORB", "OMOM", "SWEEP", "SWEEP2", "PDB", "VWAP", "VRCL", "MRVWAP",
@@ -277,6 +318,53 @@ public class StrategyMarketStructureSyntheticTest {
 		setCandle(bars, 91, base + (2 * tick), base + (7 * tick), base - (2 * tick), base - tick, Trend.SHORT, symbol);
 		setCandle(bars, 92, base + (6 * tick), base + (9 * tick), base + (5 * tick), base + (8 * tick), Trend.LONG, symbol);
 		return new Scenario(symbol, bars, previousBars(symbol), settings);
+	}
+
+	private static Scenario validBosRetestScenario() throws Exception {
+		String symbol = "MES";
+		double base = basePrice(symbol);
+		double tick = tickSize(symbol);
+		List<Object> bars = flatBars(symbol, NORMAL_DAY, LocalTime.of(9, 30), 420, base);
+		setBosRetestLongStructure(bars, base, tick, symbol, true, true);
+		return new Scenario(symbol, bars, previousBars(symbol), settingsFor("BOSRT"));
+	}
+
+	private static Scenario rangeChopBosRetestScenario() throws Exception {
+		String symbol = "MES";
+		double base = basePrice(symbol);
+		double tick = tickSize(symbol);
+		List<Object> bars = flatBars(symbol, NORMAL_DAY, LocalTime.of(9, 30), 420, base);
+		setBosRetestLongStructure(bars, base, tick, symbol, false, true);
+		return new Scenario(symbol, bars, previousBars(symbol), settingsFor("BOSRT"));
+	}
+
+	private static Scenario lowRewardBosRetestScenario() throws Exception {
+		String symbol = "MES";
+		double base = basePrice(symbol);
+		double tick = tickSize(symbol);
+		List<Object> bars = flatBars(symbol, NORMAL_DAY, LocalTime.of(9, 30), 420, base);
+		setBosRetestLongStructure(bars, base, tick, symbol, true, false);
+		return new Scenario(symbol, bars, previousBars(symbol), settingsFor("BOSRT"));
+	}
+
+	private static void setBosRetestLongStructure(List<Object> bars, double base, double tick, String symbol, boolean displacement, boolean validTarget) throws Exception {
+		double targetHigh = validTarget ? base + (46 * tick) : base + (31 * tick);
+		setCandle(bars, 33, base + (26 * tick), targetHigh, base + (24 * tick), targetHigh - tick, Trend.LONG, symbol);
+		for (int index = 40; index <= 52; index++) {
+			double drift = (index - 40) * tick * 0.35;
+			setCandle(bars, index, base + drift, base + drift + (2 * tick), base + drift - (2 * tick), base + drift + tick, Trend.LONG, symbol);
+		}
+		setCandle(bars, 54, base + (8 * tick), base + (10 * tick), base + (5 * tick), base + (7 * tick), Trend.SHORT, symbol);
+		setCandle(bars, 58, base + (16 * tick), base + (18 * tick), base + (13 * tick), base + (14 * tick), Trend.LONG, symbol);
+		double breakClose = displacement ? base + (24 * tick) : base + (18.8 * tick);
+		double breakHigh = displacement ? base + (27 * tick) : base + (20 * tick);
+		setCandle(bars, 62, base + (15 * tick), breakHigh, base + (14 * tick), breakClose, Trend.LONG, symbol);
+		set(bars.get(62), "volume", displacement ? 2200.0 : 900.0);
+		set(bars.get(62), "volumeSma20", 1000.0);
+		setCandle(bars, 63, base + (24 * tick), base + (26 * tick), base + (21 * tick), base + (23 * tick), Trend.LONG, symbol);
+		setCandle(bars, 64, base + (23 * tick), base + (25 * tick), base + (20 * tick), base + (22 * tick), Trend.SHORT, symbol);
+		setCandle(bars, 65, base + (23 * tick), base + (25 * tick), base + (17 * tick), base + (20 * tick), Trend.SHORT, symbol);
+		setCandle(bars, 66, base + (20 * tick), base + (26 * tick), base + (18 * tick), base + (25 * tick), Trend.LONG, symbol);
 	}
 
 	private static Scenario mirroredScenario(String code) throws Exception {
@@ -423,6 +511,17 @@ public class StrategyMarketStructureSyntheticTest {
 		settings.mclTrendMinVolumeRatio = 0.0;
 		settings.mclTrendMinBodyPct = 0.0;
 		settings.mclTrendMinTrendSlopeTicks = 0.0;
+		if ("BOSRT".equals(code)) {
+			set(settings, "bosRetestRequireHigherTimeframeAlignment", true);
+			set(settings, "bosRetestMinDisplacementBodyPct", 52.0);
+			set(settings, "bosRetestMinDisplacementRangeRatio", 1.20);
+			set(settings, "bosRetestMinRewardRisk", 1.50);
+			set(settings, "bosRetestMaxRiskTicks", 60.0);
+			set(settings, "bosRetestSwingLookbackBars", 24);
+			set(settings, "bosRetestRetestBars", 6);
+			set(settings, "bosRetestConfirmationBars", 3);
+			set(settings, "bosRetestTargetLookbackBars", 40);
+		}
 
 		if ("ORB".equals(code) || "ORB2".equals(code)) {
 			setToggle(settings, "orb", true, 5);
@@ -450,6 +549,7 @@ public class StrategyMarketStructureSyntheticTest {
 		else if ("IDXCONF".equals(code)) setToggle(settings, "mymIndexConfirmation", true, 5);
 		else if ("MYMORB2".equals(code)) setToggle(settings, "mymOrbRetest", true, 5);
 		else if ("MCLTC".equals(code)) setToggle(settings, "mclTrendContinuation", true, 5);
+		else if ("BOSRT".equals(code)) setToggle(settings, "bosRetest", true, 2);
 		return settings;
 	}
 
@@ -586,7 +686,7 @@ public class StrategyMarketStructureSyntheticTest {
 			"marketIntradayMomentum", "keltnerScalp", "keltnerReversion", "microScalp", "microShadow",
 			"microEcho", "winnerFollowThrough", "trendLadder", "rangeCompressionBreakout", "valueAreaReclaim",
 			"mclEiaContinuation", "mclCrudeSessionOpen", "mymIndexConfirmation", "mymOrbRetest",
-			"mymBreadthConfirmation", "mclTrendContinuation", "rangeMidpointContinuation"
+			"mymBreadthConfirmation", "mclTrendContinuation", "rangeMidpointContinuation", "bosRetest"
 		)) {
 			setToggle(settings, field, false, 0);
 		}
@@ -606,6 +706,15 @@ public class StrategyMarketStructureSyntheticTest {
 	}
 
 	private static List<Object> invokeBuildSignals(Scenario scenario, Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> orderFlow, List<Object> fifteenMinuteBars) throws Exception {
+		return invokeBuildSignals(scenario, orderFlow, fifteenMinuteBars, new ArrayList<Object>());
+	}
+
+	private static List<Object> invokeBuildSignals(
+		Scenario scenario,
+		Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> orderFlow,
+		List<Object> fifteenMinuteBars,
+		List<Object> oneHourBars
+	) throws Exception {
 		Object config = newPrivate("com.tradingbot.FuturesManager$BacktestConfig");
 		set(config, "symbol", scenario.symbol);
 		set(config, "strategySettings", scenario.settings);
@@ -622,7 +731,7 @@ public class StrategyMarketStructureSyntheticTest {
 		);
 		method.setAccessible(true);
 		@SuppressWarnings("unchecked")
-		List<Object> signals = (List<Object>) method.invoke(null, spec, scenario.bars, scenario.previousBars, fifteenMinuteBars, new ArrayList<Object>(), config, orderFlow);
+		List<Object> signals = (List<Object>) method.invoke(null, spec, scenario.bars, scenario.previousBars, fifteenMinuteBars, oneHourBars, config, orderFlow);
 		return signals;
 	}
 
@@ -689,6 +798,23 @@ public class StrategyMarketStructureSyntheticTest {
 			}
 		}
 		return "";
+	}
+
+	private static String describeSignals(List<Object> signals) throws Exception {
+		StringBuilder builder = new StringBuilder();
+		for (Object signal : signals) {
+			if (builder.length() > 0) {
+				builder.append("; ");
+			}
+			builder.append(getString(signal, "strategyCode"))
+				.append("/")
+				.append(getString(signal, "side"))
+				.append("@")
+				.append(get(signal, "entryIndex"))
+				.append(" ")
+				.append(getString(signal, "notes"));
+		}
+		return builder.toString();
 	}
 
 	private static Object sourceSignal(String code, String name, String side, int signalIndex, int executionIndex, double base) throws Exception {
@@ -783,6 +909,28 @@ public class StrategyMarketStructureSyntheticTest {
 		for (int index = 0; index < count; index++) {
 			LocalTime time = start.plusMinutes(index);
 			bars.add(bar(symbol, day, time, base, base + (2 * tickSize(symbol)), base - (2 * tickSize(symbol)), base, Trend.FLAT));
+		}
+		return bars;
+	}
+
+	private static List<Object> bullishHtfBars(String symbol) throws Exception {
+		double base = basePrice(symbol);
+		double tick = tickSize(symbol);
+		List<Object> bars = flatBars(symbol, NORMAL_DAY, LocalTime.of(9, 0), 8, base);
+		for (int index = 0; index < bars.size(); index++) {
+			double close = base + ((index + 8) * tick);
+			setCandle(bars, index, close - (2 * tick), close + (4 * tick), close - (3 * tick), close + (2 * tick), Trend.LONG, symbol);
+		}
+		return bars;
+	}
+
+	private static List<Object> bearishHtfBars(String symbol) throws Exception {
+		double base = basePrice(symbol);
+		double tick = tickSize(symbol);
+		List<Object> bars = flatBars(symbol, NORMAL_DAY, LocalTime.of(9, 0), 8, base);
+		for (int index = 0; index < bars.size(); index++) {
+			double close = base - ((index + 8) * tick);
+			setCandle(bars, index, close + (2 * tick), close + (3 * tick), close - (4 * tick), close - (2 * tick), Trend.SHORT, symbol);
 		}
 		return bars;
 	}

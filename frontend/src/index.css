@@ -1958,10 +1958,46 @@ textarea {
   line-height: 1.15rem;
 }
 
-.live-workspace-identity span:last-child {
+.live-workspace-identity div > span:not(.live-workspace-source-pill) {
   display: block;
   color: rgba(226, 232, 240, 0.58);
   font-size: 0.74rem;
+}
+
+.live-workspace-source-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 20px;
+  margin-top: 4px;
+  padding: 2px 7px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.08);
+  color: rgba(226, 232, 240, 0.74);
+  font-size: 0.64rem;
+  font-weight: 850;
+  line-height: 1rem;
+  white-space: nowrap;
+}
+
+.live-workspace-source-pill.is-live {
+  border-color: rgba(21, 200, 170, 0.28);
+  background: rgba(21, 200, 170, 0.1);
+  color: #49e2c9;
+}
+
+.live-workspace-source-pill.is-fallback {
+  border-color: rgba(125, 211, 252, 0.26);
+  background: rgba(125, 211, 252, 0.08);
+  color: #a6ddf8;
+}
+
+.live-workspace-source-pill.is-waiting {
+  border-color: rgba(250, 204, 21, 0.24);
+  background: rgba(250, 204, 21, 0.08);
+  color: #fde68a;
 }
 
 .live-workspace-symbols,
@@ -2035,11 +2071,33 @@ textarea {
   font-weight: 760;
 }
 
-.live-workspace-readout > div {
+.live-workspace-readout > div:first-child {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.live-workspace-feed-stack {
+  display: grid;
+  justify-items: end;
+  min-width: 150px;
+  color: rgba(203, 213, 225, 0.62);
+  font-size: 0.72rem;
+  line-height: 1.05rem;
+  text-align: right;
+}
+
+.live-workspace-feed-stack span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-workspace-feed-stack span:last-child {
+  color: rgba(148, 163, 184, 0.6);
+  font-size: 0.66rem;
 }
 
 .live-workspace-readout > span {
@@ -5433,6 +5491,13 @@ textarea {
     min-width: 0;
   }
 
+  .live-workspace-source-pill {
+    min-height: 18px;
+    margin-top: 3px;
+    padding: 1px 6px;
+    font-size: 0.6rem;
+  }
+
   .live-workspace-symbols,
   .live-workspace-timeframes {
     width: 100%;
@@ -5483,8 +5548,19 @@ textarea {
     font-size: 0.72rem;
   }
 
-  .live-workspace-readout > div {
+  .live-workspace-readout > div:first-child {
     white-space: nowrap;
+  }
+
+  .live-workspace-feed-stack {
+    justify-items: start;
+    min-width: 0;
+    text-align: left;
+    font-size: 0.66rem;
+  }
+
+  .live-workspace-feed-stack span:last-child {
+    font-size: 0.62rem;
   }
 
   .live-workspace-readout > span {
