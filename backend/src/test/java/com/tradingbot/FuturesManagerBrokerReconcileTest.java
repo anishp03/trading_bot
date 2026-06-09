@@ -70,6 +70,37 @@ public class FuturesManagerBrokerReconcileTest {
 		assertEquals("Broker target fill; Topstep order 3050559020.", stringField(trade, "exitReason"));
 	}
 
+	@Test
+	public void brokerFlatSyncTradePreservesDtmTimelineForExitReasoning() throws Exception {
+		Object position = portfolioPosition("MGC", "SHORT", "22529998", "3093376589", "2026-06-08 15:16", 4353.5, 4357.0, 4348.3);
+		setField(position, "dtmTimelineJson",
+			"[{\"actionCode\":\"DTM_MOVE_STOP_BREAKEVEN\",\"reason\":\"DTM moved stop to breakeven after the trade closed 0.8R favorable against a 1.5R target.\","
+				+ "\"details\":{\"favorableR\":0.83,\"adverseR\":0.0}}]"
+		);
+		setField(position, "dtmFinalAction", "DTM_MOVE_STOP_BREAKEVEN");
+		Object fill = brokerCloseFillFromTrade(
+			"{\"accountId\":\"22529998\",\"symbol\":\"MGC\",\"side\":\"BUY\",\"closed\":true,"
+				+ "\"orderId\":3093376591,\"createdAt\":\"2026-06-08T19:31:06.919433+00:00\","
+				+ "\"price\":4353.4,\"pnl\":12.43,\"fees\":9.57}",
+			"2026-06-08T19:31:06.919433+00:00"
+		);
+
+		Object trade = liveFlatSyncTrade(position, fill);
+		String reasoningJson = liveExitTradeReasoningJson(
+			trade,
+			"FLAT_SYNC_TOPSTEPX",
+			"TopstepX matched broker close fill 3093376591 to local order 3093376589; local live entry marked flat.",
+			"{\"success\":true,\"status\":\"FLAT_SYNC_TOPSTEPX\",\"authoritative\":true,"
+				+ "\"source\":\"TOPSTEPX_METRICS_RECONCILE\",\"finalExitReasonCode\":\"EXIT_BROKER_STOP_FILL\","
+				+ "\"exitPrice\":4353.4,\"fillTime\":\"2026-06-08T19:31:06.919433+00:00\",\"pnl\":12.43}"
+		);
+
+		assertEquals("DTM_MOVE_STOP_BREAKEVEN", stringField(trade, "dtmFinalAction"));
+		assertTrue(reasoningJson.contains("DTM_MOVE_STOP_BREAKEVEN"), reasoningJson);
+		assertTrue(reasoningJson.contains("DTM recorded"), reasoningJson);
+		assertFalse(reasoningJson.contains("No DTM decisions"), reasoningJson);
+	}
+
 	private static Object brokerCloseFillFromTrade(String trade, String createdAt) throws Exception {
 		Method method = FuturesManager.class.getDeclaredMethod("brokerCloseFillFromTrade", String.class, String.class);
 		method.setAccessible(true);
@@ -92,6 +123,12 @@ public class FuturesManagerBrokerReconcileTest {
 		Method method = FuturesManager.class.getDeclaredMethod("liveFlatSyncTrade", position.getClass(), closeFill.getClass());
 		method.setAccessible(true);
 		return method.invoke(null, position, closeFill);
+	}
+
+	private static String liveExitTradeReasoningJson(Object trade, String status, String reason, String brokerCloseJson) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("liveExitTradeReasoningJson", trade.getClass(), String.class, String.class, String.class);
+		method.setAccessible(true);
+		return (String) method.invoke(null, trade, status, reason, brokerCloseJson);
 	}
 
 	private static long parseChartComparableTime(String value) throws Exception {

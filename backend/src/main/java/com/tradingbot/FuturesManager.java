@@ -7400,6 +7400,11 @@ public class FuturesManager {
 		String normalizedSlot = normalizeStrategySlot(strategySlot);
 		String accountId = cleanOrDefault(topstepAccountId, accountIdForFundedProfile(profile.code));
 		String accountMode = accountModeForTopstepAccountId(accountId, profile.code);
+		LiveStrategySnapshotRow activeSnapshot = loadActiveLiveStrategySnapshot();
+		if (liveSourceSnapshotMatchesPreset(activeSnapshot, cleanSymbols, profile.code, presetName, normalizedSlot, accountId)
+			&& liveSnapshotIntegrityMessage(activeSnapshot).length() == 0) {
+			return activeSnapshot;
+		}
 		String strategySettingsJson = strategySettingsBySymbolJson(cleanSymbols, normalizedSlot);
 		String riskSettingsJson = riskSettingsBySymbolJson(cleanSymbols, normalizedSlot);
 		String portfolioSettingsJson = livePortfolioSettingsJson(cleanSymbols, profile, accountId, accountMode, presetName, normalizedSlot);
@@ -7429,6 +7434,37 @@ public class FuturesManager {
 			e.printStackTrace();
 			return null;
 		}
+	}
+
+	private static boolean liveSourceSnapshotMatchesPreset(
+		LiveStrategySnapshotRow snapshot,
+		String symbols,
+		String fundedProfileCode,
+		String strategyPreset,
+		String strategySlot,
+		String topstepAccountId
+	) {
+		if (snapshot == null || snapshot.sourcePortfolioBacktestId <= 0) {
+			return false;
+		}
+		String requestedSymbols = cleanSymbolsCsv(symbols);
+		if (requestedSymbols.length() == 0 || !requestedSymbols.equals(cleanSymbolsCsv(snapshot.symbols))) {
+			return false;
+		}
+		String profileCode = normalizeFundedProfileCode(fundedProfileCode);
+		if (!profileCode.equals(normalizeFundedProfileCode(snapshot.fundedProfile))) {
+			return false;
+		}
+		String requestedAccountId = cleanOrDefault(topstepAccountId, accountIdForFundedProfile(profileCode));
+		String snapshotAccountId = cleanOrDefault(snapshot.practiceAccountId, accountIdForFundedProfile(profileCode));
+		if (requestedAccountId.length() > 0 && !requestedAccountId.equals(snapshotAccountId)) {
+			return false;
+		}
+		String requestedPreset = normalizeStrategyPresetName(strategyPreset);
+		String requestedSlot = normalizeStrategySlot(strategySlot);
+		String snapshotPreset = normalizeStrategyPresetName(jsonText(snapshot.portfolioSettingsJson, "strategyPreset", requestedPreset));
+		String snapshotSlot = normalizeStrategySlot(jsonText(snapshot.portfolioSettingsJson, "strategySlot", strategyPresetSlot(snapshotPreset)));
+		return requestedPreset.equals(snapshotPreset) && requestedSlot.equals(snapshotSlot);
 	}
 
 	public static String dryRunTopstepxOrder(
@@ -9310,6 +9346,15 @@ public class FuturesManager {
 		}
 		String integrityMessage = liveSnapshotIntegrityMessage(snapshot);
 		PortfolioBacktestSourceMetrics source = loadPortfolioBacktestSourceMetrics(snapshot.sourcePortfolioBacktestId);
+		if (source == null || source.id <= 0) {
+			return "{"
+				+ "\"success\":false,"
+				+ "\"message\":\"Live/backtest parity replay cannot prove exact trade parity because the active live snapshot is not linked to a source portfolio backtest.\","
+				+ "\"snapshotId\":" + snapshot.snapshotId + ","
+				+ "\"sourcePortfolioBacktestId\":" + snapshot.sourcePortfolioBacktestId + ","
+				+ "\"symbols\":" + jsonString(snapshot.symbols)
+				+ "}";
+		}
 		LocalDate startDate = source == null || source.startDate == null ? LocalDate.now().minusDays(90) : source.startDate;
 		LocalDate endDate = source == null || source.endDate == null ? LocalDate.now() : source.endDate;
 		PortfolioBacktestConfig config = livePortfolioConfigFromSnapshot(snapshot, startDate, endDate);
@@ -12769,7 +12814,9 @@ public class FuturesManager {
 		List<String> symbolAuditParts,
 		List<String> candidateAuditParts,
 		long cycleDurationMs,
-		long latestBarLagSeconds
+		long latestBarAgeSeconds,
+		long brokerExposureDurationMs,
+		long strategyScanDurationMs
 	) {
 		MarketFeedFreshness safeFeed = feed == null ? new MarketFeedFreshness() : feed;
 		return "{"
@@ -12786,7 +12833,11 @@ public class FuturesManager {
 			+ "\"feedReason\":" + jsonString(cleanOrDefault(safeFeed.reason, "")) + ","
 			+ "\"cycleDelaySeconds\":" + LIVE_AUTOMATION_CYCLE_DELAY_SECONDS + ","
 			+ "\"cycleDurationMs\":" + Math.max(0L, cycleDurationMs) + ","
-			+ "\"latestBarLagSeconds\":" + Math.max(-1L, latestBarLagSeconds) + ","
+			+ "\"latestBarAgeSeconds\":" + Math.max(-1L, latestBarAgeSeconds) + ","
+			+ "\"latestBarLagSeconds\":" + Math.max(-1L, latestBarAgeSeconds) + ","
+			+ "\"feedAgeSeconds\":" + Math.max(-1L, safeFeed.eventAgeSeconds) + ","
+			+ "\"brokerExposureDurationMs\":" + Math.max(0L, brokerExposureDurationMs) + ","
+			+ "\"strategyScanDurationMs\":" + Math.max(0L, strategyScanDurationMs) + ","
 			+ "\"symbols\":[" + joinJsonParts(symbolAuditParts) + "],"
 			+ "\"candidates\":[" + joinJsonParts(candidateAuditParts) + "]"
 			+ "}";
@@ -14653,12 +14704,15 @@ public class FuturesManager {
 					new ArrayList<String>(),
 					new ArrayList<String>(),
 					System.currentTimeMillis() - cycleStartedAtMillis,
-					-1L
+					-1L,
+					0L,
+					0L
 				)
 			);
 			return;
 		}
 
+		long strategyScanStartedAtMillis = System.currentTimeMillis();
 			List<String> symbols = parseSymbols(activeLiveSymbols(session, snapshot));
 		Map<String, PortfolioSymbolContext> liveContexts = new HashMap<String, PortfolioSymbolContext>();
 		Map<String, Bar> currentBarsBySymbol = new HashMap<String, Bar>();
@@ -14718,6 +14772,7 @@ public class FuturesManager {
 			addMicroShadowSignalEvents(liveContexts);
 			addMicroEchoSignalEvents(liveContexts);
 			candidates.addAll(currentLiveSignalCandidates(session.sessionId, snapshot.snapshotId, liveContexts, currentBarsBySymbol));
+		long strategyScanDurationMs = System.currentTimeMillis() - strategyScanStartedAtMillis;
 			List<PortfolioPosition> trackedOpenPositions = liveOpenPositionsForSession(session.sessionId, snapshot.snapshotId);
 			int exitsProcessed = 0;
 			if ("TOPSTEPX".equals(session.executionMode)) {
@@ -14728,9 +14783,13 @@ public class FuturesManager {
 			? new ArrayList<PortfolioPosition>()
 			: trackedOpenPositions;
 		Map<String, Integer> takenByStrategy = liveTakenByStrategyForSession(session.sessionId, snapshot.snapshotId);
-		LiveBrokerExposure brokerExposure = "TOPSTEPX".equals(session.executionMode) && !candidates.isEmpty()
-			? liveBrokerExposureForSnapshot(session, snapshot)
-			: new LiveBrokerExposure();
+		long brokerExposureDurationMs = 0L;
+		LiveBrokerExposure brokerExposure = new LiveBrokerExposure();
+		if ("TOPSTEPX".equals(session.executionMode) && !candidates.isEmpty()) {
+			long brokerExposureStartedAtMillis = System.currentTimeMillis();
+			brokerExposure = liveBrokerExposureForSnapshot(session, snapshot);
+			brokerExposureDurationMs = System.currentTimeMillis() - brokerExposureStartedAtMillis;
+		}
 		int acceptedThisCycle = 0;
 		int rejectedThisCycle = 0;
 		List<String> candidateAuditParts = new ArrayList<String>();
@@ -14938,7 +14997,9 @@ public class FuturesManager {
 				symbolAuditParts,
 				candidateAuditParts,
 				System.currentTimeMillis() - cycleStartedAtMillis,
-				lastProcessed.length() == 0 ? -1L : secondsSinceDisplayTime(lastProcessed)
+				lastProcessed.length() == 0 ? -1L : secondsSinceDisplayTime(lastProcessed),
+				brokerExposureDurationMs,
+				strategyScanDurationMs
 			)
 		);
 	}
@@ -15183,6 +15244,12 @@ public class FuturesManager {
 			trade.mfe = 0.0;
 		trade.mae = 0.0;
 		trade.exitReason = brokerFlatSyncExitReason(position, closeFill, trade.exitPrice);
+		trade.dtmTimelineJson = position.dtmTimelineJson;
+		trade.dtmFinalAction = position.dtmFinalAction;
+		trade.dtmPartialDecision = position.dtmPartialDecision;
+		trade.dtmRunnerDecision = position.dtmRunnerDecision;
+		trade.dtmPartialContractsClosed = position.dtmPartialContractsClosed;
+		trade.dtmRealizedPnl = position.dtmRealizedPnl;
 		trade.openedMarketTime = position.openedMarketTime;
 		LocalDateTime closedAt = parseDisplayLocalDateTime(trade.closedAt);
 		trade.closedMarketTime = closedAt == null ? null : closedAt.toLocalTime();
@@ -16659,12 +16726,13 @@ public class FuturesManager {
 		}
 		Bar plannedEntryBar = barForEventIndex(context, event);
 		String entryTime = plannedEntryBar == null ? displayTime(event.day, event.entryTime) : cleanOrDefault(plannedEntryBar.displayTime, "");
-		String reason = "Diagnostics-only: live signal execution bar passed without an order submission; catch-up orders are disabled.";
+		String reason = staleSignalSkippedReason(false);
 		String payload = "{"
 			+ "\"symbol\":" + jsonString(normalizeSymbol(context.symbol)) + ","
 			+ "\"strategyCode\":" + jsonString(cleanOrDefault(signal.strategyCode, "")) + ","
 			+ "\"strategyName\":" + jsonString(cleanOrDefault(signal.strategyName, "")) + ","
 			+ "\"side\":" + jsonString(cleanOrDefault(signal.side, "")) + ","
+			+ "\"diagnosticStage\":\"RAW_PRE_SIZING\","
 			+ "\"signalTime\":" + jsonString(cleanOrDefault(signalTime, "")) + ","
 			+ "\"entryTime\":" + jsonString(entryTime) + ","
 			+ "\"currentBarTime\":" + jsonString(cleanOrDefault(currentBar.displayTime, "")) + ","
@@ -16703,6 +16771,13 @@ public class FuturesManager {
 			reason,
 			payload
 		);
+	}
+
+	private static String staleSignalSkippedReason(boolean validated) {
+		if (validated) {
+			return "Validated live signal execution bar passed without an order submission; catch-up orders are disabled.";
+		}
+		return "Diagnostics-only: raw strategy signal execution bar passed before live sizing could validate it; this has not yet passed live sizing, exposure, or broker checks; catch-up orders are disabled.";
 	}
 
 	private static Bar barForEventIndex(PortfolioSymbolContext context, SignalEvent event) {
@@ -16944,7 +17019,7 @@ public class FuturesManager {
 			return order;
 		}
 
-		PortfolioPosition position = openPortfolioPosition(context, event, candidate.entryBar, availableRiskBudget, aggregateRoom, aggregateGuardBudget, true);
+		PortfolioPosition position = openPortfolioPosition(context, event, candidate.entryBar, availableRiskBudget, aggregateRoom, aggregateGuardBudget, portfolioRiskCompressionAllowed(signal.strategyCode));
 		if (position == null) {
 			String failingRule = liveSizingFirstFailingRule(context, event, candidate.entryBar, availableRiskBudget, aggregateRoom, aggregateGuardBudget);
 			order.reason = "Rejected: live signal failed portfolio sizing or risk validation (" + failingRule + ").";
@@ -19172,7 +19247,15 @@ public class FuturesManager {
 							continue;
 						}
 
-						PortfolioPosition position = openPortfolioPosition(context, event, entryBar, availableRiskBudget, aggregateRoom, aggregateGuardBudget);
+						PortfolioPosition position = openPortfolioPosition(
+							context,
+							event,
+							entryBar,
+							availableRiskBudget,
+							aggregateRoom,
+							aggregateGuardBudget,
+							portfolioBacktestAllowsLiveRiskCompression(event.signal.strategyCode)
+						);
 						if (position == null) {
 							result.riskRejections++;
 							continue;
@@ -20407,7 +20490,15 @@ public class FuturesManager {
 	}
 
 	private static boolean isLiveRiskCompressibleStrategy(String strategyCode) {
-		return "ORB".equals(cleanOrDefault(strategyCode, "").toUpperCase(Locale.US));
+		return portfolioRiskCompressionAllowed(strategyCode);
+	}
+
+	private static boolean portfolioBacktestAllowsLiveRiskCompression(String strategyCode) {
+		return portfolioRiskCompressionAllowed(strategyCode);
+	}
+
+	private static boolean portfolioRiskCompressionAllowed(String strategyCode) {
+		return false;
 	}
 
 	private static double liveInitialRiskLimitTicks(FuturesStrategySettings settings, String strategyCode) {
