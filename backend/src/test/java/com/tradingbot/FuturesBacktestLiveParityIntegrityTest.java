@@ -2,17 +2,32 @@ package com.tradingbot;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.Statement;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 public class FuturesBacktestLiveParityIntegrityTest {
+	@TempDir
+	Path tempDir;
+
+	@AfterEach
+	public void tearDown() {
+		TestDatabaseSupport.clearTempDatabase();
+	}
+
 	@Test
 	public void backtestExposureGuardRejectsOpenCorrelatedFamily() throws Exception {
 		List<Object> openPositions = new ArrayList<Object>();
@@ -115,19 +130,11 @@ public class FuturesBacktestLiveParityIntegrityTest {
 	}
 
 	@Test
-	public void portfolioRiskCompressionPolicyRejectsOrbInBacktestAndLive() throws Exception {
-		assertFalse(portfolioRiskCompressionAllowed("ORB"));
-		assertFalse(portfolioRiskCompressionAllowed("ORB2"));
-		assertFalse(portfolioRiskCompressionAllowed("CMOM"));
-		assertFalse(portfolioRiskCompressionAllowed("PDB"));
-	}
-
-	@Test
-	public void portfolioBacktestRejectsLiveCompressionForOrb() throws Exception {
-		assertFalse(portfolioBacktestAllowsLiveRiskCompression("ORB"));
-		assertFalse(portfolioBacktestAllowsLiveRiskCompression("ORB2"));
-		assertFalse(portfolioBacktestAllowsLiveRiskCompression("CMOM"));
-		assertFalse(portfolioBacktestAllowsLiveRiskCompression("PDB"));
+	public void riskCompressionPolicyMatchesBetweenLiveAndBacktest() throws Exception {
+		assertEquals(portfolioBacktestAllowsLiveRiskCompression("ORB"), portfolioRiskCompressionAllowed("ORB"));
+		assertEquals(portfolioBacktestAllowsLiveRiskCompression("ORB2"), portfolioRiskCompressionAllowed("ORB2"));
+		assertEquals(portfolioBacktestAllowsLiveRiskCompression("OMOM"), portfolioRiskCompressionAllowed("OMOM"));
+		assertEquals(portfolioBacktestAllowsLiveRiskCompression("PDB"), portfolioRiskCompressionAllowed("PDB"));
 	}
 
 	@Test
@@ -154,6 +161,86 @@ public class FuturesBacktestLiveParityIntegrityTest {
 		assertTrue(reason.contains("raw strategy signal"), reason);
 		assertTrue(reason.contains("not yet passed live sizing"), reason);
 		assertTrue(reason.contains("catch-up orders are disabled"), reason);
+	}
+
+	@Test
+	public void previousRecordedRealtimeDayUsesCapturedMinuteBars() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		FuturesMarketDataStore.initializeStore();
+		try (Connection conn = DatabaseManager.getConnection();
+			 Statement stmt = conn.createStatement()) {
+			for (int minute = 0; minute < 65; minute++) {
+				int absoluteMinute = 30 + minute;
+				String timestamp = String.format(
+					"2026-06-08T%02d:%02d:00Z",
+					Integer.valueOf(13 + (absoluteMinute / 60)),
+					Integer.valueOf(absoluteMinute % 60)
+				);
+				stmt.executeUpdate(
+					"INSERT INTO FuturesLiveCapturedBars (symbol, timestamp, open, high, low, close, volume, updatedAt) VALUES "
+						+ "('MES', '" + timestamp + "', 7400.0, 7401.0, 7399.0, 7400.5, 1.0, 'test')"
+				);
+			}
+		}
+
+		LocalDate previousDay = previousRecordedRealtimeDay("MES", LocalDate.parse("2026-06-09"));
+
+		assertEquals(LocalDate.parse("2026-06-08"), previousDay);
+	}
+
+	@Test
+	public void backtestParityPolicyDoesNotBlockOmomForLiveEntryDecay() throws Exception {
+		Object context = portfolioSymbolContext("MES", 1.0);
+		Object event = signalEvent("MES", "OMOM", "Compressed Opening Momentum", "SHORT", "2026-06-09", "10:42", 0);
+		Object signal = field(event, "signal");
+		setField(signal, "entryPrice", Double.valueOf(7430.5));
+		setField(signal, "stopPrice", Double.valueOf(7437.75));
+		setField(signal, "targetPrice", Double.valueOf(7426.51));
+		Object executionBar = bar("2026-06-09 10:42", 7429.75);
+		setField(executionBar, "open", Double.valueOf(7429.75));
+		setField(executionBar, "high", Double.valueOf(7430.0));
+		setField(executionBar, "low", Double.valueOf(7428.0));
+		setField(executionBar, "close", Double.valueOf(7429.75));
+
+		String reason = liveEntryDecayRejectReason(context, event, executionBar, "BACKTEST_PARITY");
+
+		assertEquals("", reason);
+	}
+
+	@Test
+	public void liveStrictPolicyStillBlocksOmomForEntryDecay() throws Exception {
+		Object context = portfolioSymbolContext("MES", 1.0);
+		Object event = signalEvent("MES", "OMOM", "Compressed Opening Momentum", "SHORT", "2026-06-09", "10:42", 0);
+		Object signal = field(event, "signal");
+		setField(signal, "entryPrice", Double.valueOf(7430.5));
+		setField(signal, "stopPrice", Double.valueOf(7437.75));
+		setField(signal, "targetPrice", Double.valueOf(7426.51));
+		Object executionBar = bar("2026-06-09 10:42", 7429.75);
+		setField(executionBar, "open", Double.valueOf(7429.75));
+		setField(executionBar, "high", Double.valueOf(7430.0));
+		setField(executionBar, "low", Double.valueOf(7428.0));
+		setField(executionBar, "close", Double.valueOf(7429.75));
+
+		String reason = liveEntryDecayRejectReason(context, event, executionBar, "LIVE_STRICT");
+
+		assertTrue(reason.contains("consumed too much reward"), reason);
+	}
+
+	@Test
+	public void plannedBacktestEntrySizingAcceptsOmomDecisionGeometry() throws Exception {
+		Object context = portfolioSymbolContext("MES", 1.0);
+		Object event = signalEvent("MES", "OMOM", "Compressed Opening Momentum", "SHORT", "2026-06-09", "10:42", 0);
+		Object signal = field(event, "signal");
+		setField(signal, "entryPrice", Double.valueOf(7430.5));
+		setField(signal, "stopPrice", Double.valueOf(7437.75));
+		setField(signal, "targetPrice", Double.valueOf(7426.51));
+		Object entryBar = bar("2026-06-09 10:42", 7430.5);
+
+		Object position = openPortfolioPosition(context, event, entryBar, 700.0, 50, 1000.0, false);
+
+		assertNotNull(position);
+		assertTrue(doubleField(position, "rawRiskTicks") <= 32.0, "rawRiskTicks=" + doubleField(position, "rawRiskTicks"));
+		assertTrue(intField(position, "contracts") >= 1, "contracts=" + intField(position, "contracts"));
 	}
 
 	private static boolean backtestHasCorrelatedPortfolioExposure(List<Object> positions, String symbol) throws Exception {
@@ -217,6 +304,48 @@ public class FuturesBacktestLiveParityIntegrityTest {
 		Method method = FuturesManager.class.getDeclaredMethod("staleSignalSkippedReason", boolean.class);
 		method.setAccessible(true);
 		return (String) method.invoke(null, Boolean.valueOf(validated));
+	}
+
+	private static String liveEntryDecayRejectReason(Object context, Object event, Object executionBar, String policyName) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod(
+			"liveEntryDecayRejectReason",
+			context.getClass(),
+			event.getClass(),
+			executionBar.getClass(),
+			String.class
+		);
+		method.setAccessible(true);
+		return (String) method.invoke(null, context, event, executionBar, policyName);
+	}
+
+	private static LocalDate previousRecordedRealtimeDay(String symbol, LocalDate currentDay) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("previousRecordedRealtimeDay", String.class, LocalDate.class);
+		method.setAccessible(true);
+		return (LocalDate) method.invoke(null, symbol, currentDay);
+	}
+
+	private static Object openPortfolioPosition(Object context, Object event, Object entryBar, double riskBudget, int aggregateRoom, double aggregateGuardBudget, boolean allowLiveRiskCompression) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod(
+			"openPortfolioPosition",
+			context.getClass(),
+			event.getClass(),
+			entryBar.getClass(),
+			double.class,
+			int.class,
+			double.class,
+			boolean.class
+		);
+		method.setAccessible(true);
+		return method.invoke(
+			null,
+			context,
+			event,
+			entryBar,
+			Double.valueOf(riskBudget),
+			Integer.valueOf(aggregateRoom),
+			Double.valueOf(aggregateGuardBudget),
+			Boolean.valueOf(allowLiveRiskCompression)
+		);
 	}
 
 	private static String liveCycleAuditPayloadJson(
@@ -299,6 +428,8 @@ public class FuturesBacktestLiveParityIntegrityTest {
 		Object context = nestedInstance("PortfolioSymbolContext");
 		Object config = nestedInstance("BacktestConfig");
 		setField(config, "slippageTicks", Double.valueOf(slippageTicks));
+		setField(config, "commissionPerContract", Double.valueOf(1.24));
+		setField(config, "maxContracts", Integer.valueOf(50));
 		setField(context, "symbol", symbol);
 		setField(context, "spec", instrumentFor(symbol));
 		setField(context, "config", config);
@@ -311,6 +442,23 @@ public class FuturesBacktestLiveParityIntegrityTest {
 		setField(signal, "strategyName", strategyName);
 		setField(signal, "side", side);
 		return signal;
+	}
+
+	private static Object signalEvent(String symbol, String strategyCode, String strategyName, String side, String day, String entryTime, int executionIndex) throws Exception {
+		Object event = nestedInstance("SignalEvent");
+		Object signal = signal(strategyCode, strategyName, side);
+		setField(event, "symbol", symbol);
+		setField(event, "signal", signal);
+		setField(event, "day", java.time.LocalDate.parse(day));
+		setField(event, "entryTime", java.time.LocalTime.parse(entryTime));
+		setField(event, "executionIndex", Integer.valueOf(executionIndex));
+		return event;
+	}
+
+	private static Object field(Object target, String name) throws Exception {
+		Field field = target.getClass().getDeclaredField(name);
+		field.setAccessible(true);
+		return field.get(target);
 	}
 
 	private static Object bar(String displayTime, double close) throws Exception {

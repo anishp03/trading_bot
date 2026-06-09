@@ -16859,6 +16859,36 @@ public class FuturesManager {
 	}
 
 	private static String liveEntryDecayRejectReason(PortfolioSymbolContext context, SignalEvent event, Bar executionBar) {
+		return liveEntryDecayRejectReason(context, event, executionBar, PORTFOLIO_VALIDATION_LIVE_STRICT);
+	}
+
+	private static final String PORTFOLIO_VALIDATION_BACKTEST_PARITY = "BACKTEST_PARITY";
+	private static final String PORTFOLIO_VALIDATION_LIVE_STRICT = "LIVE_STRICT";
+
+	private static String activeLivePortfolioValidationPolicy(FuturesLiveSession session, LiveStrategySnapshotRow snapshot) {
+		return PORTFOLIO_VALIDATION_BACKTEST_PARITY;
+	}
+
+	private static boolean portfolioPolicyBlocksEntryDecay(String policyName) {
+		return PORTFOLIO_VALIDATION_LIVE_STRICT.equals(cleanOrDefault(policyName, "").toUpperCase(Locale.US));
+	}
+
+	private static boolean portfolioPolicyUsesLiveExecutableEntry(String policyName) {
+		return PORTFOLIO_VALIDATION_LIVE_STRICT.equals(cleanOrDefault(policyName, "").toUpperCase(Locale.US));
+	}
+
+	private static String liveValidationDiagnosticsJson(String sizingDiagnosticsJson, String validationPolicy, String liveDecayWarning) {
+		return mergeSimpleJson(
+			sizingDiagnosticsJson,
+			"\"validationPolicy\":" + jsonString(cleanOrDefault(validationPolicy, PORTFOLIO_VALIDATION_BACKTEST_PARITY))
+				+ ",\"liveEntryDecayWarning\":" + jsonString(cleanOrDefault(liveDecayWarning, ""))
+		);
+	}
+
+	private static String liveEntryDecayRejectReason(PortfolioSymbolContext context, SignalEvent event, Bar executionBar, String policyName) {
+		if (!portfolioPolicyBlocksEntryDecay(policyName)) {
+			return "";
+		}
 		if (context == null || context.spec == null || event == null || event.signal == null || executionBar == null) {
 			return "Rejected: live signal could not be checked for entry decay.";
 		}
@@ -16934,46 +16964,74 @@ public class FuturesManager {
 			Signal signal = event.signal;
 			PortfolioSymbolContext context = candidate.context;
 			Bar liveExecutionBar = liveExecutionBarForCandidate(candidate);
+			String validationPolicy = activeLivePortfolioValidationPolicy(session, null);
 			if (liveExecutionBar == null) {
 				order.reason = "Rejected: live portfolio signal had no executable live price.";
 				order.diagnosticsJson = "{\"firstFailingRule\":\"NO_EXECUTABLE_LIVE_PRICE\"}";
 				return order;
 			}
-			String liveDecayReject = liveEntryDecayRejectReason(context, event, liveExecutionBar);
+			String liveDecayWarning = liveEntryDecayRejectReason(context, event, liveExecutionBar, PORTFOLIO_VALIDATION_LIVE_STRICT);
+			String liveDecayReject = liveEntryDecayRejectReason(context, event, liveExecutionBar, validationPolicy);
 			if (liveDecayReject.length() > 0) {
 				order.reason = liveDecayReject;
-				order.diagnosticsJson = liveSizingDiagnosticsJson(context, event, liveExecutionBar, 0.0, 0, 0.0, openPositions.size() + exposure.positionSlots, openContractCount(openPositions) + exposure.totalContracts, openMiniUnitCount(openPositions) + exposure.totalMiniUnits, "LIVE_ENTRY_DECAY", null);
+				order.diagnosticsJson = liveValidationDiagnosticsJson(
+					liveSizingDiagnosticsJson(context, event, liveExecutionBar, 0.0, 0, 0.0, openPositions.size() + exposure.positionSlots, openContractCount(openPositions) + exposure.totalContracts, openMiniUnitCount(openPositions) + exposure.totalMiniUnits, "LIVE_ENTRY_DECAY", null),
+					validationPolicy,
+					liveDecayWarning
+				);
 				return order;
 			}
-			candidate.entryBar = liveExecutionBar;
+			if (portfolioPolicyUsesLiveExecutableEntry(validationPolicy)) {
+				candidate.entryBar = liveExecutionBar;
+			}
 			if (hasOpenCorrelatedSymbol(exposure.symbols, event.symbol) || hasOpenCorrelatedPosition(openPositions, event.symbol)) {
 				order.reason = "Rejected: a correlated live portfolio position is already open for the same futures family.";
-				order.diagnosticsJson = liveSizingDiagnosticsJson(context, event, candidate.entryBar, 0.0, 0, 0.0, openPositions.size() + exposure.positionSlots, openContractCount(openPositions) + exposure.totalContracts, openMiniUnitCount(openPositions) + exposure.totalMiniUnits, "CORRELATED_SYMBOL_ALREADY_OPEN", null);
+				order.diagnosticsJson = liveValidationDiagnosticsJson(
+					liveSizingDiagnosticsJson(context, event, candidate.entryBar, 0.0, 0, 0.0, openPositions.size() + exposure.positionSlots, openContractCount(openPositions) + exposure.totalContracts, openMiniUnitCount(openPositions) + exposure.totalMiniUnits, "CORRELATED_SYMBOL_ALREADY_OPEN", null),
+					validationPolicy,
+					liveDecayWarning
+				);
 				return order;
 			}
 			if (explicitCsvContainsSymbol(exposure.symbols, event.symbol) || hasOpenSymbol(openPositions, event.symbol)) {
 				order.reason = "Rejected: symbol already has an open live portfolio position.";
-				order.diagnosticsJson = liveSizingDiagnosticsJson(context, event, candidate.entryBar, 0.0, 0, 0.0, openPositions.size() + exposure.positionSlots, openContractCount(openPositions) + exposure.totalContracts, openMiniUnitCount(openPositions) + exposure.totalMiniUnits, "SYMBOL_ALREADY_OPEN", null);
+				order.diagnosticsJson = liveValidationDiagnosticsJson(
+					liveSizingDiagnosticsJson(context, event, candidate.entryBar, 0.0, 0, 0.0, openPositions.size() + exposure.positionSlots, openContractCount(openPositions) + exposure.totalContracts, openMiniUnitCount(openPositions) + exposure.totalMiniUnits, "SYMBOL_ALREADY_OPEN", null),
+					validationPolicy,
+					liveDecayWarning
+				);
 				return order;
 		}
 		int openPositionCount = openPositions.size() + exposure.positionSlots;
 		if (openPositionCount >= portfolioConfig.maxOpenPositions) {
 			order.reason = "Rejected: live portfolio max open positions reached.";
-			order.diagnosticsJson = liveSizingDiagnosticsJson(context, event, candidate.entryBar, 0.0, 0, 0.0, openPositionCount, openContractCount(openPositions) + exposure.totalContracts, openMiniUnitCount(openPositions) + exposure.totalMiniUnits, "MAX_OPEN_POSITIONS", null);
+			order.diagnosticsJson = liveValidationDiagnosticsJson(
+				liveSizingDiagnosticsJson(context, event, candidate.entryBar, 0.0, 0, 0.0, openPositionCount, openContractCount(openPositions) + exposure.totalContracts, openMiniUnitCount(openPositions) + exposure.totalMiniUnits, "MAX_OPEN_POSITIONS", null),
+				validationPolicy,
+				liveDecayWarning
+			);
 			return order;
 		}
 		int openContracts = openContractCount(openPositions) + exposure.totalContracts;
 		double openMiniUnits = openMiniUnitCount(openPositions) + exposure.totalMiniUnits;
 		if (openContracts >= portfolioConfig.maxAggregateContracts || fundedMiniUnitLimitReached(portfolioConfig, openMiniUnits)) {
 			order.reason = "Rejected: live portfolio aggregate contract or funded-unit limit reached.";
-			order.diagnosticsJson = liveSizingDiagnosticsJson(context, event, candidate.entryBar, 0.0, 0, 0.0, openPositionCount, openContracts, openMiniUnits, "AGGREGATE_LIMIT", null);
+			order.diagnosticsJson = liveValidationDiagnosticsJson(
+				liveSizingDiagnosticsJson(context, event, candidate.entryBar, 0.0, 0, 0.0, openPositionCount, openContracts, openMiniUnits, "AGGREGATE_LIMIT", null),
+				validationPolicy,
+				liveDecayWarning
+			);
 			return order;
 		}
 		String strategyKey = strategyDailyLimitKey(event.symbol, signal.strategyCode);
 		int taken = countFor(takenByStrategy, strategyKey);
 		if (taken >= maxTradesPerDay(signal.strategyCode, context.config.strategySettings)) {
 			order.reason = "Rejected: live portfolio per-strategy daily limit reached.";
-			order.diagnosticsJson = liveSizingDiagnosticsJson(context, event, candidate.entryBar, 0.0, 0, 0.0, openPositionCount, openContracts, openMiniUnits, "PER_STRATEGY_DAILY_LIMIT", null);
+			order.diagnosticsJson = liveValidationDiagnosticsJson(
+				liveSizingDiagnosticsJson(context, event, candidate.entryBar, 0.0, 0, 0.0, openPositionCount, openContracts, openMiniUnits, "PER_STRATEGY_DAILY_LIMIT", null),
+				validationPolicy,
+				liveDecayWarning
+			);
 			return order;
 		}
 
@@ -16987,12 +17045,20 @@ public class FuturesManager {
 		double equityAtOpen = balance + aggregateOpenPnl(openPositions, currentBars, "open");
 		if (equityAtOpen - dayStartBalance <= -Math.abs(portfolioConfig.dailyLossLimit)) {
 			order.reason = "Rejected: live portfolio daily loss guard blocked new entries.";
-			order.diagnosticsJson = liveSizingDiagnosticsJson(context, event, candidate.entryBar, 0.0, 0, 0.0, openPositionCount, openContracts, openMiniUnits, "DAILY_LOSS_GUARD", null);
+			order.diagnosticsJson = liveValidationDiagnosticsJson(
+				liveSizingDiagnosticsJson(context, event, candidate.entryBar, 0.0, 0, 0.0, openPositionCount, openContracts, openMiniUnits, "DAILY_LOSS_GUARD", null),
+				validationPolicy,
+				liveDecayWarning
+			);
 			return order;
 		}
 		if (equityAtOpen <= trailingThreshold) {
 			order.reason = "Rejected: live portfolio trailing drawdown guard blocked new entries.";
-			order.diagnosticsJson = liveSizingDiagnosticsJson(context, event, candidate.entryBar, 0.0, 0, 0.0, openPositionCount, openContracts, openMiniUnits, "TRAILING_DRAWDOWN_GUARD", null);
+			order.diagnosticsJson = liveValidationDiagnosticsJson(
+				liveSizingDiagnosticsJson(context, event, candidate.entryBar, 0.0, 0, 0.0, openPositionCount, openContracts, openMiniUnits, "TRAILING_DRAWDOWN_GUARD", null),
+				validationPolicy,
+				liveDecayWarning
+			);
 			return order;
 		}
 
@@ -17015,7 +17081,11 @@ public class FuturesManager {
 		}
 		if (availableRiskBudget <= 0.0 || aggregateRoom <= 0) {
 			order.reason = "Rejected: live portfolio has no remaining risk or funded-unit room.";
-			order.diagnosticsJson = liveSizingDiagnosticsJson(context, event, candidate.entryBar, availableRiskBudget, aggregateRoom, aggregateGuardBudget, openPositionCount, openContracts, openMiniUnits, availableRiskBudget <= 0.0 ? "NO_RISK_BUDGET" : "NO_AGGREGATE_ROOM", null);
+			order.diagnosticsJson = liveValidationDiagnosticsJson(
+				liveSizingDiagnosticsJson(context, event, candidate.entryBar, availableRiskBudget, aggregateRoom, aggregateGuardBudget, openPositionCount, openContracts, openMiniUnits, availableRiskBudget <= 0.0 ? "NO_RISK_BUDGET" : "NO_AGGREGATE_ROOM", null),
+				validationPolicy,
+				liveDecayWarning
+			);
 			return order;
 		}
 
@@ -17023,7 +17093,11 @@ public class FuturesManager {
 		if (position == null) {
 			String failingRule = liveSizingFirstFailingRule(context, event, candidate.entryBar, availableRiskBudget, aggregateRoom, aggregateGuardBudget);
 			order.reason = "Rejected: live signal failed portfolio sizing or risk validation (" + failingRule + ").";
-			order.diagnosticsJson = liveSizingDiagnosticsJson(context, event, candidate.entryBar, availableRiskBudget, aggregateRoom, aggregateGuardBudget, openPositionCount, openContracts, openMiniUnits, failingRule, null);
+			order.diagnosticsJson = liveValidationDiagnosticsJson(
+				liveSizingDiagnosticsJson(context, event, candidate.entryBar, availableRiskBudget, aggregateRoom, aggregateGuardBudget, openPositionCount, openContracts, openMiniUnits, failingRule, null),
+				validationPolicy,
+				liveDecayWarning
+			);
 			return order;
 		}
 		position.concurrentPositionsAtEntry = openPositionCount + 1;
@@ -17036,7 +17110,11 @@ public class FuturesManager {
 		order.position = position;
 		order.accepted = true;
 		order.reason = "Accepted live portfolio signal.";
-		order.diagnosticsJson = liveSizingDiagnosticsJson(context, event, candidate.entryBar, availableRiskBudget, aggregateRoom, aggregateGuardBudget, openPositionCount, openContracts, openMiniUnits, "ACCEPTED", position);
+		order.diagnosticsJson = liveValidationDiagnosticsJson(
+			liveSizingDiagnosticsJson(context, event, candidate.entryBar, availableRiskBudget, aggregateRoom, aggregateGuardBudget, openPositionCount, openContracts, openMiniUnits, "ACCEPTED", position),
+			validationPolicy,
+			liveDecayWarning
+		);
 		return order;
 	}
 
@@ -17583,19 +17661,24 @@ public class FuturesManager {
 		if (day == null) {
 			return new ArrayList<Bar>();
 		}
+		List<Bar> capturedBars = capturedRealtimeBarsForSymbolDay(symbol, day);
+		if (capturedBars.size() >= 60) {
+			enrichLiveBars(capturedBars, instrumentFor(symbol));
+			return selectLastBars(capturedBars, 390);
+		}
 		return recordedRealtimeBarsForSymbol(symbol, day, "1m", 390);
 	}
 
 	private static LocalDate previousRecordedRealtimeDay(String symbol, LocalDate currentDay) {
-		ProjectXRealtimeManager.initializeStore();
+		FuturesMarketDataStore.initializeStore();
 		LocalDate effectiveDay = currentDay == null ? LocalDate.now(NEW_YORK_ZONE) : currentDay;
-		String sql = "SELECT substr(receivedAt, 1, 10) AS dayKey, COUNT(*) AS events FROM FuturesLiveRealtimeEvents "
-			+ "WHERE hub = 'market' AND symbol = ? AND eventType <> 'GatewayDepth' AND receivedAt < ? "
-			+ "GROUP BY dayKey HAVING events >= 10 ORDER BY dayKey DESC LIMIT 1";
-		try (Connection conn = ProjectXRealtimeManager.openRealtimeConnection();
+		String sql = "SELECT substr(timestamp, 1, 10) AS dayKey, COUNT(*) AS bars FROM FuturesLiveCapturedBars "
+			+ "WHERE symbol = ? AND substr(timestamp, 1, 10) < ? "
+			+ "GROUP BY dayKey HAVING bars >= 60 ORDER BY dayKey DESC LIMIT 1";
+		try (Connection conn = DatabaseManager.getConnection();
 			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
 			pstmt.setString(1, normalizeSymbol(symbol));
-			pstmt.setString(2, effectiveDay.atStartOfDay().format(SERVER_TIME_FORMAT));
+			pstmt.setString(2, effectiveDay.toString());
 			try (ResultSet rs = pstmt.executeQuery()) {
 				if (rs.next()) {
 					return LocalDate.parse(rs.getString("dayKey"));
@@ -17605,6 +17688,28 @@ public class FuturesManager {
 			e.printStackTrace();
 		}
 		return null;
+	}
+
+	private static List<Bar> capturedRealtimeBarsForSymbolDay(String symbol, LocalDate day) {
+		List<Bar> bars = new ArrayList<Bar>();
+		if (day == null) {
+			return bars;
+		}
+		InstrumentSpec spec = instrumentFor(symbol);
+		try {
+			Instant start = day.atStartOfDay(NEW_YORK_ZONE).toInstant();
+			Instant end = day.plusDays(1).atStartOfDay(NEW_YORK_ZONE).minusNanos(1L).toInstant();
+			List<FuturesConnectionManager.InternalBar> captured = FuturesMarketDataStore.readCapturedBarsForRange(spec.symbol, start, end);
+			for (int index = 0; index < captured.size(); index++) {
+				Bar bar = barFromInternalCapturedBar(captured.get(index));
+				if (bar != null && !bar.marketTime.isBefore(RTH_START) && bar.marketTime.isBefore(RTH_END)) {
+					bars.add(bar);
+				}
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return bars;
 	}
 
 	private static boolean liveDecisionExists(int sessionId, String symbol, String strategyCode, String signalTime) {
