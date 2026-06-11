@@ -138,6 +138,54 @@ public class FuturesBacktestLiveParityIntegrityTest {
 	}
 
 	@Test
+	public void riskConfigTickCapsOverrideRuntimeStrategySizingCaps() throws Exception {
+		Object strategySettings = nestedInstance("FuturesStrategySettings");
+		setField(strategySettings, "maxInitialRiskTicks", Double.valueOf(80.0));
+		setField(strategySettings, "orbRetestMaxRiskTicks", Double.valueOf(80.0));
+		Object riskSettings = nestedInstance("FuturesRiskSettings");
+		setField(riskSettings, "maxInitialRiskTicks", Double.valueOf(220.0));
+		setField(riskSettings, "orbRetestMaxRiskTicks", Double.valueOf(180.0));
+
+		applyRiskSettingsToStrategySettings(strategySettings, riskSettings);
+
+		assertEquals(220.0, liveInitialRiskLimitTicks(strategySettings, "ORB"), 0.0001);
+		assertEquals(180.0, liveInitialRiskLimitTicks(strategySettings, "ORB2"), 0.0001);
+	}
+
+	@Test
+	public void liveInitialRiskLimitUsesOrbRetestSpecificCap() throws Exception {
+		Object strategySettings = nestedInstance("FuturesStrategySettings");
+		setField(strategySettings, "maxInitialRiskTicks", Double.valueOf(80.0));
+		setField(strategySettings, "orbRetestMaxRiskTicks", Double.valueOf(220.0));
+
+		assertEquals(220.0, liveInitialRiskLimitTicks(strategySettings, "ORB2"), 0.0001);
+	}
+
+	@Test
+	public void portfolioBacktestConfigPreservesSavedRiskSelection() throws Exception {
+		Object config = buildPortfolioBacktestConfig("MES,MGC", true);
+
+		assertTrue(booleanField(config, "useSavedRisk"));
+	}
+
+	@Test
+	public void riskConfigSlotSaveRoundTripsTickCaps() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		FuturesManager.FuturesRiskSettings settings = FuturesManager.loadFuturesRiskSettings("MGC", "PRESET_BESTBIASFREE");
+		settings.maxInitialRiskTicks = 151.0;
+		settings.orbRetestMaxRiskTicks = 177.0;
+
+		assertTrue(FuturesManager.saveFuturesRiskSettings("MGC", "PRESET_BESTBIASFREE", settings));
+
+		FuturesManager.FuturesRiskSettings saved = FuturesManager.loadFuturesRiskSettings("MGC", "PRESET_BESTBIASFREE");
+		FuturesManager.FuturesRiskSettings defaultSlot = FuturesManager.loadFuturesRiskSettings("MGC");
+		assertEquals(151.0, saved.maxInitialRiskTicks, 0.0001);
+		assertEquals(177.0, saved.orbRetestMaxRiskTicks, 0.0001);
+		assertEquals(220.0, defaultSlot.maxInitialRiskTicks, 0.0001);
+		assertEquals(220.0, defaultSlot.orbRetestMaxRiskTicks, 0.0001);
+	}
+
+	@Test
 	public void topstepFundedProfileAccountIdsMatchActiveProjectxAccounts() throws Exception {
 		assertEquals("24097033", accountIdForFundedProfile("TOPSTEP_50K"));
 		assertEquals("24102568", accountIdForFundedProfile("TOPSTEP_150K"));
@@ -277,6 +325,64 @@ public class FuturesBacktestLiveParityIntegrityTest {
 		Method method = FuturesManager.class.getDeclaredMethod("portfolioRiskCompressionAllowed", String.class);
 		method.setAccessible(true);
 		return ((Boolean) method.invoke(null, strategyCode)).booleanValue();
+	}
+
+	private static void applyRiskSettingsToStrategySettings(Object strategySettings, Object riskSettings) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod(
+			"applyRiskSettingsToStrategySettings",
+			strategySettings.getClass(),
+			riskSettings.getClass()
+		);
+		method.setAccessible(true);
+		method.invoke(null, strategySettings, riskSettings);
+	}
+
+	private static double liveInitialRiskLimitTicks(Object strategySettings, String strategyCode) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("liveInitialRiskLimitTicks", strategySettings.getClass(), String.class);
+		method.setAccessible(true);
+		return ((Double) method.invoke(null, strategySettings, strategyCode)).doubleValue();
+	}
+
+	private static Object buildPortfolioBacktestConfig(String symbols, boolean useSavedRisk) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod(
+			"buildPortfolioBacktestConfig",
+			String.class,
+			String.class,
+			String.class,
+			double.class,
+			double.class,
+			double.class,
+			double.class,
+			int.class,
+			double.class,
+			double.class,
+			int.class,
+			int.class,
+			double.class,
+			boolean.class,
+			double.class,
+			String.class
+		);
+		method.setAccessible(true);
+		return method.invoke(
+			null,
+			symbols,
+			"2026-06-01",
+			"2026-06-10",
+			Double.valueOf(50000.0),
+			Double.valueOf(2000.0),
+			Double.valueOf(1000.0),
+			Double.valueOf(700.0),
+			Integer.valueOf(50),
+			Double.valueOf(1.24),
+			Double.valueOf(1.0),
+			Integer.valueOf(3),
+			Integer.valueOf(50),
+			Double.valueOf(5.0),
+			Boolean.valueOf(useSavedRisk),
+			Double.valueOf(0.0),
+			"TOPSTEP_50K"
+		);
 	}
 
 	private static boolean liveSourceSnapshotMatchesPreset(
@@ -514,5 +620,11 @@ public class FuturesBacktestLiveParityIntegrityTest {
 		Field field = target.getClass().getDeclaredField(fieldName);
 		field.setAccessible(true);
 		return ((Double) field.get(target)).doubleValue();
+	}
+
+	private static boolean booleanField(Object target, String fieldName) throws Exception {
+		Field field = target.getClass().getDeclaredField(fieldName);
+		field.setAccessible(true);
+		return ((Boolean) field.get(target)).booleanValue();
 	}
 }

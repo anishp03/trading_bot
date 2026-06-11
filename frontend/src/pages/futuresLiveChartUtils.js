@@ -14,6 +14,64 @@ export function liveBotControlState({ botStarted = false, busyAction = "" } = {}
     : { active: false, label: "Start Live Bot" };
 }
 
+export function visibleLiveEventDetailEntries(entry) {
+  const details = entry?.details && typeof entry.details === "object" && !Array.isArray(entry.details) ? entry.details : {};
+  const hiddenKeys = new Set([
+    "entryReason",
+    "exitReason",
+    "tradeReason",
+    "dtmDetails",
+    "marketDataReconciliation",
+    "level1CaptureMerge",
+    "level2GapFill",
+  ]);
+  const priority = [
+    "symbols",
+    "symbol",
+    "sessionId",
+    "strategyConfig",
+    "riskConfig",
+    "marketData",
+    "strategy",
+    "side",
+    "contracts",
+    "entry",
+    "stop",
+    "target",
+    "orderId",
+    "seconds",
+    "downtime",
+    "marketEventGap",
+    "lastEvent",
+    "gate",
+    "profile",
+    "account",
+    "mode",
+    "action",
+    "status",
+    "dtmAction",
+    "entryReason",
+    "exitReason",
+    "exitPrice",
+    "pnl",
+    "reason",
+  ];
+  const seen = new Set();
+  const ordered = [];
+  priority.forEach((key) => {
+    if (!hiddenKeys.has(key) && Object.prototype.hasOwnProperty.call(details, key)) {
+      ordered.push([key, details[key]]);
+      seen.add(key);
+    }
+  });
+  Object.entries(details).forEach(([key, value]) => {
+    if (!seen.has(key) && !hiddenKeys.has(key)) ordered.push([key, value]);
+  });
+  return ordered
+    .filter(([, value]) => liveEventDetailValueVisible(value))
+    .slice(0, 10);
+}
+
 export function liveMarksRequestKey(symbolsCsv, timeframe) {
   return `liveMarks:${normalizeMonitorTimeframe(timeframe)}:${String(symbolsCsv || "").trim()}`;
 }
@@ -50,9 +108,49 @@ export function mergeSeriesCandleVolume(existingCandle, incomingCandle) {
   return Math.max(existingVolume, incomingVolume);
 }
 
+export function shouldAppendLivePatchCandle({ series, patch, timeframe = "1m" } = {}) {
+  const candles = Array.isArray(series) ? series : [];
+  const patchTime = chartTimeMs(patch?.time || patch?.barTime || patch?.timestamp);
+  if (!patchTime) return false;
+  if (!candles.length) return true;
+  const last = candles[candles.length - 1] || {};
+  const lastTime = chartTimeMs(last.time || last.barTime || last.timestamp);
+  if (!lastTime) return false;
+  if (patchTime <= lastTime) return false;
+  const maxGapMs = Math.max(timeframeMinutes(timeframe) * 60000 * 3, 120000);
+  return patchTime - lastTime <= maxGapMs;
+}
+
 function normalizeMonitorTimeframe(value) {
   if (value === "5m" || value === "30m" || value === "1h") return value;
   return "1m";
+}
+
+function timeframeMinutes(value) {
+  if (value === "5m") return 5;
+  if (value === "30m") return 30;
+  if (value === "1h") return 60;
+  return 1;
+}
+
+function chartTimeMs(value) {
+  if (!value) return 0;
+  const clean = String(value).trim().replace(" ", "T");
+  const parsed = Date.parse(clean);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function liveEventDetailValueVisible(value) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "number") return Number.isFinite(value) && value !== 0;
+  if (typeof value === "boolean") return true;
+  if (Array.isArray(value)) return value.length > 0 && value.every(isPrimitiveDetailValue);
+  if (typeof value === "object") return false;
+  return String(value).trim().length > 0;
+}
+
+function isPrimitiveDetailValue(value) {
+  return value === null || ["string", "number", "boolean"].includes(typeof value);
 }
 
 function liveVolumeOutlierThreshold(stats) {

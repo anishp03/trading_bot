@@ -10,6 +10,8 @@ import {
   liveMonitorRequestKey,
   mergeSeriesCandleVolume,
   resolveLivePatchVolume,
+  shouldAppendLivePatchCandle,
+  visibleLiveEventDetailEntries,
 } from "./futuresLiveChartUtils.js";
 import { apiFetch, isApiNetworkError } from "../utils/api.js";
 import { EASTERN_TIME_LABEL, formatEstTime } from "../utils/time.js";
@@ -367,7 +369,7 @@ export default function FuturesLive() {
       const normalized = rawChartCandles
         .map(normalizeCandle)
         .filter((candle) => candle.time && Number(candle.close || 0) > 0);
-      return normalized;
+      return latestSessionChartCandles(normalized);
     },
     [rawChartCandles]
   );
@@ -1915,61 +1917,7 @@ function compactTradeEventSubtext(entry) {
 }
 
 function eventDetailEntries(entry) {
-  const details = entry?.details && typeof entry.details === "object" && !Array.isArray(entry.details) ? entry.details : {};
-  const hiddenKeys = new Set(["entryReason", "exitReason", "tradeReason", "dtmDetails"]);
-  const priority = [
-    "symbols",
-    "symbol",
-    "strategyConfig",
-    "riskConfig",
-    "marketData",
-    "strategy",
-    "side",
-    "contracts",
-    "entry",
-    "stop",
-    "target",
-    "orderId",
-    "seconds",
-    "downtime",
-    "marketEventGap",
-    "lastEvent",
-    "gate",
-    "profile",
-    "account",
-    "mode",
-    "action",
-    "status",
-    "dtmAction",
-    "entryReason",
-    "exitReason",
-    "exitPrice",
-    "pnl",
-    "reason",
-  ];
-  const seen = new Set();
-  const ordered = [];
-  priority.forEach((key) => {
-    if (!hiddenKeys.has(key) && Object.prototype.hasOwnProperty.call(details, key)) {
-      ordered.push([key, details[key]]);
-      seen.add(key);
-    }
-  });
-  Object.entries(details).forEach(([key, value]) => {
-    if (!seen.has(key) && !hiddenKeys.has(key)) ordered.push([key, value]);
-  });
-  return ordered
-    .filter(([, value]) => detailValueVisible(value))
-    .slice(0, 10);
-}
-
-function detailValueVisible(value) {
-  if (value === null || value === undefined) return false;
-  if (typeof value === "number") return Number.isFinite(value) && value !== 0;
-  if (typeof value === "boolean") return true;
-  if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === "object") return Object.keys(value).length > 0;
-  return String(value).trim().length > 0;
+  return visibleLiveEventDetailEntries(entry);
 }
 
 function detailLabel(key) {
@@ -2943,7 +2891,7 @@ function mergeMonitorWithMarks(monitor, marks, timeframe) {
   Object.entries(marks.symbols || {}).forEach(([rawSymbol, patch]) => {
     const symbol = String(rawSymbol || "").toUpperCase();
     if (!symbol || !patch?.currentCandle) return;
-    marketData[symbol] = mergeCurrentCandleIntoSeries(marketData[symbol], patch.currentCandle);
+    marketData[symbol] = mergeCurrentCandleIntoSeries(marketData[symbol], patch.currentCandle, normalizedTimeframe);
   });
   return {
     ...baseMonitor,
@@ -2980,7 +2928,7 @@ function candleHistorySignature(candles) {
   return `${history.length}:${first.time || ""}:${last.time || ""}:${hash >>> 0}`;
 }
 
-function mergeCurrentCandleIntoSeries(series, currentCandle) {
+function mergeCurrentCandleIntoSeries(series, currentCandle, timeframe = "1m") {
   const candles = Array.isArray(series) ? [...series] : [];
   const patch = normalizeCandle(currentCandle);
   if (!patch.time || Number(patch.close || 0) <= 0) return candles;
@@ -3005,7 +2953,11 @@ function mergeCurrentCandleIntoSeries(series, currentCandle) {
     };
     return candles;
   }
-  if (patchTime && (!lastTime || patchTime > lastTime)) {
+  if (
+    patchTime
+    && (!lastTime || patchTime > lastTime)
+    && shouldAppendLivePatchCandle({ series: candles, patch, timeframe })
+  ) {
     candles.push({
       ...patch,
       volume: resolveLivePatchVolume(candles, patch, null),

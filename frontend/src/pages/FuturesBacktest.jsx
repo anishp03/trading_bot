@@ -303,7 +303,7 @@ export default function FuturesBacktest() {
       maxOpenPositions: config.maxOpenPositions,
       maxAggregateContracts: config.maxAggregateContracts,
       maxAggregateMiniUnits: config.maxAggregateMiniUnits,
-      useSavedRisk: "false",
+      useSavedRisk: config.useSavedRisk === "false" ? "false" : "true",
       continueAfterRuleViolation: config.continueAfterRuleViolation === "true" ? "true" : "false",
       qualitativeRiskEnabled: "true",
       dtmEnabled: config.dtmEnabled === "true" ? "true" : "false",

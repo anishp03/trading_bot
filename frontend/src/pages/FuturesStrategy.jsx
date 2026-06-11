@@ -160,6 +160,22 @@ const DEFAULT_SETTINGS = {
   managedGivebackMinBars: 3,
 };
 
+const DEFAULT_RISK_SETTINGS = {
+  accountSize: 50000,
+  maxTrailingDrawdown: 2000,
+  dailyLossLimit: 1000,
+  maxRiskPerTrade: 400,
+  maxContracts: 50,
+  commissionPerContract: 1.24,
+  slippageTicks: 1,
+  profitTarget: 3000,
+  maxInitialRiskTicks: 220,
+  orbCompressedMaxRiskTicks: 60,
+  orbRetestMaxRiskTicks: 220,
+  openingMomentumMaxRiskTicks: 220,
+  lateOrbContinuationMaxRiskTicks: 32,
+};
+
 const DEFAULT_STRATEGY_PRESET = "backtestbias92k";
 const BIAS_FREE_STRATEGY_PRESET = "biasfree92k";
 const BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
@@ -219,6 +235,7 @@ const CUSTOM_MODULE_CAPS = {
 
 export default function FuturesStrategy() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [riskSettings, setRiskSettings] = useState(DEFAULT_RISK_SETTINGS);
   const [selectedSymbol, setSelectedSymbol] = useState("MNQ");
   const [selectedPreset, setSelectedPreset] = useState(BIAS_FREE_STRATEGY_PRESET);
   const [strategyPresets, setStrategyPresets] = useState([]);
@@ -268,15 +285,24 @@ export default function FuturesStrategy() {
   function loadSettings(symbol = selectedSymbol, preset = selectedPreset) {
     setIsLoading(true);
     const params = new URLSearchParams({ symbol, preset });
-    apiFetch(`/api/futures/strategy?${params.toString()}`)
-      .then((response) => {
+    Promise.all([
+      apiFetch(`/api/futures/strategy?${params.toString()}`).then((response) => {
         if (!response.ok) throw new Error("Failed to load futures strategy settings.");
         return response.json();
+      }),
+      apiFetch(`/api/futures/risk?${params.toString()}`).then((response) => {
+        if (!response.ok) throw new Error("Failed to load futures risk settings.");
+        return response.json();
+      }),
+    ])
+      .then(([strategyData, riskData]) => {
+        setSettings(normalizeSettings(strategyData));
+        setRiskSettings(normalizeRiskSettings(riskData));
       })
-      .then((data) => setSettings(normalizeSettings(data)))
       .catch((error) => {
-        console.error("Error loading futures strategy settings:", error);
+        console.error("Error loading futures configuration:", error);
         setSettings(DEFAULT_SETTINGS);
+        setRiskSettings(DEFAULT_RISK_SETTINGS);
         setSaveStatus(`Loaded local defaults for ${symbol}`);
       })
       .finally(() => setIsLoading(false));
@@ -303,6 +329,10 @@ export default function FuturesStrategy() {
 
   function updateField(field, value) {
     setSettings((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateRiskField(field, value) {
+    setRiskSettings((current) => ({ ...current, [field]: value }));
   }
 
   async function saveSettings() {
@@ -407,7 +437,6 @@ export default function FuturesStrategy() {
       closeMomentumMinMoveTicks: String(settings.closeMomentumMinMoveTicks),
       closeMomentumVolumeRatio: String(settings.closeMomentumVolumeRatio),
       closeMomentumRewardRisk: String(settings.closeMomentumRewardRisk),
-      orbCompressedMaxRiskTicks: String(settings.orbCompressedMaxRiskTicks),
       afternoonMinVolumeRatio: String(settings.afternoonMinVolumeRatio),
       afternoonMaxRiskTicks: String(settings.afternoonMaxRiskTicks),
       afternoonRewardRisk: String(settings.afternoonRewardRisk),
@@ -494,7 +523,6 @@ export default function FuturesStrategy() {
       mclTrendMinBodyPct: String(settings.mclTrendMinBodyPct),
       mclTrendMinTrendSlopeTicks: String(settings.mclTrendMinTrendSlopeTicks),
       mclTrendMaxHoldBars: String(settings.mclTrendMaxHoldBars),
-      maxInitialRiskTicks: String(settings.maxInitialRiskTicks),
       managedStopBreakevenTriggerR: String(settings.managedStopBreakevenTriggerR),
       managedStopTrailTriggerR: String(settings.managedStopTrailTriggerR),
       managedStopTrailDistanceR: String(settings.managedStopTrailDistanceR),
@@ -510,7 +538,29 @@ export default function FuturesStrategy() {
       if (!strategyResponse.ok) throw new Error("Failed to save futures strategy settings.");
       const savedStrategy = await strategyResponse.json();
 
+      const riskParams = new URLSearchParams({
+        symbol: selectedSymbol,
+        preset: selectedPreset,
+        accountSize: String(riskSettings.accountSize),
+        maxTrailingDrawdown: String(riskSettings.maxTrailingDrawdown),
+        dailyLossLimit: String(riskSettings.dailyLossLimit),
+        maxRiskPerTrade: String(riskSettings.maxRiskPerTrade),
+        maxContracts: String(riskSettings.maxContracts),
+        commissionPerContract: String(riskSettings.commissionPerContract),
+        slippageTicks: String(riskSettings.slippageTicks),
+        profitTarget: String(riskSettings.profitTarget),
+        maxInitialRiskTicks: String(riskSettings.maxInitialRiskTicks),
+        orbCompressedMaxRiskTicks: String(riskSettings.orbCompressedMaxRiskTicks),
+        orbRetestMaxRiskTicks: String(riskSettings.orbRetestMaxRiskTicks),
+        openingMomentumMaxRiskTicks: String(riskSettings.openingMomentumMaxRiskTicks),
+        lateOrbContinuationMaxRiskTicks: String(riskSettings.lateOrbContinuationMaxRiskTicks),
+      });
+      const riskResponse = await apiFetch(`/api/futures/risk?${riskParams.toString()}`, { method: "POST" });
+      if (!riskResponse.ok) throw new Error("Failed to save futures risk settings.");
+      const savedRisk = await riskResponse.json();
+
       setSettings(normalizeSettings(savedStrategy));
+      setRiskSettings(normalizeRiskSettings(savedRisk));
       setSaveStatus(`Saved ${selectedPreset} for ${savedStrategy.symbol || selectedSymbol}`);
     } catch (error) {
       console.error("Error saving futures strategy settings:", error);
@@ -584,6 +634,25 @@ export default function FuturesStrategy() {
           <Readout label="Tick Value" value={selectedInstrument ? `$${selectedInstrument.tickValue}` : "--"} />
           <Readout label="Status" value={saveStatus || "Ready"} />
         </div>
+      </div>
+
+      <div className="app-panel">
+        <div className="fw-bold app-kicker mb-3">Risk Config</div>
+        <fieldset className="row g-3" disabled={isLoading || selectedPresetReadOnly}>
+          <NumberField label="Account Size" field="accountSize" settings={riskSettings} updateField={updateRiskField} />
+          <NumberField label="Trailing Drawdown" field="maxTrailingDrawdown" settings={riskSettings} updateField={updateRiskField} />
+          <NumberField label="Daily Loss Limit" field="dailyLossLimit" settings={riskSettings} updateField={updateRiskField} />
+          <NumberField label="Max Risk / Trade" field="maxRiskPerTrade" settings={riskSettings} updateField={updateRiskField} />
+          <NumberField label="Max Contracts" field="maxContracts" settings={riskSettings} updateField={updateRiskField} />
+          <NumberField label="Commission / Contract" field="commissionPerContract" settings={riskSettings} updateField={updateRiskField} step="0.01" />
+          <NumberField label="Slippage Ticks" field="slippageTicks" settings={riskSettings} updateField={updateRiskField} step="0.25" />
+          <NumberField label="Profit Target" field="profitTarget" settings={riskSettings} updateField={updateRiskField} />
+          <NumberField label="Max Initial Risk Ticks" field="maxInitialRiskTicks" settings={riskSettings} updateField={updateRiskField} />
+          <NumberField label="ORB Compressed Max Risk" field="orbCompressedMaxRiskTicks" settings={riskSettings} updateField={updateRiskField} />
+          <NumberField label="ORB Retest Max Risk" field="orbRetestMaxRiskTicks" settings={riskSettings} updateField={updateRiskField} />
+          <NumberField label="Opening Momentum Max Risk" field="openingMomentumMaxRiskTicks" settings={riskSettings} updateField={updateRiskField} />
+          <NumberField label="Late ORB Max Risk" field="lateOrbContinuationMaxRiskTicks" settings={riskSettings} updateField={updateRiskField} />
+        </fieldset>
       </div>
 
       <div className="app-panel">
@@ -725,7 +794,6 @@ export default function FuturesStrategy() {
           <NumberField label="Close Momentum Min Move" field="closeMomentumMinMoveTicks" settings={settings} updateField={updateField} />
           <NumberField label="Close Momentum Volume" field="closeMomentumVolumeRatio" settings={settings} updateField={updateField} step="0.05" />
           <NumberField label="Close Momentum Reward/Risk" field="closeMomentumRewardRisk" settings={settings} updateField={updateField} step="0.05" />
-          <NumberField label="ORB Compressed Max Risk" field="orbCompressedMaxRiskTicks" settings={settings} updateField={updateField} />
           <NumberField label="Afternoon Volume Ratio" field="afternoonMinVolumeRatio" settings={settings} updateField={updateField} step="0.05" />
           <NumberField label="Afternoon Max Risk" field="afternoonMaxRiskTicks" settings={settings} updateField={updateField} />
           <NumberField label="Afternoon Reward/Risk" field="afternoonRewardRisk" settings={settings} updateField={updateField} step="0.05" />
@@ -812,7 +880,6 @@ export default function FuturesStrategy() {
           <NumberField label="MCL Trend Body %" field="mclTrendMinBodyPct" settings={settings} updateField={updateField} />
           <NumberField label="MCL Trend Slope" field="mclTrendMinTrendSlopeTicks" settings={settings} updateField={updateField} step="0.25" />
           <NumberField label="MCL Trend Max Hold" field="mclTrendMaxHoldBars" settings={settings} updateField={updateField} />
-          <NumberField label="Max Initial Risk Ticks" field="maxInitialRiskTicks" settings={settings} updateField={updateField} />
           <NumberField label="Managed Breakeven R" field="managedStopBreakevenTriggerR" settings={settings} updateField={updateField} step="0.05" />
           <NumberField label="Managed Trail R" field="managedStopTrailTriggerR" settings={settings} updateField={updateField} step="0.05" />
           <NumberField label="Managed Trail Distance R" field="managedStopTrailDistanceR" settings={settings} updateField={updateField} step="0.05" />
@@ -851,6 +918,13 @@ function normalizeSettings(data) {
     mymBreadthConfirmation: { ...DEFAULT_SETTINGS.mymBreadthConfirmation, ...(data?.mymBreadthConfirmation || {}) },
     mclTrendContinuation: { ...DEFAULT_SETTINGS.mclTrendContinuation, ...(data?.mclTrendContinuation || {}) },
     liquidityReclaim: { ...DEFAULT_SETTINGS.liquidityReclaim, ...(data?.liquidityReclaim || {}) },
+  };
+}
+
+function normalizeRiskSettings(data) {
+  return {
+    ...DEFAULT_RISK_SETTINGS,
+    ...(data || {}),
   };
 }
 

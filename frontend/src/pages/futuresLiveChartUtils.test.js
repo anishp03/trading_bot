@@ -7,6 +7,8 @@ import {
   liveMonitorRequestKey,
   mergeSeriesCandleVolume,
   resolveLivePatchVolume,
+  shouldAppendLivePatchCandle,
+  visibleLiveEventDetailEntries,
 } from "./futuresLiveChartUtils.js";
 
 test("displayCandlesForChart keeps short live-only series visible instead of blanking the chart", () => {
@@ -31,6 +33,33 @@ test("liveBotControlState stops only the live bot while the bot is running", () 
     liveBotControlState({ botStarted: true, feedRunning: true, busyAction: "" }),
     { active: true, label: "Stop Live Bot" }
   );
+});
+
+test("visibleLiveEventDetailEntries hides stopped-bot market data reconciliation payloads", () => {
+  const entry = {
+    eventType: "BOT_STOPPED",
+    details: {
+      sessionId: 48,
+      marketDataReconciliation: {
+        success: true,
+        level1CaptureMerge: {
+          success: true,
+          symbols: [
+            { symbol: "MES", success: true, capturedRows: 1545 },
+            { symbol: "MNQ", success: true, capturedRows: 1545 },
+          ],
+        },
+        level2GapFill: {
+          success: true,
+          symbols: [
+            { symbol: "MES", success: true, level1Rows: 109980, capturedRows: 1545 },
+          ],
+        },
+      },
+    },
+  };
+
+  assert.deepEqual(visibleLiveEventDetailEntries(entry), [["sessionId", 48]]);
 });
 
 test("liveMonitorRequestKey separates in-flight monitor requests by selected timeframe and symbols", () => {
@@ -80,4 +109,24 @@ test("mergeSeriesCandleVolume lets authoritative monitor volume replace stale li
   const monitorCandle = { time: "2026-06-04 00:09", volume: 180, live: false };
 
   assert.equal(mergeSeriesCandleVolume(poisonedLiveCandle, monitorCandle), 180);
+});
+
+test("shouldAppendLivePatchCandle rejects stale session jumps from live marks", () => {
+  const series = [
+    { time: "2026-06-10 15:47", close: 28590 },
+    { time: "2026-06-10 15:48", close: 28577.75 },
+  ];
+  const livePatch = { time: "2026-06-11 08:08", close: 28894.88, live: true };
+
+  assert.equal(shouldAppendLivePatchCandle({ series, patch: livePatch, timeframe: "1m" }), false);
+});
+
+test("shouldAppendLivePatchCandle allows normal next live mark candles", () => {
+  const series = [
+    { time: "2026-06-11 09:30", close: 28890 },
+    { time: "2026-06-11 09:31", close: 28892 },
+  ];
+  const livePatch = { time: "2026-06-11 09:32", close: 28894.88, live: true };
+
+  assert.equal(shouldAppendLivePatchCandle({ series, patch: livePatch, timeframe: "1m" }), true);
 });

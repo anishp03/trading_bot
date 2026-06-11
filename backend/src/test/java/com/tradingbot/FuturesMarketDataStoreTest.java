@@ -9,6 +9,11 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Map;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -279,6 +284,32 @@ public class FuturesMarketDataStoreTest {
 	}
 
 	@Test
+	public void liveStrategyRealtimeBarsIgnorePreviousSessionCapturedRowsWhenRealtimeSessionIsFresh() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		FuturesMarketDataStore.initializeStore();
+		ProjectXRealtimeManager.initializeStore();
+		insertCapturedBar("MES", "2026-06-10T19:48:00Z", 7288.25);
+		insertRealtimeEvent("MES", "2026-06-11 09:30:00", 7330.0);
+		insertRealtimeEvent("MES", "2026-06-11 09:31:00", 7331.0);
+		Object originalRuntime = realtimeRuntimeField().get(null);
+		try {
+			setRealtimeRuntime("2026-06-11 09:30:00");
+			cacheEmptyWarmup("MES", "1m", 5);
+
+			Method method = FuturesManager.class.getDeclaredMethod("realtimeBarsForSymbol", String.class, String.class, int.class);
+			method.setAccessible(true);
+			java.util.List<?> bars = (java.util.List<?>) method.invoke(null, "MES", "1m", 5);
+
+			assertEquals(2, bars.size());
+			assertEquals("2026-06-11 09:30", barDisplayTime(bars.get(0)));
+			assertEquals("2026-06-11 09:31", barDisplayTime(bars.get(1)));
+		} finally {
+			realtimeRuntimeField().set(null, originalRuntime);
+			clearWarmupState();
+		}
+	}
+
+	@Test
 	public void liveMonitorCandlesPreferRecentCapturedRows() throws Exception {
 		TestDatabaseSupport.useTempDatabase(tempDir);
 		FuturesMarketDataStore.initializeStore();
@@ -378,6 +409,73 @@ public class FuturesMarketDataStoreTest {
 				"INSERT INTO FuturesLiveCapturedBars (symbol, timestamp, open, high, low, close, volume, updatedAt) VALUES ('"
 					+ symbol + "', '" + timestamp + "', " + price + ", " + price + ", " + price + ", " + price + ", 1.0, 'test')"
 			);
+		}
+	}
+
+	private void insertRealtimeEvent(String symbol, String receivedAt, double price) throws Exception {
+		try (Connection conn = DatabaseManager.getConnection();
+			 Statement stmt = conn.createStatement()) {
+			stmt.execute(
+				"CREATE TABLE IF NOT EXISTS FuturesLiveRealtimeEvents ("
+					+ "realtimeEventID INTEGER PRIMARY KEY AUTOINCREMENT, "
+					+ "hub TEXT, eventType TEXT, accountId TEXT, contractId TEXT, symbol TEXT, payloadJson TEXT, receivedAt TEXT"
+					+ ")"
+			);
+			stmt.executeUpdate(
+				"INSERT INTO FuturesLiveRealtimeEvents (hub, eventType, accountId, contractId, symbol, payloadJson, receivedAt) VALUES ("
+					+ "'market', 'GatewayTrade', '', '', '" + symbol + "', '[{\"price\":" + price + ",\"volume\":1.0}]', '" + receivedAt + "')"
+			);
+		}
+	}
+
+	private void setRealtimeRuntime(String startedAt) throws Exception {
+		Class<?> runtimeClass = Class.forName("com.tradingbot.ProjectXRealtimeManager$RealtimeRuntime");
+		Constructor<?> constructor = runtimeClass.getDeclaredConstructor();
+		constructor.setAccessible(true);
+		Object runtime = constructor.newInstance();
+		setField(runtime, "running", Boolean.TRUE);
+		setField(runtime, "startedAt", startedAt);
+		setField(runtime, "dataMode", "PROJECTX_SIGNALR");
+		realtimeRuntimeField().set(null, runtime);
+	}
+
+	private void cacheEmptyWarmup(String symbol, String timeframe, int limit) throws Exception {
+		Method keyMethod = FuturesManager.class.getDeclaredMethod("liveWarmupCacheKey", String.class, String.class, int.class);
+		keyMethod.setAccessible(true);
+		String cacheKey = (String) keyMethod.invoke(null, symbol, timeframe, limit);
+		Class<?> warmupClass = Class.forName("com.tradingbot.FuturesManager$LiveWarmupBars");
+		Constructor<?> constructor = warmupClass.getDeclaredConstructor();
+		constructor.setAccessible(true);
+		Object warmup = constructor.newInstance();
+		setField(warmup, "bars", new ArrayList<>());
+		setField(warmup, "dataSource", "TEST_EMPTY_WARMUP");
+		setField(warmup, "loadedAt", Long.valueOf(System.currentTimeMillis()));
+		Field cacheField = FuturesManager.class.getDeclaredField("LIVE_WARMUP_CACHE");
+		cacheField.setAccessible(true);
+		((Map<String, Object>) cacheField.get(null)).put(cacheKey, warmup);
+	}
+
+	private void clearWarmupState() throws Exception {
+		Field cacheField = FuturesManager.class.getDeclaredField("LIVE_WARMUP_CACHE");
+		cacheField.setAccessible(true);
+		((Map<?, ?>) cacheField.get(null)).clear();
+	}
+
+	private Field realtimeRuntimeField() throws Exception {
+		Field field = ProjectXRealtimeManager.class.getDeclaredField("runtime");
+		field.setAccessible(true);
+		return field;
+	}
+
+	private void setField(Object target, String fieldName, Object value) throws Exception {
+		Field field = target.getClass().getDeclaredField(fieldName);
+		field.setAccessible(true);
+		if (value instanceof Boolean) {
+			field.setBoolean(target, ((Boolean) value).booleanValue());
+		} else if (value instanceof Long) {
+			field.setLong(target, ((Long) value).longValue());
+		} else {
+			field.set(target, value);
 		}
 	}
 

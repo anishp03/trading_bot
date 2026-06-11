@@ -52,6 +52,7 @@ public class FuturesManager {
 	private static final ZoneId NEW_YORK_ZONE = ZoneId.of("America/New_York");
 	private static final DateTimeFormatter DISPLAY_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 	private static final DateTimeFormatter SERVER_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+	private static final LocalDate DEFAULT_BACKTEST_START_DATE = LocalDate.of(2025, 5, 1);
 	private static final LocalTime RTH_START = LocalTime.of(9, 30);
 	private static final LocalTime RTH_END = LocalTime.of(16, 0);
 	private static final LocalTime FORCED_EXIT_TIME = LocalTime.of(15, 55);
@@ -1120,6 +1121,11 @@ public class FuturesManager {
 		public double commissionPerContract = 1.24;
 		public double slippageTicks = 1.0;
 		public double profitTarget = 3000.0;
+		public double maxInitialRiskTicks = 220.0;
+		public double orbCompressedMaxRiskTicks = 60.0;
+		public double orbRetestMaxRiskTicks = 220.0;
+		public double openingMomentumMaxRiskTicks = 220.0;
+		public double lateOrbContinuationMaxRiskTicks = 32.0;
 	}
 
 	private static class FuturesLiveSession {
@@ -3677,11 +3683,29 @@ public class FuturesManager {
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "risk.commissionPerContract"), safeSettings.commissionPerContract);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "risk.slippageTicks"), safeSettings.slippageTicks);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "risk.profitTarget"), safeSettings.profitTarget);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "risk.maxInitialRiskTicks"), safeSettings.maxInitialRiskTicks);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "risk.orbCompressedMaxRiskTicks"), safeSettings.orbCompressedMaxRiskTicks);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "risk.orbRetestMaxRiskTicks"), safeSettings.orbRetestMaxRiskTicks);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "risk.openingMomentumMaxRiskTicks"), safeSettings.openingMomentumMaxRiskTicks);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "risk.lateOrbContinuationMaxRiskTicks"), safeSettings.lateOrbContinuationMaxRiskTicks);
 			pstmt.executeBatch();
 			return true;
 		} catch (SQLException e) {
 			e.printStackTrace();
 			return false;
+		}
+	}
+
+	public static boolean saveFuturesRiskSettings(String symbol, String slot, FuturesRiskSettings settings) {
+		String normalizedSlot = normalizeStrategySlot(slot);
+		if (STRATEGY_SLOT_BACKTEST.equals(normalizedSlot)) {
+			return saveFuturesRiskSettings(symbol, settings);
+		}
+		STRATEGY_SETTING_SAVE_SLOT.set(normalizedSlot);
+		try {
+			return saveFuturesRiskSettings(symbol, settings);
+		} finally {
+			STRATEGY_SETTING_SAVE_SLOT.remove();
 		}
 	}
 
@@ -3708,7 +3732,12 @@ public class FuturesManager {
 			+ "\"maxContracts\":" + settings.maxContracts + ","
 			+ "\"commissionPerContract\":" + settings.commissionPerContract + ","
 			+ "\"slippageTicks\":" + settings.slippageTicks + ","
-			+ "\"profitTarget\":" + settings.profitTarget
+			+ "\"profitTarget\":" + settings.profitTarget + ","
+			+ "\"maxInitialRiskTicks\":" + settings.maxInitialRiskTicks + ","
+			+ "\"orbCompressedMaxRiskTicks\":" + settings.orbCompressedMaxRiskTicks + ","
+			+ "\"orbRetestMaxRiskTicks\":" + settings.orbRetestMaxRiskTicks + ","
+			+ "\"openingMomentumMaxRiskTicks\":" + settings.openingMomentumMaxRiskTicks + ","
+			+ "\"lateOrbContinuationMaxRiskTicks\":" + settings.lateOrbContinuationMaxRiskTicks
 			+ "}";
 	}
 
@@ -4410,6 +4439,23 @@ public class FuturesManager {
 		else if ("risk.commissionPerContract".equals(key)) settings.commissionPerContract = parseDouble(value, settings.commissionPerContract);
 		else if ("risk.slippageTicks".equals(key)) settings.slippageTicks = parseDouble(value, settings.slippageTicks);
 		else if ("risk.profitTarget".equals(key)) settings.profitTarget = parseDouble(value, settings.profitTarget);
+		else if ("risk.maxInitialRiskTicks".equals(key)) settings.maxInitialRiskTicks = parseDouble(value, settings.maxInitialRiskTicks);
+		else if ("risk.orbCompressedMaxRiskTicks".equals(key)) settings.orbCompressedMaxRiskTicks = parseDouble(value, settings.orbCompressedMaxRiskTicks);
+		else if ("risk.orbRetestMaxRiskTicks".equals(key)) settings.orbRetestMaxRiskTicks = parseDouble(value, settings.orbRetestMaxRiskTicks);
+		else if ("risk.openingMomentumMaxRiskTicks".equals(key)) settings.openingMomentumMaxRiskTicks = parseDouble(value, settings.openingMomentumMaxRiskTicks);
+		else if ("risk.lateOrbContinuationMaxRiskTicks".equals(key)) settings.lateOrbContinuationMaxRiskTicks = parseDouble(value, settings.lateOrbContinuationMaxRiskTicks);
+	}
+
+	private static void applyRiskSettingsToStrategySettings(FuturesStrategySettings strategySettings, FuturesRiskSettings riskSettings) {
+		if (strategySettings == null || riskSettings == null) {
+			return;
+		}
+		strategySettings.maxInitialRiskTicks = riskSettings.maxInitialRiskTicks;
+		strategySettings.orbCompressedMaxRiskTicks = riskSettings.orbCompressedMaxRiskTicks;
+		strategySettings.orbRetestMaxRiskTicks = riskSettings.orbRetestMaxRiskTicks;
+		strategySettings.openingMomentumMaxRiskTicks = riskSettings.openingMomentumMaxRiskTicks;
+		strategySettings.lateOrbContinuationMaxRiskTicks = riskSettings.lateOrbContinuationMaxRiskTicks;
+		clampFuturesStrategySettings(strategySettings);
 	}
 
 	private static void clampFuturesStrategySettings(FuturesStrategySettings settings) {
@@ -4968,6 +5014,11 @@ public class FuturesManager {
 		settings.commissionPerContract = clamp(settings.commissionPerContract, 0.0, 100.0);
 		settings.slippageTicks = clamp(settings.slippageTicks, 0.0, 20.0);
 		settings.profitTarget = Math.max(0.0, settings.profitTarget);
+		settings.maxInitialRiskTicks = clamp(settings.maxInitialRiskTicks, 8.0, 220.0);
+		settings.orbCompressedMaxRiskTicks = clamp(settings.orbCompressedMaxRiskTicks, 4.0, 220.0);
+		settings.orbRetestMaxRiskTicks = clamp(settings.orbRetestMaxRiskTicks, 4.0, 220.0);
+		settings.openingMomentumMaxRiskTicks = clamp(settings.openingMomentumMaxRiskTicks, 4.0, 220.0);
+		settings.lateOrbContinuationMaxRiskTicks = clamp(settings.lateOrbContinuationMaxRiskTicks, 4.0, 180.0);
 	}
 
 	public static String getBacktestsJson() {
@@ -5098,7 +5149,7 @@ public class FuturesManager {
 							+ "\"strategyPreset\":" + jsonString(strategyPreset) + ","
 							+ "\"symbols\":" + jsonString(symbols) + ","
 						+ "\"symbolList\":" + jsonStringArray(parseSymbols(symbols)) + ","
-						+ "\"startDate\":" + jsonString(rs.getString("startDate")) + ","
+						+ "\"startDate\":" + jsonString(DEFAULT_BACKTEST_START_DATE.toString()) + ","
 						+ "\"endDate\":" + jsonString(rs.getString("endDate")) + ","
 						+ "\"fundedProfile\":" + jsonString(cleanOrDefault(rs.getString("fundedProfile"), "CUSTOM")) + ","
 						+ "\"accountSize\":" + round(rs.getDouble("startingBalance")) + ","
@@ -5214,7 +5265,7 @@ public class FuturesManager {
 
 	private static String fallbackPortfolioBacktestDefaultConfigJson() {
 		LocalDate endDate = LocalDate.now();
-		LocalDate startDate = endDate.minusYears(1);
+		LocalDate startDate = DEFAULT_BACKTEST_START_DATE;
 		return "{"
 			+ "\"success\":false,"
 			+ "\"mode\":\"PORTFOLIO\","
@@ -9025,7 +9076,7 @@ public class FuturesManager {
 			"TOPSTEP_50K"
 		);
 		return "TOPSTEP_50K".equals(config.fundedProfile)
-			&& !config.useSavedRisk
+			&& config.useSavedRisk
 			&& Math.abs(config.accountSize - 50000.0) < 0.001
 			&& Math.abs(config.maxTrailingDrawdown - 2000.0) < 0.001
 			&& Math.abs(config.dailyLossLimit - 1000.0) < 0.001
@@ -13256,6 +13307,11 @@ public class FuturesManager {
 				upsertPortfolioRiskSetting(upsert, portfolioBacktestId, symbol, "risk.commissionPerContract", round(config.commissionPerContract));
 				upsertPortfolioRiskSetting(upsert, portfolioBacktestId, symbol, "risk.slippageTicks", round(config.slippageTicks));
 				upsertPortfolioRiskSetting(upsert, portfolioBacktestId, symbol, "risk.profitTarget", round(profile.profitTarget));
+				upsertPortfolioRiskSetting(upsert, portfolioBacktestId, symbol, "risk.maxInitialRiskTicks", round(sourceRisk.maxInitialRiskTicks));
+				upsertPortfolioRiskSetting(upsert, portfolioBacktestId, symbol, "risk.orbCompressedMaxRiskTicks", round(sourceRisk.orbCompressedMaxRiskTicks));
+				upsertPortfolioRiskSetting(upsert, portfolioBacktestId, symbol, "risk.orbRetestMaxRiskTicks", round(sourceRisk.orbRetestMaxRiskTicks));
+				upsertPortfolioRiskSetting(upsert, portfolioBacktestId, symbol, "risk.openingMomentumMaxRiskTicks", round(sourceRisk.openingMomentumMaxRiskTicks));
+				upsertPortfolioRiskSetting(upsert, portfolioBacktestId, symbol, "risk.lateOrbContinuationMaxRiskTicks", round(sourceRisk.lateOrbContinuationMaxRiskTicks));
 			}
 			upsert.executeBatch();
 		}
@@ -17427,13 +17483,18 @@ public class FuturesManager {
 			1.0,
 			0.0
 		);
-		config.strategySettings = loadFuturesStrategySettings(symbol, activeLiveStrategySlot(session, snapshot));
+		String liveStrategySlot = activeLiveStrategySlot(session, snapshot);
+		config.strategySettings = loadFuturesStrategySettings(symbol, liveStrategySlot);
 		config.fundedProfile = activeLiveFundedProfileCode(session, snapshot);
 		FundedRuleProfile profile = fundedRuleProfileFor(config.fundedProfile);
 		if (riskProfileUsesSavedRisk(profile.code)) {
-			FuturesRiskSettings savedRisk = loadFuturesRiskSettings(symbol, activeLiveStrategySlot(session, snapshot));
+			FuturesRiskSettings savedRisk = loadFuturesRiskSettings(symbol, liveStrategySlot);
+			applyRiskSettingsToStrategySettings(config.strategySettings, savedRisk);
 			config.maxRiskPerTrade = savedRisk.maxRiskPerTrade;
 			config.maxContracts = savedRisk.maxContracts;
+			config.commissionPerContract = savedRisk.commissionPerContract;
+			config.slippageTicks = savedRisk.slippageTicks;
+			config.profitTarget = savedRisk.profitTarget;
 			if (isTopstep50KProfile(profile.code)) {
 				if (scalesSavedSizingForProfile(profile.code)) {
 					applySavedSizingScale(config, savedRisk, profile, symbol);
@@ -17450,7 +17511,7 @@ public class FuturesManager {
 		List<Bar> capturedBars = liveCapturedBarsForSymbol(symbol, timeframe, limit);
 		if (!capturedBars.isEmpty()) {
 			LiveWarmupBars warmup = cachedLiveWarmupBarsForSymbol(symbol, timeframe, limit);
-			List<Bar> bars = mergeBarSeries(warmup.bars, capturedBars, limit);
+			List<Bar> bars = latestSessionBars(mergeBarSeries(warmup.bars, capturedBars, limit), limit);
 			enrichLiveBars(bars, instrumentFor(symbol));
 			return bars;
 		}
@@ -17459,7 +17520,7 @@ public class FuturesManager {
 		List<RealtimeCandle> candles = aggregateRealtimeCandles(points, timeframe, limit);
 		InstrumentSpec spec = instrumentFor(symbol);
 		List<Bar> liveBars = barsFromRealtimeCandles(symbol, candles);
-		List<Bar> bars = mergeBarSeries(warmup.bars, liveBars, limit);
+		List<Bar> bars = latestSessionBars(mergeBarSeries(warmup.bars, liveBars, limit), limit);
 		enrichLiveBars(bars, spec);
 		return bars;
 	}
@@ -17493,11 +17554,15 @@ public class FuturesManager {
 		int minutesPerCandle = liveMonitorTimeframeMinutes(normalizedTimeframe);
 		int sourceLimit = Math.min(5000, Math.max(Math.max(1, limit), (Math.max(1, limit) * Math.max(1, minutesPerCandle)) + 120));
 		InstrumentSpec spec = instrumentFor(symbol);
+		LocalDate activeMarketDate = liveMarketFeedActive() ? currentLiveMarketDataDate() : null;
 		try {
 			List<FuturesConnectionManager.InternalBar> captured = FuturesMarketDataStore.readRecentCapturedBars(spec.symbol, sourceLimit);
 			for (int index = 0; index < captured.size(); index++) {
 				Bar bar = barFromInternalCapturedBar(captured.get(index));
 				if (bar == null || bar.marketTime == null || bar.marketTime.isBefore(RTH_START) || !bar.marketTime.isBefore(RTH_END)) {
+					continue;
+				}
+				if (activeMarketDate != null && !activeMarketDate.equals(bar.marketDate)) {
 					continue;
 				}
 				bars.add(bar);
@@ -17512,6 +17577,17 @@ public class FuturesManager {
 		List<Bar> timeframeBars = aggregateBarsForTimeframe(bars, normalizedTimeframe, limit);
 		enrichLiveBars(timeframeBars, spec);
 		return selectLastBars(timeframeBars, limit);
+	}
+
+	private static LocalDate currentLiveMarketDataDate() {
+		MarketSessionStatus status = currentMarketSessionStatus();
+		if (status != null && status.marketDate != null) {
+			try {
+				return LocalDate.parse(status.marketDate);
+			} catch (Exception ignored) {
+			}
+		}
+		return ZonedDateTime.now(NEW_YORK_ZONE).toLocalDate();
 	}
 
 	private static List<Bar> recordedRealtimeBarsForSymbol(String symbol, LocalDate day, String timeframe, int limit) {
@@ -19120,7 +19196,7 @@ public class FuturesManager {
 	}
 
 	private static boolean riskProfileUsesSavedRisk(String code) {
-		return false;
+		return true;
 	}
 
 	private static double savedSizingScale(FuturesRiskSettings sourceRisk, FundedRuleProfile profile) {
@@ -19240,7 +19316,7 @@ public class FuturesManager {
 		config.maxAggregateContracts = boundedInt(maxAggregateContracts, config.maxContracts * Math.max(1, parsedSymbols.size()), 1, 1000);
 		config.maxAggregateMiniUnits = maxAggregateMiniUnits > 0.0 ? clamp(maxAggregateMiniUnits, 0.1, 100.0) : profile.maxAggregateMiniUnits;
 		config.trailingDrawdownMode = profile.trailingDrawdownMode;
-		config.useSavedRisk = false;
+		config.useSavedRisk = useSavedRisk;
 		config.profitTarget = profitTarget >= 0.0 ? profitTarget : defaultRisk.profitTarget;
 		applyFundedProfile(config, profile);
 		config.dayStartBalance = config.accountSize;
@@ -19607,6 +19683,7 @@ public class FuturesManager {
 			if (config.useSavedRisk) {
 				FuturesRiskSettings sourceRisk = loadPortfolioBacktestRiskSettings(config.sourcePortfolioBacktestId, symbol);
 				savedRisk = sourceRisk == null ? loadFuturesRiskSettings(symbol, config.strategySlot) : sourceRisk;
+				applyRiskSettingsToStrategySettings(context.config.strategySettings, savedRisk);
 				context.config.maxRiskPerTrade = savedRisk.maxRiskPerTrade;
 				context.config.maxContracts = savedRisk.maxContracts;
 			}
@@ -20644,7 +20721,11 @@ public class FuturesManager {
 		FuturesStrategySettings safe = settings == null ? defaultFuturesStrategySettings() : settings;
 		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
 		double limit = safe.maxInitialRiskTicks;
-		if ("KREV".equals(code) || "KELT".equals(code)) {
+		if ("ORB2".equals(code)) {
+			limit = safe.orbRetestMaxRiskTicks;
+		} else if ("LORB".equals(code)) {
+			limit = safe.lateOrbContinuationMaxRiskTicks;
+		} else if ("KREV".equals(code) || "KELT".equals(code)) {
 			limit = Math.min(limit, safe.keltnerMaxRiskTicks);
 		} else if ("VRCL".equals(code)) {
 			limit = Math.min(limit, safe.vwapReclaimMaxRiskTicks);
