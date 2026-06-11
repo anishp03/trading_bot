@@ -90,8 +90,8 @@ public class FuturesManager {
 	private static final LocalTime MARKET_INTRADAY_MOMENTUM_SIGNAL_START = LocalTime.of(15, 25);
 	private static final LocalTime MARKET_INTRADAY_MOMENTUM_SIGNAL_END = LocalTime.of(15, 35);
 	private static final int RSI_PERIOD = 14;
-	private static final String TOPSTEPX_PRACTICE_ACCOUNT_ID = "22539378";
-	private static final String TOPSTEPX_50K_COMBINE_ACCOUNT_ID = "22529998";
+	private static final String TOPSTEPX_PRACTICE_ACCOUNT_ID = "24102568";
+	private static final String TOPSTEPX_50K_COMBINE_ACCOUNT_ID = "24097033";
 	private static final String FVG_SOURCE_NONE = "NONE";
 	private static final String FVG_SOURCE_PRIOR_LEVEL_BREAK = "PRIOR_LEVEL_BREAK";
 	private static final String FVG_SOURCE_ORB_BREAK = "ORB_BREAK";
@@ -8655,18 +8655,31 @@ public class FuturesManager {
 			int displayTrades = exitTrades;
 			int displayOpenTrades = openTrades;
 			String dataSource = "LOCAL_DECISIONS";
+			boolean brokerBalanceTracksPnl = false;
+			String brokerBalanceMode = "EQUITY";
+			double riskCurrentBalance = currentBalance;
 			if (brokerMetricsReady) {
 				double brokerPnl = jsonFirstNumber(brokerMetricsJson, new String[] { "currentPnl", "closedTradePnl", "realizedPnl" }, Double.NaN);
 				double brokerBalance = jsonFirstNumber(brokerMetricsJson, new String[] { "currentBalance", "balance", "cashBalance" }, Double.NaN);
+				double brokerRiskBalance = jsonFirstNumber(brokerMetricsJson, new String[] { "riskCurrentBalance", "equityBalance" }, Double.NaN);
 				double brokerReturnPct = jsonFirstNumber(brokerMetricsJson, new String[] { "returnPct" }, Double.NaN);
 				double brokerDrawdown = jsonFirstNumber(brokerMetricsJson, new String[] { "drawdown" }, Double.NaN);
 			double brokerTrades = jsonFirstNumber(brokerMetricsJson, new String[] { "numberOfTrades" }, Double.NaN);
 			double brokerOpenTrades = jsonFirstNumber(brokerMetricsJson, new String[] { "openTrades" }, Double.NaN);
+			brokerBalanceTracksPnl = jsonBoolean(brokerMetricsJson, "balanceTracksPnl");
+			brokerBalanceMode = brokerBalanceTracksPnl ? "PNL" : "EQUITY";
 			if (!Double.isNaN(brokerPnl)) {
 				currentPnl = brokerPnl;
 			}
-				if (!Double.isNaN(brokerBalance) && brokerBalance > 0.0) {
+				if (!Double.isNaN(brokerBalance) && (brokerBalance > 0.0 || brokerBalanceTracksPnl)) {
 					currentBalance = brokerBalance;
+				}
+				if (!Double.isNaN(brokerRiskBalance) && brokerRiskBalance > 0.0) {
+					riskCurrentBalance = brokerRiskBalance;
+				} else if (brokerBalanceTracksPnl && !Double.isNaN(brokerPnl)) {
+					riskCurrentBalance = Math.max(0.0, accountSize + brokerPnl);
+				} else {
+					riskCurrentBalance = currentBalance;
 				}
 				if (!Double.isNaN(brokerReturnPct)) {
 					displayReturnPct = brokerReturnPct;
@@ -8682,9 +8695,9 @@ public class FuturesManager {
 				}
 				dataSource = "TOPSTEPX";
 			}
-			double drawdownFloor = liveTrailingDrawdownFloor(accountSize, currentBalance, trailingDrawdownLimit);
-			double drawdownCushion = trailingDrawdownLimit > 0.0 ? Math.max(0.0, currentBalance - drawdownFloor) : 0.0;
-			double drawdownUsed = trailingDrawdownLimit > 0.0 ? Math.max(0.0, trailingDrawdownLimit - drawdownCushion) : Math.max(0.0, accountSize - currentBalance);
+			double drawdownFloor = liveTrailingDrawdownFloor(accountSize, riskCurrentBalance, trailingDrawdownLimit);
+			double drawdownCushion = trailingDrawdownLimit > 0.0 ? Math.max(0.0, riskCurrentBalance - drawdownFloor) : 0.0;
+			double drawdownUsed = trailingDrawdownLimit > 0.0 ? Math.max(0.0, trailingDrawdownLimit - drawdownCushion) : Math.max(0.0, accountSize - riskCurrentBalance);
 			if (displayDrawdown <= 0.0 && drawdownUsed > 0.0) {
 				displayDrawdown = drawdownUsed;
 			}
@@ -8697,6 +8710,10 @@ public class FuturesManager {
 				+ "\"brokerMetricsReady\":" + brokerMetricsReady + ","
 				+ "\"currentPnl\":" + round(currentPnl) + ","
 				+ "\"currentBalance\":" + round(currentBalance) + ","
+				+ "\"riskCurrentBalance\":" + round(riskCurrentBalance) + ","
+				+ "\"equityBalance\":" + round(riskCurrentBalance) + ","
+				+ "\"balanceMode\":" + jsonString(brokerBalanceMode) + ","
+				+ "\"balanceTracksPnl\":" + brokerBalanceTracksPnl + ","
 				+ "\"returnPct\":" + round(displayReturnPct) + ","
 				+ "\"winRate\":" + round(winRate) + ","
 				+ "\"numberOfTrades\":" + displayTrades + ","
@@ -10280,19 +10297,26 @@ public class FuturesManager {
 		String normalizedTimeframe = normalizeLiveMonitorTimeframe(timeframe);
 		int defaultLimit = liveMonitorDefaultLimit(normalizedTimeframe);
 		int safeLimit = boundedInt(limit, defaultLimit, 40, 2000);
+		FuturesLiveSession liveSessionCopy;
+		synchronized (FuturesManager.class) {
+			liveSessionCopy = copyLiveSession(liveSession);
+		}
+		boolean liveRunnerActive = liveSessionCopy.running;
 		MarketFeedFreshness feed = currentMarketFeedFreshness();
-		boolean realtimeRunning = feed.running;
+		boolean realtimeRunning = liveRunnerActive && feed.running;
 		String realtimeMode = ProjectXRealtimeManager.currentDataMode();
 		String realtimeLastEventAt = feed.lastMarketEventAt;
 		String realtimeMessage = ProjectXRealtimeManager.currentLastMessage();
 		MarketSessionStatus marketStatus = currentMarketSessionStatus();
 		String serverTime = ZonedDateTime.now(NEW_YORK_ZONE).toLocalDateTime().format(DISPLAY_TIME_FORMAT);
 		long feedStaleSeconds = feed.staleSeconds;
-		boolean realtimeFresh = feed.fresh;
-		boolean historyPollingActive = liveMarketFeedActive();
+		boolean realtimeFresh = liveRunnerActive && feed.fresh;
+		boolean historyPollingActive = liveRunnerActive && liveMarketFeedActive();
 		ensureLiveGraphWarmups(symbolList);
 		String graphReadinessJson = liveGraphReadinessJson(symbolList);
-		recordLiveMonitorPollSnapshots(symbolList, realtimeFresh);
+		if (liveRunnerActive) {
+			recordLiveMonitorPollSnapshots(symbolList, realtimeFresh);
+		}
 		boolean hasRealtimeTicks = false;
 		boolean hasPollSnapshots = false;
 		boolean hasCapturedBars = false;
@@ -14031,7 +14055,7 @@ public class FuturesManager {
 		);
 		if (jsonBoolean(brokerMetricsJson, "success")) {
 			LiveRuntimeState.updateBrokerMetricsJson(brokerMetricsJson);
-			double brokerBalance = jsonFirstNumber(brokerMetricsJson, new String[] { "currentBalance", "balance", "cashBalance" }, Double.NaN);
+			double brokerBalance = jsonFirstNumber(brokerMetricsJson, new String[] { "riskCurrentBalance", "equityBalance", "currentBalance", "balance", "cashBalance" }, Double.NaN);
 			if (!Double.isNaN(brokerBalance) && brokerBalance > 0.0) {
 				return brokerBalance;
 			}
@@ -14072,7 +14096,7 @@ public class FuturesManager {
 				if (session != null && session.sessionId > 0 && snapshot != null) {
 					reconcileBrokerFlatLiveEntries(session.sessionId, snapshot.snapshotId, brokerMetricsJson);
 				}
-				double brokerBalance = jsonFirstNumber(brokerMetricsJson, new String[] { "currentBalance", "balance", "cashBalance" }, Double.NaN);
+				double brokerBalance = jsonFirstNumber(brokerMetricsJson, new String[] { "riskCurrentBalance", "equityBalance", "currentBalance", "balance", "cashBalance" }, Double.NaN);
 				if (!Double.isNaN(brokerBalance) && brokerBalance > 0.0) {
 					sizing.currentBalance = brokerBalance;
 				}
@@ -18309,6 +18333,14 @@ public class FuturesManager {
 		String executionAccountId = requestedAccountId.length() > 0
 			? requestedAccountId
 			: cleanOrDefault(configuredAccountId, accountIdForFundedProfile(profile.code));
+		if ("TOPSTEPX".equals(normalizedMode)) {
+			String refreshedAccountId = FuturesConnectionManager.refreshTopstepxAccountForStart(executionAccountId);
+			if (refreshedAccountId.length() > 0 && !refreshedAccountId.equals(executionAccountId)) {
+				executionAccountId = refreshedAccountId;
+				requestedAccountId = refreshedAccountId;
+				configuredAccountId = FuturesConnectionManager.getTopstepxConfiguredAccountId();
+			}
+		}
 			String presetValidationMessage = validateStrategyPresetForSymbols(strategyPresetName, cleanLiveSymbols);
 			if (presetValidationMessage.length() > 0) {
 				return "{\"success\":false,\"message\":" + jsonString(presetValidationMessage) + ",\"status\":" + getLiveStatusJson() + "}";
@@ -18772,10 +18804,10 @@ public class FuturesManager {
 		LiveStrategySnapshotRow snapshot = loadActiveLiveStrategySnapshot();
 		MarketSessionStatus marketStatus = currentMarketSessionStatus();
 		MarketFeedFreshness feed = currentMarketFeedFreshness();
-		boolean realtimeRunning = feed.running;
+		boolean realtimeRunning = copy.running && feed.running;
 		String lastRealtimeEventAt = feed.lastMarketEventAt;
 		long feedStaleSeconds = feed.staleSeconds;
-		boolean feedFresh = feed.fresh;
+		boolean feedFresh = copy.running && feed.fresh;
 		boolean topstepApiReady = FuturesConnectionManager.isExecutionProviderReady("TOPSTEPX");
 		boolean tradingEnabled = copy.running
 			&& marketStatus.entryWindowOpen
@@ -18784,7 +18816,9 @@ public class FuturesManager {
 			&& topstepApiReady;
 		String strategyPreset = activeLiveStrategyPreset(copy, snapshot);
 		String marketDataDetail;
-		if (!realtimeRunning) {
+		if (!copy.running) {
+			marketDataDetail = "Bot is off, so ProjectX market data is stopped.";
+		} else if (!realtimeRunning) {
 			marketDataDetail = "ProjectX realtime feed is stopped.";
 		} else if (feedFresh) {
 			marketDataDetail = "Fresh ProjectX market event at " + cleanOrDefault(lastRealtimeEventAt, "now") + ".";

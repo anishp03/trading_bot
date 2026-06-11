@@ -59,6 +59,37 @@ final class FuturesConnectionRoutes {
             ctx.contentType("application/json").result(FuturesConnectionManager.syncTopstepxReadOnly());
         });
 
+        app.get("/api/futures/topstepx/accounts", ctx -> {
+            ctx.contentType("application/json").result(FuturesConnectionManager.getTopstepAccountsJson());
+        });
+
+        app.post("/api/futures/topstepx/accounts", ctx -> {
+            String name = ApiRequestUtils.requestParam(ctx, "name");
+            String accountId = ApiRequestUtils.requestParam(ctx, "accountId");
+            boolean activate = ApiRequestUtils.parseBooleanOrDefault(ApiRequestUtils.requestParam(ctx, "activate"), true);
+            String result = FuturesConnectionManager.saveTopstepAccount(name, accountId, activate);
+            if (result.contains("\"success\":false")) {
+                ctx.status(400);
+            }
+            ctx.contentType("application/json").result(result);
+        });
+
+        app.post("/api/futures/topstepx/accounts/{accountId}/activate", ctx -> {
+            String result = FuturesConnectionManager.activateTopstepAccount(ctx.pathParam("accountId"));
+            if (result.contains("\"success\":false")) {
+                ctx.status(400);
+            }
+            ctx.contentType("application/json").result(result);
+        });
+
+        app.delete("/api/futures/topstepx/accounts/{accountId}", ctx -> {
+            String result = FuturesConnectionManager.deleteTopstepAccount(ctx.pathParam("accountId"));
+            if (result.contains("\"success\":false")) {
+                ctx.status(400);
+            }
+            ctx.contentType("application/json").result(result);
+        });
+
         app.post("/api/futures/market-data/update-backtest-data", ctx -> {
             RuntimeMutationGuard.Decision guard = RuntimeMutationGuard.marketDataMutationAllowed("backtest market-data update");
             if (!guard.allowed) {

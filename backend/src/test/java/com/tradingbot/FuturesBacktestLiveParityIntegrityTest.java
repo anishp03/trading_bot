@@ -138,6 +138,12 @@ public class FuturesBacktestLiveParityIntegrityTest {
 	}
 
 	@Test
+	public void topstepFundedProfileAccountIdsMatchActiveProjectxAccounts() throws Exception {
+		assertEquals("24097033", accountIdForFundedProfile("TOPSTEP_50K"));
+		assertEquals("24102568", accountIdForFundedProfile("TOPSTEP_150K"));
+	}
+
+	@Test
 	public void liveStartCanReuseMatchingPromotedSourceSnapshot() throws Exception {
 		String accountId = accountIdForFundedProfile("TOPSTEP_50K");
 		Object snapshot = nestedInstance("LiveStrategySnapshotRow");

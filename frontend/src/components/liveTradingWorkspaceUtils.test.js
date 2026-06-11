@@ -191,3 +191,59 @@ test("chartSeriesSyncPlan updates live tail instead of resetting when same-chart
     "reset"
   );
 });
+
+test("chartSeriesSyncPlan resets when a fuller backend snapshot repairs same-latest history", () => {
+  assert.equal(
+    chartSeriesSyncPlan({
+      chartKey: "MGC|1m",
+      previousChartKey: "MGC|1m",
+      candleCount: 350,
+      previousCount: 70,
+      latestTime: 1781115300,
+      previousLastTime: 1781115300,
+    }),
+    "reset"
+  );
+
+  assert.equal(
+    chartSeriesSyncPlan({
+      chartKey: "MGC|1m",
+      previousChartKey: "MGC|1m",
+      candleCount: 350,
+      previousCount: 350,
+      latestTime: 1781115300,
+      previousLastTime: 1781115300,
+      historicalSignature: "350:fixed",
+      previousHistoricalSignature: "350:sparse",
+    }),
+    "reset"
+  );
+
+  assert.equal(
+    chartSeriesSyncPlan({
+      chartKey: "MGC|1m",
+      previousChartKey: "MGC|1m",
+      candleCount: 350,
+      previousCount: 350,
+      latestTime: 1781115300,
+      previousLastTime: 1781115300,
+      historicalSignature: "350:fixed",
+      previousHistoricalSignature: "350:fixed",
+    }),
+    "update-tail"
+  );
+
+  assert.equal(
+    chartSeriesSyncPlan({
+      chartKey: "MGC|1m",
+      previousChartKey: "MGC|1m",
+      candleCount: 351,
+      previousCount: 350,
+      latestTime: 1781115360,
+      previousLastTime: 1781115300,
+      historicalSignature: "351:new-minute",
+      previousHistoricalSignature: "350:fixed",
+    }),
+    "update-tail"
+  );
+});

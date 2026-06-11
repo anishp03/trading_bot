@@ -16,6 +16,7 @@ export default function Settings({ accountEmail }) {
   const [connections, setConnections] = useState([]);
   const [futuresFeedback, setFuturesFeedback] = useState("");
   const [busyProvider, setBusyProvider] = useState("");
+  const [topstepAccountDraft, setTopstepAccountDraft] = useState({ name: "", accountId: "" });
 
   const loadAccountSettings = useCallback((emailToLoad) => {
     apiFetch(`/api/settings/account?email=${encodeURIComponent(emailToLoad)}`)
@@ -121,6 +122,75 @@ export default function Settings({ accountEmail }) {
     }
   }
 
+  function updateTopstepAccountDraft(field, value) {
+    setTopstepAccountDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  async function saveTopstepAccount() {
+    setBusyProvider("TOPSTEPX_ACCOUNT");
+    setFuturesFeedback("");
+
+    try {
+      const response = await apiFormFetch("/api/futures/topstepx/accounts", {
+        name: topstepAccountDraft.name || "",
+        accountId: topstepAccountDraft.accountId || "",
+        activate: "true",
+      });
+      const payload = await readApiResponse(response);
+      if (!response.ok || payload.json?.success === false) {
+        throw new Error(payload.json?.message || payload.text || "Failed to save Topstep account.");
+      }
+      setTopstepAccountDraft({ name: "", accountId: "" });
+      setFuturesFeedback(payload.json?.message || "Topstep account saved.");
+      loadFuturesConnections();
+    } catch (error) {
+      console.error("Error saving Topstep account:", error);
+      setFuturesFeedback(error.message || "Failed to save Topstep account.");
+    } finally {
+      setBusyProvider("");
+    }
+  }
+
+  async function activateTopstepAccount(accountId) {
+    setBusyProvider(`TOPSTEPX_ACCOUNT_${accountId}`);
+    setFuturesFeedback("");
+
+    try {
+      const response = await apiFetch(`/api/futures/topstepx/accounts/${encodeURIComponent(accountId)}/activate`, { method: "POST" });
+      const payload = await readApiResponse(response);
+      if (!response.ok || payload.json?.success === false) {
+        throw new Error(payload.json?.message || payload.text || "Failed to activate Topstep account.");
+      }
+      setFuturesFeedback(payload.json?.message || "Topstep account activated.");
+      loadFuturesConnections();
+    } catch (error) {
+      console.error("Error activating Topstep account:", error);
+      setFuturesFeedback(error.message || "Failed to activate Topstep account.");
+    } finally {
+      setBusyProvider("");
+    }
+  }
+
+  async function deleteTopstepAccount(accountId) {
+    setBusyProvider(`TOPSTEPX_ACCOUNT_DELETE_${accountId}`);
+    setFuturesFeedback("");
+
+    try {
+      const response = await apiFetch(`/api/futures/topstepx/accounts/${encodeURIComponent(accountId)}`, { method: "DELETE" });
+      const payload = await readApiResponse(response);
+      if (!response.ok || payload.json?.success === false) {
+        throw new Error(payload.json?.message || payload.text || "Failed to remove Topstep account.");
+      }
+      setFuturesFeedback(payload.json?.message || "Topstep account removed.");
+      loadFuturesConnections();
+    } catch (error) {
+      console.error("Error removing Topstep account:", error);
+      setFuturesFeedback(error.message || "Failed to remove Topstep account.");
+    } finally {
+      setBusyProvider("");
+    }
+  }
+
   return (
     <div className="app-page app-settings-page">
       <h2 className="app-title">Settings</h2>
@@ -144,6 +214,11 @@ export default function Settings({ accountEmail }) {
           onChange={updateFuturesConnection}
           onSave={saveFuturesConnection}
           onTest={testFuturesConnection}
+          topstepAccountDraft={topstepAccountDraft}
+          onTopstepDraftChange={updateTopstepAccountDraft}
+          onSaveTopstepAccount={saveTopstepAccount}
+          onActivateTopstepAccount={activateTopstepAccount}
+          onDeleteTopstepAccount={deleteTopstepAccount}
         />
       ))}
 
@@ -152,9 +227,22 @@ export default function Settings({ accountEmail }) {
   );
 }
 
-function ConnectionPanel({ connection, busyProvider, onChange, onSave, onTest }) {
+function ConnectionPanel({
+  connection,
+  busyProvider,
+  onChange,
+  onSave,
+  onTest,
+  topstepAccountDraft,
+  onTopstepDraftChange,
+  onSaveTopstepAccount,
+  onActivateTopstepAccount,
+  onDeleteTopstepAccount,
+}) {
   const provider = connection.provider;
   const isBusy = busyProvider === provider;
+  const topstepAccounts = Array.isArray(connection.topstepAccounts) ? connection.topstepAccounts : [];
+  const savingTopstepAccount = busyProvider === "TOPSTEPX_ACCOUNT";
 
   return (
     <div className="app-panel">
@@ -263,6 +351,7 @@ function ConnectionPanel({ connection, busyProvider, onChange, onSave, onTest })
           <input
             value={connection.accountId || ""}
             onChange={(event) => onChange(provider, "accountId", event.target.value)}
+            readOnly={provider === "TOPSTEPX"}
             className="form-control app-input"
           />
         </Field>
@@ -287,19 +376,107 @@ function ConnectionPanel({ connection, busyProvider, onChange, onSave, onTest })
           </>
         )}
 
+        {provider === "TOPSTEPX" && (
+          <TopstepAccountsPanel
+            accounts={topstepAccounts}
+            activeAccountId={connection.accountId || ""}
+            draft={topstepAccountDraft}
+            saving={savingTopstepAccount}
+            busyProvider={busyProvider}
+            onDraftChange={onTopstepDraftChange}
+            onSave={onSaveTopstepAccount}
+            onActivate={onActivateTopstepAccount}
+            onDelete={onDeleteTopstepAccount}
+          />
+        )}
+
         <div className="col-12 d-flex align-items-center justify-content-between gap-2 flex-wrap">
           <div className="app-muted app-kicker">
             {connection.lastTestMessage || "Not tested yet."}
           </div>
           <div className="d-flex gap-2">
             <button type="button" className="app-btn px-3" onClick={() => onTest(provider)} disabled={isBusy}>
-              {isBusy ? "Working..." : "Test"}
+              {isBusy ? "Working..." : "Test Connection"}
             </button>
             <button type="button" className="app-btn app-btn-primary px-3" onClick={() => onSave(connection)} disabled={isBusy}>
-              Save
+              Save Connection
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function TopstepAccountsPanel({ accounts, activeAccountId, draft, saving, busyProvider, onDraftChange, onSave, onActivate, onDelete }) {
+  const cleanActiveAccountId = String(activeAccountId || "").trim();
+
+  return (
+    <div className="col-12 topstep-accounts-section">
+      <div className="topstep-accounts-head">
+        <div className="fw-bold app-kicker">Topstep Accounts</div>
+      </div>
+
+      <div className="row g-3 align-items-end">
+        <Field label="Account Name" className="col-12 col-md-5">
+          <input
+            value={draft.name || ""}
+            onChange={(event) => onDraftChange("name", event.target.value)}
+            placeholder="Express Funded"
+            className="form-control app-input"
+          />
+        </Field>
+        <Field label="Account ID" className="col-12 col-md-4">
+          <input
+            value={draft.accountId || ""}
+            onChange={(event) => onDraftChange("accountId", event.target.value)}
+            inputMode="numeric"
+            placeholder="22529998"
+            className="form-control app-input"
+          />
+        </Field>
+        <div className="col-12 col-md-3">
+          <button type="button" className="app-btn app-btn-primary app-btn-block px-3" onClick={onSave} disabled={saving}>
+            {saving ? "Saving..." : "Add Account"}
+          </button>
+        </div>
+      </div>
+
+      <div className="topstep-accounts-list">
+        {accounts.map((account) => {
+          const accountId = String(account.accountId || "").trim();
+          const active = account.active || accountId === cleanActiveAccountId;
+          const activating = busyProvider === `TOPSTEPX_ACCOUNT_${accountId}`;
+          const deleting = busyProvider === `TOPSTEPX_ACCOUNT_DELETE_${accountId}`;
+          return (
+            <div className="topstep-account-row" key={accountId || account.name}>
+              <div>
+                <div className="topstep-account-name">{account.name || "Topstep Account"}</div>
+                <div className="app-muted app-kicker">{accountId || "No account ID"}</div>
+              </div>
+              <div className="d-flex gap-2 align-items-center flex-wrap justify-content-end">
+                {active && <span className="app-badge app-positive-badge">active</span>}
+                <button
+                  type="button"
+                  className="app-btn app-btn-small px-3"
+                  onClick={() => onActivate(accountId)}
+                  disabled={active || activating || !accountId}
+                >
+                  {activating ? "Switching..." : "Use"}
+                </button>
+                <button
+                  type="button"
+                  className="app-btn app-btn-danger app-btn-small px-3"
+                  onClick={() => onDelete(accountId)}
+                  disabled={deleting || !accountId}
+                >
+                  {deleting ? "Removing..." : "Remove"}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+        {accounts.length === 0 && <div className="app-muted app-kicker">No saved Topstep accounts.</div>}
       </div>
     </div>
   );

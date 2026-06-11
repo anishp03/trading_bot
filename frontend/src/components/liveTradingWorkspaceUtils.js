@@ -132,6 +132,8 @@ export function chartSeriesSyncPlan({
   previousCount,
   latestTime,
   previousLastTime,
+  historicalSignature = "",
+  previousHistoricalSignature = "",
 }) {
   const nextCount = Number(candleCount || 0);
   const lastCount = Number(previousCount || 0);
@@ -141,6 +143,18 @@ export function chartSeriesSyncPlan({
   const latest = Number(latestTime || 0);
   const previousLatest = Number(previousLastTime || 0);
   if (latest > 0 && previousLatest > 0 && latest < previousLatest) return "reset";
+  const sameLatest = latest > 0 && previousLatest > 0 && latest === previousLatest;
+  if (sameLatest && nextCount !== lastCount) return "reset";
+  if (nextCount < lastCount) return "reset";
+  if (
+    sameLatest
+    &&
+    historicalSignature
+    && previousHistoricalSignature
+    && historicalSignature !== previousHistoricalSignature
+  ) {
+    return "reset";
+  }
   return "update-tail";
 }
 

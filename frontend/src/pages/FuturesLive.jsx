@@ -34,7 +34,7 @@ const LIVE_TRADE_CACHE_MAX_ROWS = 10000;
 const LIVE_HISTORY_REQUEST_LIMIT = 10000;
 const LIVE_ALL_TRADES_PAGE_SIZE = 500;
 const DEFAULT_PROFILE = "TOPSTEP_50K";
-const DEFAULT_ACCOUNT_PROFILE = "TOPSTEP_50K";
+const DEFAULT_ACCOUNT_PROFILE = "";
 const DEFAULT_STRATEGY_PRESET = "bestbiasfree";
 const CONTROL_STRATEGY_PRESET = "backtestbias92k";
 const BIAS_FREE_STRATEGY_PRESET = "biasfree92k";
@@ -45,12 +45,7 @@ const CANONICAL_STRATEGY_PRESETS = [
   { name: BEST_BIAS_FREE_STRATEGY_PRESET, label: "Best Bias-Free" },
 ];
 const MICRO_SYMBOLS = new Set(["MES", "MNQ", "M2K", "MGC", "MYM", "MCL"]);
-const LIVE_ACCOUNT_PROFILE_CODES = new Set(["TOPSTEP_150K", "TOPSTEP_50K", "TOPSTEP_100K"]);
-const PROFILE_ACCOUNTS = {
-  TOPSTEP_150K: { label: "150K", accountId: "22539378" },
-  TOPSTEP_50K: { label: "50K", accountId: "22529998" },
-  TOPSTEP_100K: { label: "100K", accountId: "" },
-};
+const EMPTY_TOPSTEP_ACCOUNT = { code: "", name: "No saved account", accountId: "", label: "No saved account" };
 const RISK_PROFILE_FALLBACKS = [
   {
     code: "TOPSTEP_50K",
@@ -154,6 +149,7 @@ export default function FuturesLive() {
   const [dtmEnabled, setDtmEnabled] = useState(true);
   const [liveRiskConfig, setLiveRiskConfig] = useState(DEFAULT_LIVE_RISK_CONFIG);
   const [fundedProfiles, setFundedProfiles] = useState([]);
+  const [topstepAccounts, setTopstepAccounts] = useState([]);
   const [strategyPresets, setStrategyPresets] = useState([]);
   const [liveStatus, setLiveStatus] = useState(null);
   const [realtimeStatus, setRealtimeStatus] = useState(null);
@@ -210,19 +206,30 @@ export default function FuturesLive() {
   const riskProfileOptions = useMemo(() => buildRiskProfileOptions(fundedProfiles), [fundedProfiles]);
 
   const topstepAccountProfiles = useMemo(() => {
-    const profileSource = fundedProfiles.length ? fundedProfiles : [
-      { ...FALLBACK_PROFILE, code: DEFAULT_ACCOUNT_PROFILE, name: FALLBACK_PROFILE.name },
-    ];
-    const profiles = profileSource.filter((profile) => LIVE_ACCOUNT_PROFILE_CODES.has(profile.code) && PROFILE_ACCOUNTS[profile.code]?.accountId);
-    return profiles.length ? profiles : [{ ...FALLBACK_PROFILE, code: DEFAULT_ACCOUNT_PROFILE, name: FALLBACK_PROFILE.name }];
-  }, [fundedProfiles]);
+    const accounts = Array.isArray(topstepAccounts) ? topstepAccounts : [];
+    const profiles = accounts
+      .map((account) => {
+        const accountId = String(account?.accountId || "").trim();
+        if (!accountId) return null;
+        const name = String(account?.name || accountId).trim();
+        return {
+          code: accountId,
+          name,
+          label: name,
+          accountId,
+          active: Boolean(account?.active),
+        };
+      })
+      .filter(Boolean);
+    return profiles.length ? profiles : [EMPTY_TOPSTEP_ACCOUNT];
+  }, [topstepAccounts]);
 
   const selectedProfile = useMemo(() => {
     return riskProfileOptions.find((profile) => profile.code === selectedProfileCode) || riskProfileOptions[0] || FALLBACK_PROFILE;
   }, [riskProfileOptions, selectedProfileCode]);
 
   const selectedAccountProfile = useMemo(() => {
-    return topstepAccountProfiles.find((profile) => profile.code === selectedAccountProfileCode) || topstepAccountProfiles[0] || FALLBACK_PROFILE;
+    return topstepAccountProfiles.find((profile) => profile.code === selectedAccountProfileCode) || topstepAccountProfiles[0] || EMPTY_TOPSTEP_ACCOUNT;
   }, [selectedAccountProfileCode, topstepAccountProfiles]);
 
   const monitorSymbols = DEFAULT_SYMBOLS;
@@ -232,14 +239,17 @@ export default function FuturesLive() {
     [strategyPresets]
   );
   const activeStrategyPreset = liveStatus?.running && liveStatus?.strategyPreset ? liveStatus.strategyPreset : selectedStrategyPreset;
-  const accountPreset = PROFILE_ACCOUNTS[selectedAccountProfile.code] || PROFILE_ACCOUNTS[DEFAULT_ACCOUNT_PROFILE];
+  const accountPreset = {
+    label: selectedAccountProfile.label || selectedAccountProfile.name || "Topstep Account",
+    accountId: selectedAccountProfile.accountId || "",
+  };
   const accountScopeId = String(accountPreset.accountId || "").trim();
-  const selectedAccountSize = Number(selectedAccountProfile.accountSize || liveRiskConfig.accountSize || FALLBACK_PROFILE.accountSize);
+  const selectedAccountSize = Number(selectedProfile.accountSize || liveRiskConfig.accountSize || FALLBACK_PROFILE.accountSize);
   const liveRiskAccountSize = Number(liveRiskConfig.accountSize || selectedProfile.accountSize || FALLBACK_PROFILE.accountSize || selectedAccountSize);
   const symbolsCsv = monitorSymbols.join(",");
   const backendOffline = backendOnline === false || futuresSidebarOnline === false || futuresSidebarStatus?.backend?.online === false;
   const botStarted = !backendOffline && Boolean(liveStatus?.running);
-  const feedRunning = !backendOffline && Boolean(realtimeStatus?.running || liveMonitor?.realtimeRunning);
+  const feedRunning = botStarted && !backendOffline && Boolean(realtimeStatus?.running || liveMonitor?.realtimeRunning);
   const monitorFeedOpen = !backendOffline && Boolean(feedRunning || liveMonitor?.historyPolling);
   const monitorDataActive = monitorFeedOpen;
   const graphReadiness = liveMonitor?.graphReadiness || null;
@@ -377,6 +387,10 @@ export default function FuturesLive() {
     () => accountAnalyticsActive ? accountScopedMetrics : defaultLiveAccountMetrics(effectiveLiveAccountSize, accountScopeId),
     [accountAnalyticsActive, accountScopeId, accountScopedMetrics, effectiveLiveAccountSize]
   );
+  const balanceTracksPnl = metricsBalanceTracksPnl(metrics);
+  const balanceCardValue = balanceTracksPnl
+    ? Number(metrics?.currentPnl ?? metrics?.currentBalance ?? 0)
+    : Number(metrics?.currentBalance ?? Number(metrics?.accountSize || 0) + Number(metrics?.currentPnl || 0));
   const sidebarStartReady = Boolean(futuresSidebarStatus?.topstepApi?.ready);
   const chartLiveTradeRows = useMemo(
     () => liveTrades,
@@ -451,6 +465,7 @@ export default function FuturesLive() {
 
   useEffect(() => {
     loadFundedProfiles();
+    loadTopstepAccounts();
     loadStrategyPresets();
   }, []);
 
@@ -466,9 +481,23 @@ export default function FuturesLive() {
 
   useEffect(() => {
     if (!topstepAccountProfiles.some((profile) => profile.code === selectedAccountProfileCode)) {
-      setSelectedAccountProfileCode(topstepAccountProfiles[0]?.code || DEFAULT_ACCOUNT_PROFILE);
+      const activeAccount = topstepAccountProfiles.find((profile) => profile.active);
+      const nextAccount = activeAccount || topstepAccountProfiles[0] || EMPTY_TOPSTEP_ACCOUNT;
+      setSelectedAccountProfileCode(nextAccount.code || DEFAULT_ACCOUNT_PROFILE);
+      const inferredRiskProfileCode = riskProfileCodeForTopstepAccount(nextAccount, riskProfileOptions);
+      if (inferredRiskProfileCode) {
+        setSelectedProfileCode(inferredRiskProfileCode);
+      }
     }
-  }, [selectedAccountProfileCode, topstepAccountProfiles]);
+  }, [riskProfileOptions, selectedAccountProfileCode, topstepAccountProfiles]);
+
+  useEffect(() => {
+    if (liveStatus?.running) return;
+    const inferredRiskProfileCode = riskProfileCodeForTopstepAccount(selectedAccountProfile, riskProfileOptions);
+    if (inferredRiskProfileCode && inferredRiskProfileCode !== selectedProfileCode) {
+      setSelectedProfileCode(inferredRiskProfileCode);
+    }
+  }, [liveStatus?.running, riskProfileOptions, selectedAccountProfile, selectedProfileCode]);
 
   useEffect(() => {
     if (liveStatus?.running) return;
@@ -589,10 +618,15 @@ export default function FuturesLive() {
   }, [accountScopeId, setFuturesSidebarAccountId]);
 
   useEffect(() => {
+    if (!botStarted) {
+      liveMarksRef.current = null;
+      setLiveMarks(null);
+      return undefined;
+    }
     loadLiveMarks();
     const intervalId = window.setInterval(loadLiveMarks, LIVE_MARKS_REFRESH_MS);
     return () => window.clearInterval(intervalId);
-  }, [accountScopeId, symbolsCsv, selectedTimeframe]);
+  }, [accountScopeId, botStarted, symbolsCsv, selectedTimeframe]);
 
   useEffect(() => {
     if (typeof refreshFuturesSidebarStatus !== "function" || !feedRunning || feedStaleSeconds < 0) {
@@ -756,6 +790,7 @@ export default function FuturesLive() {
       latest?.low,
       latest?.close,
       latest?.volume,
+      candleHistorySignature(displayCandles),
     ].join("|");
     if (signature === latestChartSyncSignature.current) return;
     latestChartSyncSignature.current = signature;
@@ -822,13 +857,20 @@ export default function FuturesLive() {
 
   function loadFundedProfiles() {
     requestJson("fundedProfiles", "/api/futures/funded-rule-profiles", (data) => {
-        const topstepProfiles = Array.isArray(data)
-          ? data.filter((profile) => PROFILE_ACCOUNTS[profile.code]?.accountId)
-          : [];
-        setFundedProfiles(topstepProfiles.length ? topstepProfiles : [FALLBACK_PROFILE]);
+        const topstepProfiles = Array.isArray(data) ? data.filter((profile) => String(profile?.provider || "").toUpperCase() === BROKER_SOURCE_TOPSTEPX) : [];
+        setFundedProfiles(topstepProfiles.length ? topstepProfiles : RISK_PROFILE_FALLBACKS);
       }, (error) => {
         noteBackendError("Error loading funded profiles:", error);
-        setFundedProfiles([FALLBACK_PROFILE]);
+        setFundedProfiles(RISK_PROFILE_FALLBACKS);
+      });
+  }
+
+  function loadTopstepAccounts() {
+    requestJson("topstepAccounts", "/api/futures/topstepx/accounts", (data) => {
+        setTopstepAccounts(Array.isArray(data) ? data : []);
+      }, (error) => {
+        noteBackendError("Error loading Topstep accounts:", error);
+        setTopstepAccounts([]);
       });
   }
 
@@ -927,6 +969,11 @@ export default function FuturesLive() {
   }
 
   function loadLiveMarks() {
+    if (!botStartedRef.current) {
+      liveMarksRef.current = null;
+      setLiveMarks(null);
+      return;
+    }
     const requestSymbols = symbolsCsv || DEFAULT_SYMBOLS.join(",");
     const requestTimeframe = selectedTimeframe;
     const params = new URLSearchParams({
@@ -1028,8 +1075,29 @@ export default function FuturesLive() {
     transitionChart(() => setSelectedTimeframe(value));
   }
 
-  function changeTopstepAccountProfile(code) {
+  async function changeTopstepAccountProfile(code) {
+    const nextAccount = topstepAccountProfiles.find((profile) => profile.code === code);
     setSelectedAccountProfileCode(code);
+    const inferredRiskProfileCode = riskProfileCodeForTopstepAccount(nextAccount, riskProfileOptions);
+    if (inferredRiskProfileCode) {
+      setSelectedProfileCode(inferredRiskProfileCode);
+    }
+    if (!nextAccount?.accountId) return;
+    await runAction("account", async () => {
+      const response = await apiFetch(`/api/futures/topstepx/accounts/${encodeURIComponent(nextAccount.accountId)}/activate`, { method: "POST" });
+      const payload = await readApiResponse(response);
+      if (!response.ok || payload.json?.success === false) {
+        throw new Error(payload.json?.message || payload.text || "Failed to switch Topstep account.");
+      }
+      if (Array.isArray(payload.json?.accounts)) {
+        setTopstepAccounts(payload.json.accounts);
+      } else {
+        loadTopstepAccounts();
+      }
+      setFeedback(payload.json?.message || `${nextAccount.name} is active for ProjectX.`);
+      refreshFuturesSidebarStatus?.();
+      refreshLiveData();
+    });
   }
 
   function transitionChart(update) {
@@ -1093,6 +1161,9 @@ export default function FuturesLive() {
         throw new Error(payload.json?.message || payload.text || "Failed to stop live bot.");
       }
       setLiveStatus(payload.json?.status || null);
+      botStartedRef.current = false;
+      liveMarksRef.current = null;
+      setLiveMarks(null);
       if (feedRunning) {
         const priceResponse = await apiFetch("/api/futures/live/realtime/stop", { method: "POST" });
         const pricePayload = await readApiResponse(priceResponse);
@@ -1205,10 +1276,9 @@ export default function FuturesLive() {
               disabled={Boolean(liveStatus?.running)}
             >
               {topstepAccountProfiles.map((profile) => {
-                const account = PROFILE_ACCOUNTS[profile.code] || {};
                 return (
                   <option key={profile.code} value={profile.code}>
-                    {account.label || profile.name}
+                    {profile.label || profile.name}
                   </option>
                 );
               })}
@@ -1264,7 +1334,7 @@ export default function FuturesLive() {
       </section>
 
       <section className="app-live-grid futures-live-summary-grid">
-        <MetricCard label="Current Balance" value={formatAccountCurrency(Number(metrics?.currentBalance ?? Number(metrics?.accountSize || 0) + Number(metrics?.currentPnl || 0)))} />
+        <MetricCard label={balanceTracksPnl ? "Funded PnL" : "Current Balance"} value={formatAccountCurrency(balanceCardValue)} accent={balanceTracksPnl ? balanceCardValue : undefined} />
         <MetricCard label="Current PnL" value={formatCurrency(metrics?.currentPnl)} accent={Number(metrics?.currentPnl || 0)} />
         <MetricCard label="Return %" value={formatPct(metrics?.returnPct)} accent={Number(metrics?.returnPct || 0)} />
         <MetricCard label="Trades" value={String(tradeMetricCount)} />
@@ -2887,6 +2957,29 @@ function mergeMonitorWithMarks(monitor, marks, timeframe) {
   };
 }
 
+function candleHistorySignature(candles) {
+  const history = Array.isArray(candles) ? candles.slice(0, -1) : [];
+  if (!history.length) return "";
+  let hash = 2166136261;
+  history.forEach((candle) => {
+    const text = [
+      candle?.time ?? "",
+      candle?.open ?? "",
+      candle?.high ?? "",
+      candle?.low ?? "",
+      candle?.close ?? "",
+      candle?.volume ?? "",
+    ].join(":");
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+  });
+  const first = history[0] || {};
+  const last = history[history.length - 1] || {};
+  return `${history.length}:${first.time || ""}:${last.time || ""}:${hash >>> 0}`;
+}
+
 function mergeCurrentCandleIntoSeries(series, currentCandle) {
   const candles = Array.isArray(series) ? [...series] : [];
   const patch = normalizeCandle(currentCandle);
@@ -3089,14 +3182,21 @@ function augmentTopstepMetricsWithMarks(metrics, symbolStates) {
   const markedCurrentPnl = brokerCurrentPnl + positionPnlAdjustment;
   const markedUnrealizedPnl = brokerUnrealizedPnl + positionPnlAdjustment;
   const currentBalance = Number(metrics.currentBalance ?? broker.currentBalance ?? 0);
-  const markedCurrentBalance = Number.isFinite(currentBalance) && currentBalance > 0
+  const balanceTracksPnl = metricsBalanceTracksPnl(metrics);
+  const markedCurrentBalance = Number.isFinite(currentBalance) && (currentBalance > 0 || balanceTracksPnl)
     ? currentBalance + positionPnlAdjustment
     : currentBalance;
+  const riskCurrentBalance = Number(metrics.riskCurrentBalance ?? metrics.equityBalance ?? broker.riskCurrentBalance ?? broker.equityBalance ?? 0);
+  const markedRiskCurrentBalance = Number.isFinite(riskCurrentBalance) && riskCurrentBalance > 0
+    ? riskCurrentBalance + positionPnlAdjustment
+    : riskCurrentBalance;
   const accountSize = Number(metrics.accountSize || broker.accountSize || 0);
   return {
     ...metrics,
     currentPnl: markedCurrentPnl,
     currentBalance: markedCurrentBalance,
+    riskCurrentBalance: markedRiskCurrentBalance,
+    equityBalance: markedRiskCurrentBalance,
     unrealizedPnl: markedUnrealizedPnl,
     returnPct: accountSize > 0 ? (markedCurrentPnl / accountSize) * 100 : metrics.returnPct,
     broker: {
@@ -3104,6 +3204,8 @@ function augmentTopstepMetricsWithMarks(metrics, symbolStates) {
       positions,
       currentPnl: markedCurrentPnl,
       currentBalance: markedCurrentBalance,
+      riskCurrentBalance: markedRiskCurrentBalance,
+      equityBalance: markedRiskCurrentBalance,
       unrealizedPnl: markedUnrealizedPnl,
       displayPnlSource: "LIVE_MARKS_PRICE_ONLY",
     },
@@ -3135,6 +3237,10 @@ function scopeBrokerMetricsToAccount(metrics, accountId, accountSizeFallback = 0
       accountSize: scopedAccountSize,
       currentPnl: 0,
       currentBalance: scopedAccountSize,
+      riskCurrentBalance: scopedAccountSize,
+      equityBalance: scopedAccountSize,
+      balanceMode: "EQUITY",
+      balanceTracksPnl: false,
       returnPct: 0,
       realizedPnl: 0,
       unrealizedPnl: 0,
@@ -3180,6 +3286,10 @@ function defaultLiveAccountMetrics(accountSize = 0, accountId = "") {
     accountSize: normalizedAccountSize,
     currentPnl: 0,
     currentBalance: idleBalance,
+    riskCurrentBalance: normalizedAccountSize,
+    equityBalance: normalizedAccountSize,
+    balanceMode: "EQUITY",
+    balanceTracksPnl: false,
     returnPct: 0,
     drawdown: 0,
     numberOfTrades: 0,
@@ -3192,6 +3302,10 @@ function defaultLiveAccountMetrics(accountSize = 0, accountId = "") {
       accountSize: normalizedAccountSize,
       currentPnl: 0,
       currentBalance: idleBalance,
+      riskCurrentBalance: normalizedAccountSize,
+      equityBalance: normalizedAccountSize,
+      balanceMode: "EQUITY",
+      balanceTracksPnl: false,
       realizedPnl: 0,
       unrealizedPnl: 0,
       returnPct: 0,
@@ -3233,12 +3347,16 @@ function mergeStableAccountMetrics(metrics, cachedMetrics, accountId) {
   const mergedTrades = mergeStableBrokerRows(previousTrades, incomingTrades);
   const exactOrders = incomingOrders;
   const historyIncomplete = previousTrades.length > incomingTrades.length;
+  const balanceTracksPnl = metricsBalanceTracksPnl(metrics);
   const stableCurrentPnl = historyIncomplete && Number(metrics.currentPnl || 0) === 0
     ? cachedMetrics.currentPnl
     : metrics.currentPnl;
-  const stableCurrentBalance = historyIncomplete && Number(metrics.currentBalance || 0) <= 0
+  const stableCurrentBalance = historyIncomplete && !balanceTracksPnl && Number(metrics.currentBalance || 0) <= 0
     ? cachedMetrics.currentBalance
     : metrics.currentBalance;
+  const stableRiskCurrentBalance = historyIncomplete && Number(metrics.riskCurrentBalance || metrics.equityBalance || 0) <= 0
+    ? cachedMetrics.riskCurrentBalance || cachedMetrics.equityBalance
+    : metrics.riskCurrentBalance || metrics.equityBalance;
   const stableDrawdown = historyIncomplete && Number(metrics.drawdown || 0) === 0
     ? cachedMetrics.drawdown
     : metrics.drawdown;
@@ -3247,12 +3365,16 @@ function mergeStableAccountMetrics(metrics, cachedMetrics, accountId) {
     ...metrics,
     currentPnl: stableCurrentPnl,
     currentBalance: stableCurrentBalance,
+    riskCurrentBalance: stableRiskCurrentBalance,
+    equityBalance: stableRiskCurrentBalance,
     drawdown: stableDrawdown,
     numberOfTrades,
     broker: {
       ...broker,
       currentPnl: stableCurrentPnl,
       currentBalance: stableCurrentBalance,
+      riskCurrentBalance: stableRiskCurrentBalance,
+      equityBalance: stableRiskCurrentBalance,
       drawdown: stableDrawdown,
       numberOfTrades,
       trades: mergedTrades,
@@ -5724,12 +5846,42 @@ function applyLiveFundedProfile(config, profile) {
 
 function liveAccountSizeFromMetrics(metrics, fallback = 0) {
   const broker = metrics?.broker || {};
+  const balanceTracksPnl = metricsBalanceTracksPnl(metrics);
   return firstPositiveNumber(
-    broker.currentBalance,
-    metrics?.currentBalance,
+    broker.riskCurrentBalance,
+    metrics?.riskCurrentBalance,
+    broker.equityBalance,
+    metrics?.equityBalance,
+    balanceTracksPnl ? 0 : broker.currentBalance,
+    balanceTracksPnl ? 0 : metrics?.currentBalance,
     broker.accountSize,
     metrics?.accountSize,
     fallback
+  );
+}
+
+function riskProfileCodeForTopstepAccount(account, riskProfiles = []) {
+  const label = String(account?.name || account?.label || account?.code || "").toUpperCase();
+  const desiredSize = label.includes("150") ? 150000 : label.includes("100") ? 100000 : label.includes("50") ? 50000 : 0;
+  if (!desiredSize) return "";
+  const desiredShortLabel = desiredSize === 150000 ? "150K" : desiredSize === 100000 ? "100K" : "50K";
+  const desiredCode = `TOPSTEP_${desiredShortLabel}`;
+  const match = (Array.isArray(riskProfiles) ? riskProfiles : []).find((profile) => {
+    const profileLabel = String(profile?.name || profile?.label || profile?.code || "").toUpperCase();
+    return Number(profile?.accountSize || 0) === desiredSize
+      || String(profile?.code || "").toUpperCase() === desiredCode
+      || profileLabel.includes(desiredShortLabel);
+  });
+  return match?.code || desiredCode;
+}
+
+function metricsBalanceTracksPnl(metrics) {
+  const broker = metrics?.broker || {};
+  return Boolean(
+    metrics?.balanceTracksPnl
+      || broker.balanceTracksPnl
+      || String(metrics?.balanceMode || "").toUpperCase() === "PNL"
+      || String(broker.balanceMode || "").toUpperCase() === "PNL"
   );
 }
 
@@ -5754,7 +5906,7 @@ function accountProfileCodeForAccountId(accountId, profiles = []) {
   const cleanAccountId = String(accountId || "").trim();
   if (!cleanAccountId) return "";
   const match = profiles.find((profile) => {
-    const profileAccountId = String(PROFILE_ACCOUNTS[profile.code]?.accountId || "").trim();
+    const profileAccountId = String(profile?.accountId || profile?.code || "").trim();
     return profileAccountId === cleanAccountId;
   });
   return match?.code || "";

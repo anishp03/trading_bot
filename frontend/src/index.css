@@ -546,6 +546,43 @@ textarea {
   flex-wrap: wrap;
 }
 
+.topstep-accounts-section {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.topstep-accounts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.topstep-accounts-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.topstep-account-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--app-radius);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.topstep-account-name {
+  min-width: 0;
+  font-weight: 700;
+  word-break: break-word;
+}
+
 .app-label {
   font-size: 0.75rem;
   color: rgba(255, 255, 255, 0.7);

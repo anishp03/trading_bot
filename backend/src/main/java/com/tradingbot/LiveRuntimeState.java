@@ -83,7 +83,7 @@ public class LiveRuntimeState {
 				return;
 			}
 			double cachedAccountSize = jsonFirstNumber(brokerMetricsJson, new String[] { "accountSize" }, Double.NaN);
-			double cachedCurrentBalance = jsonFirstNumber(brokerMetricsJson, new String[] { "currentBalance", "balance", "cashBalance" }, Double.NaN);
+			double cachedCurrentBalance = jsonFirstNumber(brokerMetricsJson, new String[] { "riskCurrentBalance", "equityBalance", "currentBalance", "balance", "cashBalance" }, Double.NaN);
 			double cachedCurrentPnl = jsonFirstNumber(brokerMetricsJson, new String[] { "currentPnl" }, Double.NaN);
 			double cachedRealizedPnl = jsonFirstNumber(brokerMetricsJson, new String[] { "realizedPnl", "closedTradePnl" }, Double.NaN);
 			double cachedUnrealizedPnl = jsonFirstNumber(brokerMetricsJson, new String[] { "unrealizedPnl" }, Double.NaN);

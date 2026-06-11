@@ -53,7 +53,7 @@ function LiveTradingWorkspaceComponent({
   const markerApiRef = useRef(null);
   const priceLinesRef = useRef([]);
   const lastViewportRef = useRef({ chartKey: "", range: "", rangeRevision: 0 });
-  const lastSeriesUpdateRef = useRef({ chartKey: "", count: 0, lastTime: null });
+  const lastSeriesUpdateRef = useRef({ chartKey: "", count: 0, lastTime: null, historicalSignature: "" });
   const [selectedTradeId, setSelectedTradeId] = useState("");
   const [chartReady, setChartReady] = useState(false);
   void uiRevision;
@@ -93,6 +93,7 @@ function LiveTradingWorkspaceComponent({
     const previousViewport = lastViewportRef.current;
     const previousSeriesUpdate = lastSeriesUpdateRef.current;
     const latest = normalizedCandles[normalizedCandles.length - 1] || null;
+    const historicalSignature = candleHistorySignature(normalizedCandles);
     const syncPlan = chartSeriesSyncPlan({
       chartKey: nextChartDataKey,
       previousChartKey: previousSeriesUpdate.chartKey,
@@ -100,6 +101,8 @@ function LiveTradingWorkspaceComponent({
       previousCount: previousSeriesUpdate.count,
       latestTime: latest?.time,
       previousLastTime: previousSeriesUpdate.lastTime,
+      historicalSignature,
+      previousHistoricalSignature: previousSeriesUpdate.historicalSignature,
     });
     if (syncPlan === "ignore-empty") return;
 
@@ -132,6 +135,7 @@ function LiveTradingWorkspaceComponent({
       chartKey: nextChartDataKey,
       count: normalizedCandles.length,
       lastTime: latest?.time || null,
+      historicalSignature,
     };
   }, [chartDataKey, timeframe]);
 
@@ -249,7 +253,7 @@ function LiveTradingWorkspaceComponent({
       volumeSeriesRef.current = null;
       markerApiRef.current = null;
       priceLinesRef.current = [];
-      lastSeriesUpdateRef.current = { chartKey: "", count: 0, lastTime: null };
+      lastSeriesUpdateRef.current = { chartKey: "", count: 0, lastTime: null, historicalSignature: "" };
     };
   }, []);
 
@@ -569,6 +573,29 @@ function firstTailUpdateIndex(candles, previousLastTime) {
   if (lastTime <= 0) return Math.max(0, candles.length - 1);
   const index = candles.findIndex((candle) => Number(candle?.time || 0) >= lastTime);
   return index >= 0 ? index : Math.max(0, candles.length - 1);
+}
+
+function candleHistorySignature(candles) {
+  const history = Array.isArray(candles) ? candles.slice(0, -1) : [];
+  if (!history.length) return "";
+  let hash = 2166136261;
+  history.forEach((candle) => {
+    const text = [
+      candle?.time ?? "",
+      candle?.open ?? "",
+      candle?.high ?? "",
+      candle?.low ?? "",
+      candle?.close ?? "",
+      candle?.volume ?? "",
+    ].join(":");
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+  });
+  const first = history[0] || {};
+  const last = history[history.length - 1] || {};
+  return `${history.length}:${first.time || ""}:${last.time || ""}:${hash >>> 0}`;
 }
 
 function toChartTime(value) {

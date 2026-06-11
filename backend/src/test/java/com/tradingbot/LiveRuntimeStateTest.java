@@ -1,6 +1,9 @@
 package com.tradingbot;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.lang.reflect.Field;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -149,6 +152,19 @@ public class LiveRuntimeStateTest {
 	}
 
 	@Test
+	public void brokerMetricsCacheUsesRiskEquityWhenFundedBalanceTracksPnl() throws Exception {
+		LiveRuntimeState.updateBrokerMetricsJson(
+			"{\"success\":true,\"accountId\":\"24097033\",\"accountSize\":50000,"
+				+ "\"currentBalance\":-1001.3,\"currentPnl\":-1001.3,"
+				+ "\"riskCurrentBalance\":48998.7,\"equityBalance\":48998.7,"
+				+ "\"balanceMode\":\"PNL\",\"balanceTracksPnl\":true,"
+				+ "\"syncedAt\":\"2026-06-10T14:15:00Z\",\"positions\":[],\"orders\":[],\"trades\":[]}"
+		);
+
+		assertEquals(48998.7, privateStaticDouble("currentBalance"), 0.001);
+	}
+
+	@Test
 	public void marksJsonWarnsAndFiltersWhenRequestedAccountDoesNotMatchBrokerCache() {
 		LiveRuntimeState.updateBrokerMetricsJson(
 			"{\"success\":true,\"accountId\":\"22539378\",\"accountSize\":150000,\"currentBalance\":149950.5,\"currentPnl\":-49.5,"
@@ -214,5 +230,11 @@ public class LiveRuntimeStateTest {
 		String json = LiveRuntimeState.getLiveMarksJson("MGC", "1m", "22539378");
 		assertTrue(json.contains("\"orders\":[]"), json);
 		assertTrue(json.contains("\"brokerOrderCount\":0"), json);
+	}
+
+	private static double privateStaticDouble(String fieldName) throws Exception {
+		Field field = LiveRuntimeState.class.getDeclaredField(fieldName);
+		field.setAccessible(true);
+		return field.getDouble(null);
 	}
 }

@@ -310,9 +310,9 @@ function marketForPath(pathname) {
 function FuturesSidebarStatus({ backendOnline, status, selectedAccountId = "" }) {
   const backendOn = Boolean(backendOnline && status?.backend?.online !== false);
   const botOn = Boolean(backendOn && status?.bot?.running);
-  const marketDataOn = Boolean(backendOn && status?.marketData?.receiving);
+  const marketDataOn = Boolean(botOn && status?.marketData?.receiving);
   const marketDataStale = Boolean(
-    backendOn
+    botOn
       && status?.marketData?.running
       && Number(status?.marketData?.staleSeconds ?? -1) > FUTURES_MARKET_DATA_STALE_SECONDS
   );
