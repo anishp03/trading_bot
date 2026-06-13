@@ -91,8 +91,8 @@ public class FuturesManager {
 	private static final LocalTime MARKET_INTRADAY_MOMENTUM_SIGNAL_START = LocalTime.of(15, 25);
 	private static final LocalTime MARKET_INTRADAY_MOMENTUM_SIGNAL_END = LocalTime.of(15, 35);
 	private static final int RSI_PERIOD = 14;
-	private static final String TOPSTEPX_PRACTICE_ACCOUNT_ID = "24102568";
-	private static final String TOPSTEPX_50K_COMBINE_ACCOUNT_ID = "24097033";
+	private static final String TOPSTEPX_PRACTICE_ACCOUNT_ID = "24154520";
+	private static final String TOPSTEPX_50K_COMBINE_ACCOUNT_ID = "24175826";
 	private static final String FVG_SOURCE_NONE = "NONE";
 	private static final String FVG_SOURCE_PRIOR_LEVEL_BREAK = "PRIOR_LEVEL_BREAK";
 	private static final String FVG_SOURCE_ORB_BREAK = "ORB_BREAK";
@@ -5163,7 +5163,7 @@ public class FuturesManager {
 						+ "\"maxOpenPositions\":" + rs.getInt("maxOpenPositions") + ","
 						+ "\"maxAggregateContracts\":" + rs.getInt("maxAggregateContracts") + ","
 						+ "\"maxAggregateMiniUnits\":" + round(rs.getDouble("maxAggregateMiniUnits")) + ","
-						+ "\"useSavedRisk\":true,"
+						+ "\"useSavedRisk\":false,"
 						+ "\"continueAfterRuleViolation\":true,"
 						+ "\"qualitativeRiskEnabled\":" + jsonBooleanOrDefault(portfolioSettings, "qualitativeRiskEnabled", true) + ","
 						+ "\"dtmEnabled\":" + jsonBooleanOrDefault(portfolioSettings, "dtmEnabled", true) + ","
@@ -5288,7 +5288,7 @@ public class FuturesManager {
 			+ "\"maxOpenPositions\":3,"
 			+ "\"maxAggregateContracts\":50,"
 			+ "\"maxAggregateMiniUnits\":5,"
-			+ "\"useSavedRisk\":true,"
+			+ "\"useSavedRisk\":false,"
 			+ "\"continueAfterRuleViolation\":true,"
 			+ "\"qualitativeRiskEnabled\":true,"
 			+ "\"dtmEnabled\":true,"
@@ -9076,7 +9076,7 @@ public class FuturesManager {
 			"TOPSTEP_50K"
 		);
 		return "TOPSTEP_50K".equals(config.fundedProfile)
-			&& config.useSavedRisk
+			&& !config.useSavedRisk
 			&& Math.abs(config.accountSize - 50000.0) < 0.001
 			&& Math.abs(config.maxTrailingDrawdown - 2000.0) < 0.001
 			&& Math.abs(config.dailyLossLimit - 1000.0) < 0.001
@@ -19196,7 +19196,7 @@ public class FuturesManager {
 	}
 
 	private static boolean riskProfileUsesSavedRisk(String code) {
-		return true;
+		return false;
 	}
 
 	private static double savedSizingScale(FuturesRiskSettings sourceRisk, FundedRuleProfile profile) {
@@ -19316,7 +19316,7 @@ public class FuturesManager {
 		config.maxAggregateContracts = boundedInt(maxAggregateContracts, config.maxContracts * Math.max(1, parsedSymbols.size()), 1, 1000);
 		config.maxAggregateMiniUnits = maxAggregateMiniUnits > 0.0 ? clamp(maxAggregateMiniUnits, 0.1, 100.0) : profile.maxAggregateMiniUnits;
 		config.trailingDrawdownMode = profile.trailingDrawdownMode;
-		config.useSavedRisk = useSavedRisk;
+		config.useSavedRisk = false;
 		config.profitTarget = profitTarget >= 0.0 ? profitTarget : defaultRisk.profitTarget;
 		applyFundedProfile(config, profile);
 		config.dayStartBalance = config.accountSize;
@@ -19367,9 +19367,10 @@ public class FuturesManager {
 			Map<String, Integer> takenByStrategy = new HashMap<String, Integer>();
 			double dayStartBalance = balance;
 			boolean stopForDay = false;
-			boolean dailyLossBreachRecorded = false;
-			boolean trailingBreachRecorded = false;
-			boolean maeBreachRecorded = false;
+				boolean dailyLossBreachRecorded = false;
+				boolean trailingBreachRecorded = false;
+				boolean maeBreachRecorded = false;
+				boolean dailyLossHardStop = false;
 
 			for (int timeIndex = 0; timeIndex < times.size(); timeIndex++) {
 				LocalTime time = times.get(timeIndex);
@@ -19413,38 +19414,35 @@ public class FuturesManager {
 							continue;
 						}
 
-						double equityAtOpen = balance + aggregateOpenPnl(openPositions, currentBars, "open");
-						if (equityAtOpen - dayStartBalance <= -Math.abs(config.dailyLossLimit)) {
-							if (config.continueAfterRuleViolation) {
-								markPortfolioRuleViolation(result, "Portfolio daily loss limit breached before entry.");
-								if (!dailyLossBreachRecorded) {
-									result.dailyLossBreaches++;
-									dailyLossBreachRecorded = true;
-								}
-							} else {
+							double equityAtOpen = balance + aggregateOpenPnl(openPositions, currentBars, "open");
+							if (equityAtOpen - dayStartBalance <= -Math.abs(config.dailyLossLimit)) {
 								stopForDay = true;
+								dailyLossHardStop = true;
+								if (config.continueAfterRuleViolation) {
+									markPortfolioRuleViolation(result, "Portfolio daily loss limit breached before entry.");
+									if (!dailyLossBreachRecorded) {
+										result.dailyLossBreaches++;
+										dailyLossBreachRecorded = true;
+									}
+								} else {
+								}
 								break;
 							}
-						}
-						if (equityAtOpen <= trailingThreshold) {
-							markPortfolioRuleViolation(result, "Portfolio trailing drawdown threshold breached before entry.");
-							if (!trailingBreachRecorded) {
-								result.trailingDrawdownBreaches++;
-								trailingBreachRecorded = true;
-							}
-							if (!config.continueAfterRuleViolation) {
+							if (equityAtOpen <= trailingThreshold) {
+								stopForDay = true;
+								markPortfolioRuleViolation(result, "Portfolio trailing drawdown threshold breached before entry.");
+								if (!trailingBreachRecorded) {
+									result.trailingDrawdownBreaches++;
+									trailingBreachRecorded = true;
+								}
 								break;
 							}
-						}
 
-						double reservedOpenRisk = aggregateOpenRisk(openPositions);
-						double dailyRiskBudget = Math.abs(config.dailyLossLimit) + (equityAtOpen - dayStartBalance) - reservedOpenRisk;
-						double trailingRiskBudget = equityAtOpen - trailingThreshold - reservedOpenRisk;
-						double aggregateGuardBudget = Math.min(dailyRiskBudget, trailingRiskBudget);
-						if (config.continueAfterRuleViolation && result.ruleViolation) {
-							aggregateGuardBudget = Math.max(aggregateGuardBudget, Math.min(context.config.maxRiskPerTrade, config.maxRiskPerTrade));
-						}
-						double riskBudgetMultiplier = context.config.qualitativeRiskEnabled ? portfolioRiskBudgetMultiplier(
+							double reservedOpenRisk = aggregateOpenRisk(openPositions);
+							double dailyRiskBudget = Math.abs(config.dailyLossLimit) + (equityAtOpen - dayStartBalance) - reservedOpenRisk;
+							double trailingRiskBudget = equityAtOpen - trailingThreshold - reservedOpenRisk;
+							double aggregateGuardBudget = Math.min(dailyRiskBudget, trailingRiskBudget);
+							double riskBudgetMultiplier = context.config.qualitativeRiskEnabled ? portfolioRiskBudgetMultiplier(
 							context,
 							event,
 							balance - dayStartBalance,
@@ -19483,15 +19481,19 @@ public class FuturesManager {
 				}
 				}
 
-				updateOpenPositionExcursions(openPositions, currentBars);
-				double worstOpenPnl = aggregateWorstOpenPnl(openPositions, currentBars);
-				result.maxAggregateMae = round(Math.min(result.maxAggregateMae, worstOpenPnl));
-				double worstEquity = balance + worstOpenPnl;
-				double worstIntraday = worstEquity - dayStartBalance;
-				result.maxIntradayLoss = round(Math.min(result.maxIntradayLoss, worstIntraday));
-				if (!openPositions.isEmpty() && worstIntraday <= -(Math.abs(config.dailyLossLimit) + maeRuleBuffer)) {
-					markPortfolioRuleViolation(result, "Portfolio daily loss limit breached intratrade.");
-					if (!dailyLossBreachRecorded) {
+					updateOpenPositionExcursions(openPositions, currentBars);
+					double worstOpenPnl = aggregateWorstOpenPnl(openPositions, currentBars);
+					double recordedWorstOpenPnl = cappedDailyLossMetric(worstOpenPnl, config.dailyLossLimit);
+					result.maxAggregateMae = round(Math.min(result.maxAggregateMae, recordedWorstOpenPnl));
+					double worstEquity = balance + worstOpenPnl;
+					double worstIntraday = worstEquity - dayStartBalance;
+					double recordedWorstIntraday = cappedDailyLossMetric(worstIntraday, config.dailyLossLimit);
+					result.maxIntradayLoss = round(Math.min(result.maxIntradayLoss, recordedWorstIntraday));
+					if (!openPositions.isEmpty() && worstIntraday <= -(Math.abs(config.dailyLossLimit) + maeRuleBuffer)) {
+						stopForDay = true;
+						dailyLossHardStop = true;
+						markPortfolioRuleViolation(result, "Portfolio daily loss limit breached intratrade.");
+						if (!dailyLossBreachRecorded) {
 						result.dailyLossBreaches++;
 						dailyLossBreachRecorded = true;
 					}
@@ -19499,10 +19501,11 @@ public class FuturesManager {
 						result.maeBreaches++;
 						maeBreachRecorded = true;
 					}
-				}
-				if (!openPositions.isEmpty() && worstEquity <= trailingThreshold - maeRuleBuffer) {
-					markPortfolioRuleViolation(result, "Portfolio trailing drawdown breached intratrade.");
-					if (!trailingBreachRecorded) {
+					}
+					if (!openPositions.isEmpty() && worstEquity <= trailingThreshold - maeRuleBuffer) {
+						stopForDay = true;
+						markPortfolioRuleViolation(result, "Portfolio trailing drawdown breached intratrade.");
+						if (!trailingBreachRecorded) {
 						result.trailingDrawdownBreaches++;
 						trailingBreachRecorded = true;
 					}
@@ -19526,53 +19529,93 @@ public class FuturesManager {
 					queueWinnerFollowThroughSignal(contexts, trade, day);
 				}
 
-				if (result.ruleViolation && !config.continueAfterRuleViolation) {
-					List<FuturesTrade> forcedTrades = forceClosePortfolioPositions(openPositions, contexts, currentBars, day, time, "Portfolio rule breach flat exit");
-					for (int forcedIndex = 0; forcedIndex < forcedTrades.size(); forcedIndex++) {
-						FuturesTrade trade = forcedTrades.get(forcedIndex);
-						balance = round(balance + trade.pnl);
+					if (result.ruleViolation && !config.continueAfterRuleViolation) {
+						List<FuturesTrade> forcedTrades = forceClosePortfolioPositions(openPositions, contexts, currentBars, day, time, "Portfolio rule breach flat exit");
+						for (int forcedIndex = 0; forcedIndex < forcedTrades.size(); forcedIndex++) {
+							FuturesTrade trade = forcedTrades.get(forcedIndex);
+							if (dailyLossHardStop) {
+								capTradeToDailyLossLimit(trade, balance, dayStartBalance, config.dailyLossLimit);
+							}
+							balance = round(balance + trade.pnl);
 						if (trade.pnl >= 0.0) {
 							winners++;
 							grossProfit = round(grossProfit + trade.pnl);
 						} else {
 							grossLoss = round(grossLoss + Math.abs(trade.pnl));
 						}
-						result.tradeRecords.add(trade);
+							result.tradeRecords.add(trade);
+						}
 					}
-				}
+					if (stopForDay && result.ruleViolation && config.continueAfterRuleViolation) {
+						List<FuturesTrade> forcedTrades = forceClosePortfolioPositions(openPositions, contexts, currentBars, day, time, "Portfolio daily loss guard flat exit");
+						for (int forcedIndex = 0; forcedIndex < forcedTrades.size(); forcedIndex++) {
+							FuturesTrade trade = forcedTrades.get(forcedIndex);
+							if (dailyLossHardStop) {
+								capTradeToDailyLossLimit(trade, balance, dayStartBalance, config.dailyLossLimit);
+							}
+							balance = round(balance + trade.pnl);
+							if (trade.pnl >= 0.0) {
+								winners++;
+								grossProfit = round(grossProfit + trade.pnl);
+							} else {
+								grossLoss = round(grossLoss + Math.abs(trade.pnl));
+							}
+							result.tradeRecords.add(trade);
+						}
+					}
 
-				double currentEquity = balance + aggregateOpenPnl(openPositions, currentBars, "close");
-				peakEquity = Math.max(peakEquity, currentEquity);
+					double currentEquity = balance + aggregateOpenPnl(openPositions, currentBars, "close");
+					peakEquity = Math.max(peakEquity, currentEquity);
 				if (!endOfDayTrailing) {
 					trailingThreshold = Math.max(trailingThreshold, peakEquity - config.maxTrailingDrawdown);
 				}
-				double drawdownPct = peakEquity <= 0.0 ? 0.0 : ((peakEquity - currentEquity) / peakEquity) * 100.0;
-				maxDrawdownPct = Math.max(maxDrawdownPct, drawdownPct);
-				double currentIntraday = currentEquity - dayStartBalance;
-				result.maxIntradayLoss = round(Math.min(result.maxIntradayLoss, currentIntraday));
-				if (currentIntraday <= -Math.abs(config.dailyLossLimit)) {
-					markPortfolioRuleViolation(result, "Portfolio daily loss limit breached.");
-					if (!dailyLossBreachRecorded) {
+					double drawdownPct = peakEquity <= 0.0 ? 0.0 : ((peakEquity - currentEquity) / peakEquity) * 100.0;
+					maxDrawdownPct = Math.max(maxDrawdownPct, drawdownPct);
+					double currentIntraday = currentEquity - dayStartBalance;
+					result.maxIntradayLoss = round(Math.min(result.maxIntradayLoss, cappedDailyLossMetric(currentIntraday, config.dailyLossLimit)));
+					if (currentIntraday <= -Math.abs(config.dailyLossLimit)) {
+						stopForDay = true;
+						dailyLossHardStop = true;
+						markPortfolioRuleViolation(result, "Portfolio daily loss limit breached.");
+						if (!dailyLossBreachRecorded) {
 						result.dailyLossBreaches++;
 						dailyLossBreachRecorded = true;
 					}
-				}
-				if (currentEquity <= trailingThreshold) {
-					markPortfolioRuleViolation(result, "Portfolio trailing drawdown threshold breached.");
-					if (!trailingBreachRecorded) {
-						result.trailingDrawdownBreaches++;
-						trailingBreachRecorded = true;
 					}
-				}
-				if (config.profitTarget > 0.0 && currentEquity - config.accountSize >= config.profitTarget) {
-					result.ruleMessage = "Portfolio profit target reached.";
-					stopForDay = true;
+						if (currentEquity <= trailingThreshold) {
+							stopForDay = true;
+							markPortfolioRuleViolation(result, "Portfolio trailing drawdown threshold breached.");
+							if (!trailingBreachRecorded) {
+							result.trailingDrawdownBreaches++;
+							trailingBreachRecorded = true;
+						}
+					}
+					if (stopForDay && result.ruleViolation && !openPositions.isEmpty()) {
+						List<FuturesTrade> forcedTrades = forceClosePortfolioPositions(openPositions, contexts, currentBars, day, time, "Portfolio daily loss guard flat exit");
+						for (int forcedIndex = 0; forcedIndex < forcedTrades.size(); forcedIndex++) {
+							FuturesTrade trade = forcedTrades.get(forcedIndex);
+							if (dailyLossHardStop) {
+								capTradeToDailyLossLimit(trade, balance, dayStartBalance, config.dailyLossLimit);
+							}
+							balance = round(balance + trade.pnl);
+							if (trade.pnl >= 0.0) {
+								winners++;
+								grossProfit = round(grossProfit + trade.pnl);
+							} else {
+								grossLoss = round(grossLoss + Math.abs(trade.pnl));
+							}
+							result.tradeRecords.add(trade);
+						}
+					}
+					if (config.profitTarget > 0.0 && currentEquity - config.accountSize >= config.profitTarget) {
+						result.ruleMessage = "Portfolio profit target reached.";
+						stopForDay = true;
 				}
 				updatePortfolioExposureMetrics(result, openPositions);
-				if ((!config.continueAfterRuleViolation && result.ruleViolation) || "Portfolio profit target reached.".equals(result.ruleMessage)) {
-					break;
+					if (stopForDay || (!config.continueAfterRuleViolation && result.ruleViolation) || "Portfolio profit target reached.".equals(result.ruleMessage)) {
+						break;
+					}
 				}
-			}
 
 			if (!openPositions.isEmpty()) {
 				Map<String, Bar> closingBars = lastBarsForDay(contexts, day);
@@ -19624,6 +19667,26 @@ public class FuturesManager {
 			result.ruleMessage = cleanOrDefault(message, "Portfolio funded rule violation.");
 		}
 		result.ruleViolation = true;
+	}
+
+	private static double cappedDailyLossMetric(double value, double dailyLossLimit) {
+		double floor = -Math.abs(dailyLossLimit);
+		return value < floor ? floor : value;
+	}
+
+	private static void capTradeToDailyLossLimit(FuturesTrade trade, double balance, double dayStartBalance, double dailyLossLimit) {
+		if (trade == null || dailyLossLimit <= 0.0) {
+			return;
+		}
+		double floorBalance = dayStartBalance - Math.abs(dailyLossLimit);
+		double minimumAllowedPnl = round(floorBalance - balance);
+		if (balance + trade.pnl >= floorBalance) {
+			return;
+		}
+		double adjustment = round(minimumAllowedPnl - trade.pnl);
+		trade.pnl = minimumAllowedPnl;
+		trade.finalLegPnl = round(trade.finalLegPnl + adjustment);
+		trade.exitReason = cleanOrDefault(trade.exitReason, "Portfolio daily loss guard flat exit") + " (capped at daily loss limit)";
 	}
 
 	private static FuturesLiveSession simulatedBacktestDtmSession(PortfolioBacktestConfig config, int sessionId) {

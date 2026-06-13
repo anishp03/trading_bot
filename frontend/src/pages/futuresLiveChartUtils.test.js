@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   displayCandlesForChart,
   liveBotControlState,
+  liveMonitorMatchesCacheKey,
+  liveMonitorCacheKey,
   liveMonitorRequestKey,
   mergeSeriesCandleVolume,
   resolveLivePatchVolume,
@@ -70,6 +72,37 @@ test("liveMonitorRequestKey separates in-flight monitor requests by selected tim
   assert.equal(
     liveMonitorRequestKey("MES,MNQ,NQ", "5m"),
     "liveMonitor:5m:MES,MNQ,NQ"
+  );
+});
+
+test("liveMonitorCacheKey separates cached chart data by timeframe and symbol universe", () => {
+  assert.equal(
+    liveMonitorCacheKey("MES,MNQ,NQ", "1h"),
+    "liveMonitor:1h:MES,MNQ,NQ"
+  );
+  assert.notEqual(
+    liveMonitorCacheKey("MES,MNQ,NQ", "1h"),
+    liveMonitorCacheKey("MES", "1h")
+  );
+  assert.notEqual(
+    liveMonitorCacheKey("MES,MNQ,NQ", "1h"),
+    liveMonitorCacheKey("MES,MNQ,NQ", "5m")
+  );
+});
+
+test("liveMonitorMatchesCacheKey rejects monitors from another timeframe or symbol universe", () => {
+  const cacheKey = liveMonitorCacheKey("MES,MNQ,NQ", "1h");
+  assert.equal(
+    liveMonitorMatchesCacheKey({ timeframe: "1h", monitorCacheKey: cacheKey }, cacheKey, "1h"),
+    true
+  );
+  assert.equal(
+    liveMonitorMatchesCacheKey({ timeframe: "5m", monitorCacheKey: liveMonitorCacheKey("MES,MNQ,NQ", "5m") }, cacheKey, "1h"),
+    false
+  );
+  assert.equal(
+    liveMonitorMatchesCacheKey({ timeframe: "1h", monitorCacheKey: liveMonitorCacheKey("MES", "1h") }, cacheKey, "1h"),
+    false
   );
 });
 

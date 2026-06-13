@@ -162,10 +162,30 @@ public class FuturesBacktestLiveParityIntegrityTest {
 	}
 
 	@Test
-	public void portfolioBacktestConfigPreservesSavedRiskSelection() throws Exception {
+	public void portfolioBacktestConfigForcesSavedRiskOff() throws Exception {
 		Object config = buildPortfolioBacktestConfig("MES,MGC", true);
 
-		assertTrue(booleanField(config, "useSavedRisk"));
+		assertFalse(booleanField(config, "useSavedRisk"));
+	}
+
+	@Test
+	public void portfolioBacktestIntratradeDailyLossGuardKeepsHundredDollarMaeBuffer() throws Exception {
+		assertEquals(100.0, staticDoubleField("PORTFOLIO_BACKTEST_MAE_RULE_BUFFER"), 0.0001);
+	}
+
+	@Test
+	public void portfolioBacktestDefaultKeepsViolationTrailButTopstep50kDllIsOneThousand() throws Exception {
+		String json = FuturesManager.getPortfolioBacktestDefaultConfigJson();
+
+		assertTrue(json.contains("\"continueAfterRuleViolation\":true"), json);
+		assertTrue(json.contains("\"dailyLossLimit\":1000"), json);
+	}
+
+	@Test
+	public void liveRiskProfileUsesPortfolioEnvelopeInsteadOfSavedSymbolRisk() throws Exception {
+		assertFalse(riskProfileUsesSavedRisk("TOPSTEP_50K"));
+		assertFalse(riskProfileUsesSavedRisk("TOPSTEP_100K"));
+		assertFalse(riskProfileUsesSavedRisk("TOPSTEP_150K"));
 	}
 
 	@Test
@@ -187,8 +207,8 @@ public class FuturesBacktestLiveParityIntegrityTest {
 
 	@Test
 	public void topstepFundedProfileAccountIdsMatchActiveProjectxAccounts() throws Exception {
-		assertEquals("24097033", accountIdForFundedProfile("TOPSTEP_50K"));
-		assertEquals("24102568", accountIdForFundedProfile("TOPSTEP_150K"));
+		assertEquals("24175826", accountIdForFundedProfile("TOPSTEP_50K"));
+		assertEquals("24154520", accountIdForFundedProfile("TOPSTEP_150K"));
 	}
 
 	@Test
@@ -341,6 +361,12 @@ public class FuturesBacktestLiveParityIntegrityTest {
 		Method method = FuturesManager.class.getDeclaredMethod("liveInitialRiskLimitTicks", strategySettings.getClass(), String.class);
 		method.setAccessible(true);
 		return ((Double) method.invoke(null, strategySettings, strategyCode)).doubleValue();
+	}
+
+	private static boolean riskProfileUsesSavedRisk(String profile) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("riskProfileUsesSavedRisk", String.class);
+		method.setAccessible(true);
+		return ((Boolean) method.invoke(null, profile)).booleanValue();
 	}
 
 	private static Object buildPortfolioBacktestConfig(String symbols, boolean useSavedRisk) throws Exception {
@@ -626,5 +652,11 @@ public class FuturesBacktestLiveParityIntegrityTest {
 		Field field = target.getClass().getDeclaredField(fieldName);
 		field.setAccessible(true);
 		return ((Boolean) field.get(target)).booleanValue();
+	}
+
+	private static double staticDoubleField(String fieldName) throws Exception {
+		Field field = FuturesManager.class.getDeclaredField(fieldName);
+		field.setAccessible(true);
+		return ((Double) field.get(null)).doubleValue();
 	}
 }

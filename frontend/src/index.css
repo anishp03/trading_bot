@@ -4017,8 +4017,8 @@ textarea {
 }
 
 .app-modal-card.app-trade-analysis-modal {
-  width: min(1120px, calc(100vw - 32px));
-  max-height: min(90vh, 860px);
+  width: min(1280px, calc(100vw - 32px));
+  max-height: min(94vh, 920px);
   overflow-y: auto;
   border-radius: 10px;
   padding: 12px;
@@ -4101,16 +4101,18 @@ textarea {
 
 .trade-analysis-chart-stage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 170px;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 230px);
+  gap: 10px;
   align-items: stretch;
 }
 
 .trade-analysis-svg {
   width: 100%;
-  aspect-ratio: 960 / 410;
+  height: auto;
+  aspect-ratio: 960 / 500;
   display: block;
-  min-height: 320px;
+  min-height: 360px;
+  max-height: min(58vh, 620px);
   border-radius: 8px;
   background:
     linear-gradient(180deg, rgba(2, 6, 23, 0.18), rgba(2, 6, 23, 0.5)),
@@ -4169,11 +4171,12 @@ textarea {
 
 .trade-analysis-level-panel {
   min-width: 0;
+  max-height: min(58vh, 620px);
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(2, 6, 23, 0.68);
   padding: 8px;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .trade-analysis-level-title {
@@ -5212,20 +5215,24 @@ textarea {
 
   .app-modal-card.app-trade-analysis-modal {
     width: min(560px, calc(100vw - 18px));
-    max-height: min(92vh, 900px);
-    padding: 10px;
+    max-height: min(94vh, 940px);
+    padding: 9px;
   }
 
   .trade-analysis-chart-stage {
     grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
   }
 
   .trade-analysis-svg {
-    min-height: 270px;
+    min-height: 340px;
+    max-height: none;
   }
 
   .trade-analysis-level-panel {
     padding: 7px;
+    max-height: none;
+    overflow: visible;
   }
 
   .trade-analysis-level-group {

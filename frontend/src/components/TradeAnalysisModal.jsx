@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { apiFetch } from "../utils/api.js";
 import { formatEstTime } from "../utils/time.js";
+import { tradeAnalysisPriceDomain } from "./tradeAnalysisUtils.js";
 
 export default function TradeAnalysisModal({ trade, source = "trade", onClose }) {
   const [analysis, setAnalysis] = useState(null);
@@ -120,43 +121,21 @@ function TradeAnalysisChart({ candles = [], annotations = [], side = "", symbol 
   }
 
   const width = 960;
-  const height = 410;
+  const height = 500;
   const priceTop = 20;
-  const priceBottom = 292;
-  const volumeTop = 318;
-  const volumeHeight = 48;
+  const priceBottom = 360;
+  const volumeTop = 398;
+  const volumeHeight = 58;
   const plotLeft = 18;
   const plotRight = 900;
   const plotWidth = plotRight - plotLeft;
   const candleWidth = Math.max(4.5, Math.min(13, (plotWidth / Math.max(1, series.length)) * 0.66));
-  const values = [];
-  series.forEach((candle) => {
-    values.push(Number(candle.high), Number(candle.low), Number(candle.vwap), Number(candle.ema20), Number(candle.ema50));
+  const priceDomain = tradeAnalysisPriceDomain({
+    series,
+    annotations: marks,
+    tradePrices: [tradeEntryPrice(trade), tradeExitPrice(trade)],
   });
-  [tradeEntryPrice(trade), tradeExitPrice(trade)].forEach((value) => {
-    if (Number.isFinite(value) && value > 0) values.push(value);
-  });
-  const candleValues = values.filter(Number.isFinite);
-  const candleMin = Math.min(...candleValues);
-  const candleMax = Math.max(...candleValues);
-  const candleRange = Math.max(candleMax - candleMin, 1);
-  const relevantFloor = candleMin - Math.max(candleRange * 0.7, 10);
-  const relevantCeiling = candleMax + Math.max(candleRange * 0.7, 10);
-  marks.forEach((mark) => {
-    ["price", "high", "low", "gapHigh", "gapLow"].forEach((key) => {
-      const value = Number(mark?.[key]);
-      if (value > 0 && value >= relevantFloor && value <= relevantCeiling) values.push(value);
-    });
-  });
-  const minValue = Math.min(...values.filter(Number.isFinite));
-  const maxValue = Math.max(...values.filter(Number.isFinite));
-  const tradePrices = [tradeEntryPrice(trade), tradeExitPrice(trade)].filter((value) => Number.isFinite(value) && value > 0);
-  const tradeFloor = tradePrices.length ? Math.min(...tradePrices) : minValue;
-  const tradeCeiling = tradePrices.length ? Math.max(...tradePrices) : maxValue;
-  const padding = Math.max((maxValue - minValue) * 0.2, Math.max(tradeCeiling - tradeFloor, 0) * 0.55, 3.5);
-  const min = minValue - padding;
-  const max = maxValue + padding;
-  const range = Math.max(max - min, 1);
+  const { min, range } = priceDomain;
   const maxVolume = Math.max(1, ...series.map((candle) => Number(candle.volume || 0)));
   const indexByTime = new Map(series.map((candle, index) => [String(candle.time || ""), index]));
   const entryTone = String(side || "").toUpperCase() === "SHORT" ? "short" : "long";
@@ -256,7 +235,7 @@ function TradeAnalysisChart({ candles = [], annotations = [], side = "", symbol 
           {eventMarkers.map((marker, index) => renderTradeEventMarker(marker, index, { plotLeft, plotRight, priceTop, priceBottom }))}
 
           {timeAxisLabels(series).map(({ candle, index }) => (
-            <text key={`time-${candle.time}-${index}`} x={toX(index)} y="394" textAnchor={timeAxisAnchor(index, series.length)} className="trade-analysis-time-label">
+            <text key={`time-${candle.time}-${index}`} x={toX(index)} y={height - 18} textAnchor={timeAxisAnchor(index, series.length)} className="trade-analysis-time-label">
               {compactTime(candle.time)}
             </text>
           ))}

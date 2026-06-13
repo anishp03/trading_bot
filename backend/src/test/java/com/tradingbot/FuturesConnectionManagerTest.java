@@ -181,11 +181,12 @@ public class FuturesConnectionManagerTest {
 	@Test
 	public void topstepxPracticeReplacementPrefersCurrentTradablePracticeAccount() {
 		List<String> accounts = List.of(
-			"{\"id\":24097033,\"name\":\"EXPRESS-V2-CT-DLL-592396-36395858\",\"balance\":-1001.30,\"canTrade\":false}",
-			"{\"id\":24102568,\"name\":\"PRAC-V2-592396-12043327\",\"balance\":149443.08,\"canTrade\":true}"
+			"{\"id\":24097033,\"name\":\"EXPRESS-V2-CT-DLL-592396-36395858\",\"balance\":-2007.62,\"canTrade\":false}",
+			"{\"id\":24154520,\"name\":\"PRAC-V2-592396-79311688\",\"balance\":150607.76,\"canTrade\":true}",
+			"{\"id\":24175826,\"name\":\"50KTC-V2-DLL-592396-24740658\",\"balance\":50000.0,\"canTrade\":true}"
 		);
 
-		assertEquals("24102568", FuturesConnectionManager.topstepxReplacementAccountId(accounts, "150k Practice"));
+		assertEquals("24154520", FuturesConnectionManager.topstepxReplacementAccountId(accounts, "150k Practice"));
 		assertEquals("", FuturesConnectionManager.topstepxReplacementAccountId(accounts, "50k Funded"));
 	}
 

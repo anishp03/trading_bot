@@ -247,3 +247,19 @@ test("chartSeriesSyncPlan resets when a fuller backend snapshot repairs same-lat
     "update-tail"
   );
 });
+
+test("chartSeriesSyncPlan resets when a rolling backend snapshot replaces history while advancing", () => {
+  assert.equal(
+    chartSeriesSyncPlan({
+      chartKey: "MES|1h",
+      previousChartKey: "MES|1h",
+      candleCount: 40,
+      previousCount: 40,
+      latestTime: 1781186400,
+      previousLastTime: 1781182800,
+      historicalSignature: "40:repaired-window",
+      previousHistoricalSignature: "40:old-window",
+    }),
+    "reset"
+  );
+});

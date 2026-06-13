@@ -147,6 +147,15 @@ export function chartSeriesSyncPlan({
   if (sameLatest && nextCount !== lastCount) return "reset";
   if (nextCount < lastCount) return "reset";
   if (
+    latest > previousLatest
+    && nextCount === lastCount
+    && historicalSignature
+    && previousHistoricalSignature
+    && historicalSignature !== previousHistoricalSignature
+  ) {
+    return "reset";
+  }
+  if (
     sameLatest
     &&
     historicalSignature

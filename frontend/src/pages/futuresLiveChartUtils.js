@@ -6,6 +6,17 @@ export function liveMonitorRequestKey(symbolsCsv, timeframe) {
   return `liveMonitor:${normalizeMonitorTimeframe(timeframe)}:${String(symbolsCsv || "").trim()}`;
 }
 
+export function liveMonitorCacheKey(symbolsCsv, timeframe) {
+  return liveMonitorRequestKey(symbolsCsv, timeframe);
+}
+
+export function liveMonitorMatchesCacheKey(monitor, cacheKey, timeframe) {
+  if (!monitor) return false;
+  const normalizedTimeframe = normalizeMonitorTimeframe(timeframe);
+  if (normalizeMonitorTimeframe(monitor.timeframe) !== normalizedTimeframe) return false;
+  return !monitor.monitorCacheKey || monitor.monitorCacheKey === cacheKey;
+}
+
 export function liveBotControlState({ botStarted = false, busyAction = "" } = {}) {
   if (busyAction === "start") return { active: false, label: "Starting..." };
   if (busyAction === "stop") return { active: true, label: "Stopping..." };

@@ -6,6 +6,8 @@ import TradeAnalysisModal from "../components/TradeAnalysisModal.jsx";
 import {
   displayCandlesForChart,
   liveBotControlState,
+  liveMonitorCacheKey,
+  liveMonitorMatchesCacheKey,
   liveMarksRequestKey,
   liveMonitorRequestKey,
   mergeSeriesCandleVolume,
@@ -357,8 +359,8 @@ export default function FuturesLive() {
   );
   const tradeMetricCount = allTradeRows.length;
   const displayMonitor = useMemo(
-    () => resolveDisplayMonitor(liveMonitor, monitorCache, selectedTimeframe, monitorDataActive, selectedChartSymbol),
-    [monitorDataActive, liveMonitor, monitorCache, selectedChartSymbol, selectedTimeframe]
+    () => resolveDisplayMonitor(liveMonitor, monitorCache, symbolsCsv, selectedTimeframe, monitorDataActive, selectedChartSymbol),
+    [monitorDataActive, liveMonitor, monitorCache, selectedChartSymbol, selectedTimeframe, symbolsCsv]
   );
   const rawChartCandles = useMemo(
     () => displayMonitor?.marketData?.[selectedChartSymbol] || [],
@@ -987,12 +989,13 @@ export default function FuturesLive() {
         if (!data?.success) return;
         liveMarksRef.current = data;
         const normalizedTimeframe = normalizeClientTimeframe(data.timeframe || requestTimeframe);
+        const cacheKey = liveMonitorCacheKey(requestSymbols, normalizedTimeframe);
         const currentMonitor = liveMonitorRef.current;
         const currentCache = monitorCacheRef.current || {};
-        const mergedMonitor = normalizeClientTimeframe(currentMonitor?.timeframe) === normalizedTimeframe
+        const mergedMonitor = liveMonitorMatchesCacheKey(currentMonitor, cacheKey, normalizedTimeframe)
           ? mergeMonitorWithMarks(currentMonitor, data, normalizedTimeframe)
-          : currentMonitor;
-        const mergedCacheMonitor = mergeMonitorWithMarks(currentCache?.[normalizedTimeframe], data, normalizedTimeframe);
+          : null;
+        const mergedCacheMonitor = mergeMonitorWithMarks(currentCache?.[cacheKey], data, normalizedTimeframe);
         pushChartCandlesFromMonitor(mergedMonitor || mergedCacheMonitor, selectedChartSymbol, normalizedTimeframe);
         const now = Date.now();
         const shouldCommitUi = now >= chartInteractionUntil.current && now - liveMarksUiCommitAt.current >= LIVE_MARKS_UI_REFRESH_MS;
@@ -1000,7 +1003,7 @@ export default function FuturesLive() {
         liveMarksUiCommitAt.current = now;
         if (mergedMonitor && mergedMonitor !== currentMonitor) liveMonitorRef.current = mergedMonitor;
         if (mergedCacheMonitor) {
-          const nextCache = { ...currentCache, [normalizedTimeframe]: mergedCacheMonitor };
+          const nextCache = { ...currentCache, [cacheKey]: mergedCacheMonitor };
           monitorCacheRef.current = nextCache;
           startTransition(() => {
             setLiveMarks(data);
@@ -1042,12 +1045,13 @@ export default function FuturesLive() {
     requestJson(requestKey, `/api/futures/live/monitor?${params.toString()}`, (data) => {
         if (data) {
           const responseTimeframe = normalizeClientTimeframe(data.timeframe || requestTimeframe);
-          const monitorWithTimeframe = { ...data, timeframe: responseTimeframe };
+          const responseCacheKey = liveMonitorCacheKey(requestSymbols, responseTimeframe);
+          const monitorWithTimeframe = { ...data, timeframe: responseTimeframe, monitorCacheKey: responseCacheKey };
           const monitorWithMarks = mergeMonitorWithMarks(monitorWithTimeframe, liveMarksRef.current, responseTimeframe) || monitorWithTimeframe;
           const currentCache = monitorCacheRef.current || {};
           const nextCache = {
             ...currentCache,
-            [responseTimeframe]: mergeMonitorWithCachedMarketData(monitorWithMarks, currentCache?.[responseTimeframe]),
+            [responseCacheKey]: mergeMonitorWithCachedMarketData(monitorWithMarks, currentCache?.[responseCacheKey]),
           };
           monitorCacheRef.current = nextCache;
           startTransition(() => setMonitorCache(nextCache));
@@ -2972,6 +2976,7 @@ function mergeMonitorWithCachedMarketData(primary, fallback) {
   const primaryTimeframe = normalizeClientTimeframe(primary.timeframe);
   const fallbackTimeframe = normalizeClientTimeframe(fallback.timeframe);
   if (primaryTimeframe !== fallbackTimeframe) return primary;
+  if (primary.monitorCacheKey && fallback.monitorCacheKey && primary.monitorCacheKey !== fallback.monitorCacheKey) return primary;
   const marketData = { ...(fallback.marketData || {}), ...(primary.marketData || {}) };
   const symbols = new Set([
     ...Object.keys(fallback.marketData || {}),
@@ -3061,12 +3066,13 @@ function latestSessionChartCandles(candles) {
   return latestSession.length > 0 ? latestSession : series;
 }
 
-function resolveDisplayMonitor(liveMonitor, monitorCache, selectedTimeframe, monitorActive, selectedSymbol) {
+function resolveDisplayMonitor(liveMonitor, monitorCache, symbolsCsv, selectedTimeframe, monitorActive, selectedSymbol) {
   if (!monitorActive) return null;
   const normalizedTimeframe = normalizeClientTimeframe(selectedTimeframe);
+  const cacheKey = liveMonitorCacheKey(symbolsCsv, normalizedTimeframe);
   const liveTimeframe = normalizeClientTimeframe(liveMonitor?.timeframe);
-  const cachedMonitor = monitorCache?.[normalizedTimeframe] || null;
-  if (liveMonitor && liveTimeframe === normalizedTimeframe) {
+  const cachedMonitor = monitorCache?.[cacheKey] || null;
+  if (liveMonitorMatchesCacheKey(liveMonitor, cacheKey, normalizedTimeframe) || (liveMonitor && !liveMonitor.monitorCacheKey && liveTimeframe === normalizedTimeframe)) {
     return chooseBestDisplayMonitor(liveMonitor, cachedMonitor, selectedSymbol);
   }
   if (cachedMonitor) return cachedMonitor;
