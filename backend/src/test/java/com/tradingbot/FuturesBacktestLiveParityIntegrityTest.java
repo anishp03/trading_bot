@@ -206,6 +206,30 @@ public class FuturesBacktestLiveParityIntegrityTest {
 	}
 
 	@Test
+	public void strategyConfigSaveDoesNotMutateRiskConfigSlot() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		FuturesManager.FuturesRiskSettings riskSettings = FuturesManager.loadFuturesRiskSettings("MNQ", "PRESET_BIASFREE92K");
+		riskSettings.maxRiskPerTrade = 123.0;
+		riskSettings.maxInitialRiskTicks = 151.0;
+		riskSettings.orbRetestMaxRiskTicks = 177.0;
+		assertTrue(FuturesManager.saveFuturesRiskSettings("MNQ", "PRESET_BIASFREE92K", riskSettings));
+
+		FuturesManager.FuturesStrategySettings strategySettings = FuturesManager.loadFuturesStrategySettings("MNQ", "PRESET_BIASFREE92K");
+		strategySettings.orb.maxTradesPerDay = 2;
+		strategySettings.maxInitialRiskTicks = 99.0;
+		strategySettings.orbRetestMaxRiskTicks = 88.0;
+		assertTrue(FuturesManager.saveFuturesStrategySettings("MNQ", "PRESET_BIASFREE92K", strategySettings));
+
+		FuturesManager.FuturesRiskSettings savedRisk = FuturesManager.loadFuturesRiskSettings("MNQ", "PRESET_BIASFREE92K");
+		FuturesManager.FuturesStrategySettings savedStrategy = FuturesManager.loadFuturesStrategySettings("MNQ", "PRESET_BIASFREE92K");
+		assertEquals(123.0, savedRisk.maxRiskPerTrade, 0.0001);
+		assertEquals(151.0, savedRisk.maxInitialRiskTicks, 0.0001);
+		assertEquals(177.0, savedRisk.orbRetestMaxRiskTicks, 0.0001);
+		assertEquals(99.0, savedStrategy.maxInitialRiskTicks, 0.0001);
+		assertEquals(88.0, savedStrategy.orbRetestMaxRiskTicks, 0.0001);
+	}
+
+	@Test
 	public void topstepFundedProfileAccountIdsMatchActiveProjectxAccounts() throws Exception {
 		assertEquals("24175826", accountIdForFundedProfile("TOPSTEP_50K"));
 		assertEquals("24154520", accountIdForFundedProfile("TOPSTEP_150K"));
