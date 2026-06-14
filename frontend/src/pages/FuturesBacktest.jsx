@@ -74,7 +74,7 @@ const DEFAULT_CONFIG = {
   strategyPreset: DEFAULT_STRATEGY_PRESET,
   referenceSymbol: "MNQ",
   fundedProfile: DEFAULT_RISK_PROFILE,
-  startDate: "2024-05-01",
+  startDate: "2025-05-01",
   endDate: defaultEndDate(),
   accountSize: "50000",
   maxTrailingDrawdown: "2000",

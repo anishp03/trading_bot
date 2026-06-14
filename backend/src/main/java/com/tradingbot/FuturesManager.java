@@ -52,7 +52,7 @@ public class FuturesManager {
 	private static final ZoneId NEW_YORK_ZONE = ZoneId.of("America/New_York");
 	private static final DateTimeFormatter DISPLAY_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 	private static final DateTimeFormatter SERVER_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-	private static final LocalDate DEFAULT_BACKTEST_START_DATE = LocalDate.of(2024, 5, 1);
+	private static final LocalDate DEFAULT_BACKTEST_START_DATE = LocalDate.of(2025, 5, 1);
 	private static final LocalTime RTH_START = LocalTime.of(9, 30);
 	private static final LocalTime RTH_END = LocalTime.of(16, 0);
 	private static final LocalTime FORCED_EXIT_TIME = LocalTime.of(15, 55);
@@ -2483,12 +2483,28 @@ public class FuturesManager {
 		int sourcePortfolioBacktestId = config.sourcePortfolioBacktestId > 0
 			? config.sourcePortfolioBacktestId
 			: recommendedPortfolioBacktestConfigSourceId();
-		if (sourcePortfolioBacktestId <= 0) {
-			return runPortfolioBacktest(config);
-		}
-		List<FuturesTrade> sourceTrades = loadPortfolioBacktestTradesForReplay(sourcePortfolioBacktestId);
+		List<FuturesTrade> sourceTrades = sourcePortfolioBacktestId > 0
+			? loadPortfolioBacktestTradesForReplay(sourcePortfolioBacktestId)
+			: new ArrayList<FuturesTrade>();
+		String sourceLabel = sourcePortfolioBacktestId > 0
+			? "sourcePortfolioBacktestID=" + sourcePortfolioBacktestId
+			: "generatedStaticBaseline";
 		if (sourceTrades.isEmpty()) {
-			return runPortfolioBacktest(config);
+			PortfolioBacktestConfig staticSourceConfig = copyPortfolioBacktestConfig(config);
+			staticSourceConfig.sourcePortfolioBacktestId = 0;
+			staticSourceConfig.riskSizingMode = RISK_SIZING_STATIC_WITHDRAW_DAILY;
+			staticSourceConfig.dynamicRiskPolicy = dynamicRiskPolicyForMode(RISK_SIZING_STATIC_WITHDRAW_DAILY);
+			staticSourceConfig.dynamicMllRiskEnabled = false;
+			staticSourceConfig.dynamicMllRiskMaxMultiplier = 1.0;
+			staticSourceConfig.dynamicMllAggregateMiniUnits = false;
+			PortfolioBacktestResult staticSource = runPortfolioBacktest(staticSourceConfig);
+			if (staticSource == null || staticSource.tradeRecords.isEmpty()) {
+				return null;
+			}
+			sourceTrades = staticSource.tradeRecords;
+			sourcePortfolioBacktestId = 0;
+			sourceLabel = "generatedStaticBaseline staticPnl=" + round(staticSource.totalProfit)
+				+ " staticTrades=" + staticSource.trades;
 		}
 		config.sourcePortfolioBacktestId = sourcePortfolioBacktestId;
 		DynamicRiskPolicy policy = config.dynamicRiskPolicy == null
@@ -2505,7 +2521,7 @@ public class FuturesManager {
 			? config.endDate.toString()
 			: lastSourceTrade.openedAt.substring(0, 10);
 		result.startingBalance = round(config.accountSize);
-		result.dataSource = "native futures csv portfolio 1min dynamic_risk_replay sourcePortfolioBacktestID=" + sourcePortfolioBacktestId
+		result.dataSource = "native futures csv portfolio 1min dynamic_risk_replay " + sourceLabel
 			+ " risk_sizing_mode=" + policy.mode
 			+ " dllUsage=" + round(policy.dailyRoomUsagePct)
 			+ " mllUsage=" + round(policy.mllRoomUsagePct)
@@ -2602,6 +2618,44 @@ public class FuturesManager {
 		return result;
 	}
 
+	private static PortfolioBacktestConfig copyPortfolioBacktestConfig(PortfolioBacktestConfig source) {
+		PortfolioBacktestConfig copy = new PortfolioBacktestConfig();
+		if (source == null) {
+			return copy;
+		}
+		copy.fundedProfile = source.fundedProfile;
+		copy.symbols = source.symbols == null ? new ArrayList<String>() : new ArrayList<String>(source.symbols);
+		copy.strategySlot = source.strategySlot;
+		copy.strategyPreset = source.strategyPreset;
+		copy.sourcePortfolioBacktestId = source.sourcePortfolioBacktestId;
+		copy.startDate = source.startDate;
+		copy.endDate = source.endDate;
+		copy.accountSize = source.accountSize;
+		copy.dayStartBalance = source.dayStartBalance;
+		copy.currentBalance = source.currentBalance;
+		copy.maxTrailingDrawdown = source.maxTrailingDrawdown;
+		copy.dailyLossLimit = source.dailyLossLimit;
+		copy.maxRiskPerTrade = source.maxRiskPerTrade;
+		copy.maxContracts = source.maxContracts;
+		copy.commissionPerContract = source.commissionPerContract;
+		copy.slippageTicks = source.slippageTicks;
+		copy.profitTarget = source.profitTarget;
+		copy.maxOpenPositions = source.maxOpenPositions;
+		copy.maxAggregateContracts = source.maxAggregateContracts;
+		copy.maxAggregateMiniUnits = source.maxAggregateMiniUnits;
+		copy.trailingDrawdownMode = source.trailingDrawdownMode;
+		copy.useSavedRisk = source.useSavedRisk;
+		copy.continueAfterRuleViolation = source.continueAfterRuleViolation;
+		copy.qualitativeRiskEnabled = source.qualitativeRiskEnabled;
+		copy.dtmEnabled = source.dtmEnabled;
+		copy.riskSizingMode = source.riskSizingMode;
+		copy.dynamicRiskPolicy = source.dynamicRiskPolicy;
+		copy.dynamicMllRiskEnabled = source.dynamicMllRiskEnabled;
+		copy.dynamicMllRiskMaxMultiplier = source.dynamicMllRiskMaxMultiplier;
+		copy.dynamicMllAggregateMiniUnits = source.dynamicMllAggregateMiniUnits;
+		return copy;
+	}
+
 	private static double sourceTradeRiskPerContract(FuturesTrade trade, InstrumentSpec spec, double commissionPerContract) {
 		if (trade == null || spec == null || spec.tickSize <= 0.0) {
 			return 1.0;
@@ -2660,7 +2714,7 @@ public class FuturesManager {
 		if (portfolioBacktestId <= 0) {
 			return trades;
 		}
-		String sql = "SELECT * FROM FuturesPortfolioTrades WHERE portfolioBacktestID = ? ORDER BY openedAt ASC, portfolioTradeID ASC";
+		String sql = "SELECT * FROM FuturesPortfolioTrades WHERE portfolioBacktestID = ? ORDER BY portfolioTradeID ASC";
 		try (Connection conn = DatabaseManager.getConnection();
 			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
 			pstmt.setInt(1, portfolioBacktestId);
@@ -5767,13 +5821,20 @@ public class FuturesManager {
 
 	private static int recommendedPortfolioBacktestConfigSourceId() {
 		int activeSourceId = activeLiveSnapshotPortfolioBacktestId();
-		if (activeSourceId > 0 && portfolioBacktestExists(activeSourceId) && portfolioBacktestUsesVisibleStrategyPreset(activeSourceId)) {
+		if (activeSourceId > 0 && portfolioBacktestIsEligibleConfigSource(activeSourceId)) {
 			return activeSourceId;
 		}
-		if (portfolioBacktestExists(3154) && portfolioBacktestUsesVisibleStrategyPreset(3154)) {
+		if (portfolioBacktestIsEligibleConfigSource(3154)) {
 			return 3154;
 		}
-		String sql = "SELECT portfolioBacktestID FROM FuturesPortfolioBacktests WHERE ruleViolation = 0 AND json_valid(portfolioSettingsJson) = 1 AND json_extract(portfolioSettingsJson, '$.strategyPreset') IN ('backtestbias92k', 'biasfree92k', 'bestbiasfree') ORDER BY totalProfit DESC, portfolioBacktestID DESC LIMIT 1";
+		String sql = "SELECT portfolioBacktestID FROM FuturesPortfolioBacktests "
+			+ "WHERE ruleViolation = 0 "
+			+ "AND dataSource NOT LIKE '%dynamic_risk_replay%' "
+			+ "AND numTrades >= 1000 "
+			+ "AND totalProfit > 0 "
+			+ "AND json_valid(portfolioSettingsJson) = 1 "
+			+ "AND json_extract(portfolioSettingsJson, '$.strategyPreset') IN ('backtestbias92k', 'biasfree92k', 'bestbiasfree') "
+			+ "ORDER BY totalProfit DESC, portfolioBacktestID DESC LIMIT 1";
 		try (Connection conn = DatabaseManager.getConnection();
 			 Statement stmt = conn.createStatement();
 			 ResultSet rs = stmt.executeQuery(sql)) {
@@ -5786,14 +5847,20 @@ public class FuturesManager {
 		return 0;
 	}
 
-	private static boolean portfolioBacktestUsesVisibleStrategyPreset(int portfolioBacktestId) {
-		String sql = "SELECT portfolioSettingsJson FROM FuturesPortfolioBacktests WHERE portfolioBacktestID = ? LIMIT 1";
+	private static boolean portfolioBacktestIsEligibleConfigSource(int portfolioBacktestId) {
+		String sql = "SELECT dataSource, numTrades, totalProfit, ruleViolation, portfolioSettingsJson "
+			+ "FROM FuturesPortfolioBacktests WHERE portfolioBacktestID = ? LIMIT 1";
 		try (Connection conn = DatabaseManager.getConnection();
 			 PreparedStatement stmt = conn.prepareStatement(sql)) {
 			stmt.setInt(1, portfolioBacktestId);
 			try (ResultSet rs = stmt.executeQuery()) {
 				if (rs.next()) {
-					return isVisibleStrategyPresetName(jsonText(rs.getString("portfolioSettingsJson"), "strategyPreset", ""));
+					String dataSource = cleanOrDefault(rs.getString("dataSource"), "");
+					return rs.getInt("ruleViolation") == 0
+						&& rs.getInt("numTrades") >= 1000
+						&& rs.getDouble("totalProfit") > 0.0
+						&& !dataSource.contains("dynamic_risk_replay")
+						&& isVisibleStrategyPresetName(jsonText(rs.getString("portfolioSettingsJson"), "strategyPreset", ""));
 				}
 			}
 		} catch (SQLException e) {
@@ -20151,13 +20218,16 @@ public class FuturesManager {
 							double dailyRiskBudget = Math.abs(config.dailyLossLimit) + (equityAtOpen - dayStartBalance) - reservedOpenRisk;
 							double trailingRiskBudget = equityAtOpen - trailingThreshold - reservedOpenRisk;
 							double aggregateGuardBudget = Math.min(dailyRiskBudget, trailingRiskBudget);
-							DynamicRiskBudget policyBudget = dynamicRiskBudget(
-								config.dynamicRiskPolicy,
-								context.config.maxRiskPerTrade,
-								dailyRiskBudget,
-								trailingRiskBudget,
-								config.maxTrailingDrawdown
-							);
+							boolean dynamicRiskSizing = RISK_SIZING_DYNAMIC_COMPOUND_MLL.equals(config.riskSizingMode);
+							DynamicRiskBudget policyBudget = dynamicRiskSizing
+								? dynamicRiskBudget(
+									config.dynamicRiskPolicy,
+									context.config.maxRiskPerTrade,
+									dailyRiskBudget,
+									trailingRiskBudget,
+									config.maxTrailingDrawdown
+								)
+								: null;
 							double riskBudgetMultiplier = context.config.qualitativeRiskEnabled ? portfolioRiskBudgetMultiplier(
 							context,
 							event,
@@ -20165,7 +20235,10 @@ public class FuturesManager {
 							aggregateGuardBudget,
 							openPositions.size()
 						) : 1.0;
-						double symbolRiskBudget = policyBudget.availableRiskBudget * riskBudgetMultiplier;
+						double baseRiskBudget = dynamicRiskSizing
+							? policyBudget.availableRiskBudget
+							: context.config.maxRiskPerTrade;
+						double symbolRiskBudget = baseRiskBudget * riskBudgetMultiplier;
 						double availableRiskBudget = Math.min(symbolRiskBudget, aggregateGuardBudget);
 						int aggregateRoom = config.maxAggregateContracts - openContracts;
 						if (aggregateMiniUnitLimit > 0.0) {
@@ -20184,7 +20257,7 @@ public class FuturesManager {
 							aggregateRoom,
 							aggregateGuardBudget,
 							portfolioBacktestAllowsLiveRiskCompression(event.signal.strategyCode),
-							config.dynamicRiskPolicy.stopRiskBufferMultiplier
+							dynamicRiskSizing ? config.dynamicRiskPolicy.stopRiskBufferMultiplier : 1.0
 						);
 						if (position == null) {
 							result.riskRejections++;

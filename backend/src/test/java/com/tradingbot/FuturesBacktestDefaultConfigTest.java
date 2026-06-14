@@ -25,7 +25,7 @@ public class FuturesBacktestDefaultConfigTest {
 
 		String defaults = FuturesManager.getPortfolioBacktestDefaultConfigJson();
 
-		assertTrue(defaults.contains("\"startDate\":\"2024-05-01\""), defaults);
+		assertTrue(defaults.contains("\"startDate\":\"2025-05-01\""), defaults);
 	}
 
 	@Test
@@ -37,10 +37,39 @@ public class FuturesBacktestDefaultConfigTest {
 		String defaults = FuturesManager.getPortfolioBacktestDefaultConfigJson();
 
 		assertTrue(defaults.contains("\"success\":true"), defaults);
-		assertTrue(defaults.contains("\"startDate\":\"2024-05-01\""), defaults);
+		assertTrue(defaults.contains("\"startDate\":\"2025-05-01\""), defaults);
+	}
+
+	@Test
+	public void portfolioBacktestDefaultsDoNotUseDynamicReplayRowsAsSource() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		FuturesManager.getPortfolioBacktestDefaultConfigJson();
+		insertRecommendedSourceRun("2025-06-10", 250000.0, 1380, "native futures csv portfolio 1min dynamic_risk_replay sourcePortfolioBacktestID=1");
+		insertRecommendedSourceRun("2025-06-10", 149702.86, 1406, "native futures csv portfolio 1min");
+
+		String defaults = FuturesManager.getPortfolioBacktestDefaultConfigJson();
+
+		assertTrue(defaults.contains("\"sourcePortfolioBacktestId\":2"), defaults);
+		assertTrue(defaults.contains("\"totalProfit\":149702.86"), defaults);
+	}
+
+	@Test
+	public void portfolioBacktestDefaultsRejectShortFailedStaticRowsAsSource() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		FuturesManager.getPortfolioBacktestDefaultConfigJson();
+		insertRecommendedSourceRun("2025-04-28", -1981.96, 45, "native futures csv portfolio 1min");
+
+		String defaults = FuturesManager.getPortfolioBacktestDefaultConfigJson();
+
+		assertTrue(defaults.contains("\"sourcePortfolioBacktestId\":0"), defaults);
+		assertTrue(defaults.contains("\"startDate\":\"2025-05-01\""), defaults);
 	}
 
 	private static void insertRecommendedSourceRun(String startDate) throws Exception {
+		insertRecommendedSourceRun(startDate, 1000.0, 1406, "test");
+	}
+
+	private static void insertRecommendedSourceRun(String startDate, double totalProfit, int trades, String dataSource) throws Exception {
 		String sql = "INSERT INTO FuturesPortfolioBacktests ("
 			+ "fundedProfile, symbols, startDate, endDate, startingBalance, endingBalance, totalProfit, returnPct, "
 			+ "winRate, numTrades, profitFactor, maxDrawdownPct, maxTrailingDrawdown, dailyLossLimit, maxRiskPerTrade, "
@@ -57,11 +86,11 @@ public class FuturesBacktestDefaultConfigTest {
 			pstmt.setString(3, startDate);
 			pstmt.setString(4, "2026-06-10");
 			pstmt.setDouble(5, 50000.0);
-			pstmt.setDouble(6, 51000.0);
-			pstmt.setDouble(7, 1000.0);
+			pstmt.setDouble(6, 50000.0 + totalProfit);
+			pstmt.setDouble(7, totalProfit);
 			pstmt.setDouble(8, 2.0);
 			pstmt.setDouble(9, 70.0);
-			pstmt.setInt(10, 10);
+			pstmt.setInt(10, trades);
 			pstmt.setDouble(11, 2.0);
 			pstmt.setDouble(12, 3.0);
 			pstmt.setDouble(13, 2000.0);
@@ -87,7 +116,7 @@ public class FuturesBacktestDefaultConfigTest {
 			pstmt.setInt(33, 0);
 			pstmt.setInt(34, 1);
 			pstmt.setString(35, "");
-			pstmt.setString(36, "test");
+			pstmt.setString(36, dataSource);
 			pstmt.setString(37, "2026-06-11 08:36:00");
 			pstmt.setString(38, "{\"strategyPreset\":\"bestbiasfree\",\"dtmEnabled\":true,\"qualitativeRiskEnabled\":true}");
 			pstmt.executeUpdate();

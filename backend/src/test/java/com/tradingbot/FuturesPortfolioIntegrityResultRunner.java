@@ -28,6 +28,7 @@ public class FuturesPortfolioIntegrityResultRunner {
 		boolean continueAfterRuleViolation = booleanProperty("integrity.continueAfterRuleViolation", true);
 		boolean qualitativeRiskEnabled = booleanProperty("integrity.qualitativeRiskEnabled", true);
 		boolean dtmEnabled = booleanProperty("integrity.dtmEnabled", true);
+		String riskSizingMode = property("integrity.riskSizingMode", "STATIC_WITHDRAW_DAILY");
 
 		int backtestId = FuturesManager.generatePortfolioBacktest(
 			symbols,
@@ -50,7 +51,8 @@ public class FuturesPortfolioIntegrityResultRunner {
 			sourcePortfolioBacktestId,
 			continueAfterRuleViolation,
 			qualitativeRiskEnabled,
-			dtmEnabled
+			dtmEnabled,
+			riskSizingMode
 		);
 
 		System.out.println("INTEGRITY_BACKTEST_ID=" + backtestId);
