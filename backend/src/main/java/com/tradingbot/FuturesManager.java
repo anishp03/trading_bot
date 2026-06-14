@@ -1189,6 +1189,7 @@ public class FuturesManager {
 		private String fundedProfile = TOPSTEPX_DEFAULT_LIVE_PROFILE;
 		private String strategyPreset = BEST_BIAS_FREE_STRATEGY_PRESET;
 		private String strategySlot = strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET);
+		private String riskSizingMode = RISK_SIZING_STATIC_WITHDRAW_DAILY;
 		private String symbols = DEFAULT_LIVE_SYMBOLS;
 		private String startedAt = "";
 		private String lastUpdatedAt = "";
@@ -7817,19 +7818,39 @@ public class FuturesManager {
 		String strategySlot,
 		String topstepAccountId
 	) {
+		return ensureLiveStrategySnapshotForPreset(
+			symbols,
+			profile,
+			strategyPreset,
+			strategySlot,
+			topstepAccountId,
+			RISK_SIZING_STATIC_WITHDRAW_DAILY
+		);
+	}
+
+	private static LiveStrategySnapshotRow ensureLiveStrategySnapshotForPreset(
+		String symbols,
+		FundedRuleProfile profile,
+		String strategyPreset,
+		String strategySlot,
+		String topstepAccountId,
+		String riskSizingMode
+	) {
 		String cleanSymbols = cleanSymbolsCsv(symbols);
 		String presetName = normalizeStrategyPresetName(strategyPreset);
 		String normalizedSlot = normalizeStrategySlot(strategySlot);
+		String normalizedRiskSizingMode = dynamicRiskPolicyForMode(riskSizingMode).mode;
 		String accountId = cleanOrDefault(topstepAccountId, accountIdForFundedProfile(profile.code));
 		String accountMode = accountModeForTopstepAccountId(accountId, profile.code);
 		LiveStrategySnapshotRow activeSnapshot = loadActiveLiveStrategySnapshot();
 		if (liveSourceSnapshotMatchesPreset(activeSnapshot, cleanSymbols, profile.code, presetName, normalizedSlot, accountId)
+			&& normalizedRiskSizingMode.equals(snapshotRiskSizingMode(activeSnapshot))
 			&& liveSnapshotIntegrityMessage(activeSnapshot).length() == 0) {
 			return activeSnapshot;
 		}
 		String strategySettingsJson = strategySettingsBySymbolJson(cleanSymbols, normalizedSlot);
 		String riskSettingsJson = riskSettingsBySymbolJson(cleanSymbols, normalizedSlot);
-		String portfolioSettingsJson = livePortfolioSettingsJson(cleanSymbols, profile, accountId, accountMode, presetName, normalizedSlot);
+		String portfolioSettingsJson = livePortfolioSettingsJson(cleanSymbols, profile, accountId, accountMode, presetName, normalizedSlot, normalizedRiskSizingMode);
 		String sourceMetricsJson = liveSourceMetricsConfigJson(cleanSymbols, profile, presetName, normalizedSlot);
 		String now = LocalDateTime.now().format(DISPLAY_TIME_FORMAT);
 		String codeVersion = "local-worktree-" + now.replace(" ", "T");
@@ -7856,6 +7877,13 @@ public class FuturesManager {
 			e.printStackTrace();
 			return null;
 		}
+	}
+
+	private static String snapshotRiskSizingMode(LiveStrategySnapshotRow snapshot) {
+		if (snapshot == null) {
+			return RISK_SIZING_STATIC_WITHDRAW_DAILY;
+		}
+		return dynamicRiskPolicyForMode(jsonText(snapshot.portfolioSettingsJson, "riskSizingMode", RISK_SIZING_STATIC_WITHDRAW_DAILY)).mode;
 	}
 
 	private static boolean liveSourceSnapshotMatchesPreset(
@@ -14041,11 +14069,24 @@ public class FuturesManager {
 	}
 
 	private static String livePortfolioSettingsJson(String symbols, FundedRuleProfile profile, String accountId, String accountMode) {
-		return livePortfolioSettingsJson(symbols, profile, accountId, accountMode, BEST_BIAS_FREE_STRATEGY_PRESET, strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET));
+		return livePortfolioSettingsJson(
+			symbols,
+			profile,
+			accountId,
+			accountMode,
+			BEST_BIAS_FREE_STRATEGY_PRESET,
+			strategyPresetSlot(BEST_BIAS_FREE_STRATEGY_PRESET),
+			RISK_SIZING_STATIC_WITHDRAW_DAILY
+		);
 	}
 
 	private static String livePortfolioSettingsJson(String symbols, FundedRuleProfile profile, String accountId, String accountMode, String strategyPreset, String strategySlot) {
+		return livePortfolioSettingsJson(symbols, profile, accountId, accountMode, strategyPreset, strategySlot, RISK_SIZING_STATIC_WITHDRAW_DAILY);
+	}
+
+	private static String livePortfolioSettingsJson(String symbols, FundedRuleProfile profile, String accountId, String accountMode, String strategyPreset, String strategySlot, String riskSizingMode) {
 		String presetName = visibleStrategyPresetName(strategyPreset);
+		DynamicRiskPolicy riskPolicy = dynamicRiskPolicyForMode(riskSizingMode);
 		double selectedAccountSize = accountSizeForBrokerProfile(accountId, profile.code, profile.accountSize);
 		return "{"
 			+ "\"accountSize\":" + round(selectedAccountSize) + ","
@@ -14066,8 +14107,8 @@ public class FuturesManager {
 			+ "\"practiceAccountId\":" + jsonString(accountId) + ","
 			+ "\"strategyPreset\":" + jsonString(presetName) + ","
 			+ "\"strategySlot\":" + jsonString(strategyPresetSlot(presetName)) + ","
-			+ "\"riskSizingMode\":" + jsonString(RISK_SIZING_STATIC_WITHDRAW_DAILY) + ","
-			+ "\"dynamicRiskPolicy\":" + dynamicRiskPolicyJson(dynamicRiskPolicyForMode(RISK_SIZING_STATIC_WITHDRAW_DAILY)) + ","
+			+ "\"riskSizingMode\":" + jsonString(riskPolicy.mode) + ","
+			+ "\"dynamicRiskPolicy\":" + dynamicRiskPolicyJson(riskPolicy) + ","
 			+ "\"settingsSource\":" + jsonString("Live strategy settings loaded from the selected preset.")
 			+ "}";
 	}
@@ -17549,7 +17590,7 @@ public class FuturesManager {
 		double dailyRiskBudget = Math.abs(portfolioConfig.dailyLossLimit) + (equityAtOpen - dayStartBalance) - reservedOpenRisk;
 		double trailingRiskBudget = equityAtOpen - trailingThreshold - reservedOpenRisk;
 		double aggregateGuardBudget = Math.min(dailyRiskBudget, trailingRiskBudget);
-		DynamicRiskPolicy liveRiskPolicy = dynamicRiskPolicyForMode(RISK_SIZING_STATIC_WITHDRAW_DAILY);
+		DynamicRiskPolicy liveRiskPolicy = dynamicRiskPolicyForMode(session == null ? RISK_SIZING_STATIC_WITHDRAW_DAILY : session.riskSizingMode);
 		DynamicRiskBudget liveRiskBudget = dynamicRiskBudget(
 			liveRiskPolicy,
 			context.config.maxRiskPerTrade,
@@ -18749,6 +18790,7 @@ public class FuturesManager {
 		copy.fundedProfile = source.fundedProfile;
 		copy.strategyPreset = source.strategyPreset;
 		copy.strategySlot = source.strategySlot;
+		copy.riskSizingMode = source.riskSizingMode;
 		copy.symbols = source.symbols;
 		copy.startedAt = source.startedAt;
 		copy.lastUpdatedAt = source.lastUpdatedAt;
@@ -18798,6 +18840,7 @@ public class FuturesManager {
 		double maxAggregateMiniUnits,
 		String symbols,
 		String strategyPreset,
+		String riskSizingMode,
 		boolean dtmEnabled
 		) {
 			initializeStore();
@@ -18814,6 +18857,7 @@ public class FuturesManager {
 		String cleanLiveSymbols = cleanSymbolsCsv(cleanOrDefault(symbols, DEFAULT_LIVE_SYMBOLS));
 		String strategyPresetName = normalizeStrategyPresetName(strategyPreset);
 		String strategySlot = strategyPresetSlot(strategyPresetName);
+		String liveRiskSizingMode = dynamicRiskPolicyForMode(riskSizingMode).mode;
 		boolean orderFlowFeaturesEnabled = dtmEnabled;
 		String configuredAccountId = FuturesConnectionManager.getTopstepxConfiguredAccountId();
 		String requestedAccountId = cleanOrDefault(topstepAccountId, "");
@@ -18832,7 +18876,7 @@ public class FuturesManager {
 			if (presetValidationMessage.length() > 0) {
 				return "{\"success\":false,\"message\":" + jsonString(presetValidationMessage) + ",\"status\":" + getLiveStatusJson() + "}";
 		}
-		LiveStrategySnapshotRow snapshot = ensureLiveStrategySnapshotForPreset(cleanLiveSymbols, profile, strategyPresetName, strategySlot, executionAccountId);
+		LiveStrategySnapshotRow snapshot = ensureLiveStrategySnapshotForPreset(cleanLiveSymbols, profile, strategyPresetName, strategySlot, executionAccountId, liveRiskSizingMode);
 			if (snapshot == null) {
 				return "{\"success\":false,\"message\":\"Strategy preset could not be prepared for the live bot.\",\"status\":" + getLiveStatusJson() + "}";
 			}
@@ -18890,6 +18934,7 @@ public class FuturesManager {
 					liveSession.fundedProfile = profile.code;
 					liveSession.strategyPreset = strategyPresetName;
 					liveSession.strategySlot = strategySlot;
+					liveSession.riskSizingMode = liveRiskSizingMode;
 				liveSession.accountSize = sessionAccountSize;
 				liveSession.maxTrailingDrawdown = sessionTrailingDrawdown;
 				liveSession.dailyLossLimit = sessionDailyLossLimit;
@@ -18985,9 +19030,10 @@ public class FuturesManager {
 					"Account initialized; Topstep flatten/cancel sweep completed before strategy automation.",
 					"{"
 							+ "\"symbols\":" + jsonString(cleanLiveSymbols) + ","
-							+ "\"strategyConfig\":" + jsonString(strategyPresetName) + ","
-							+ "\"strategyPreset\":" + jsonString(strategyPresetName) + ","
+						+ "\"strategyConfig\":" + jsonString(strategyPresetName) + ","
+						+ "\"strategyPreset\":" + jsonString(strategyPresetName) + ","
 						+ "\"riskConfig\":" + jsonString(profile.name) + ","
+						+ "\"riskSizingMode\":" + jsonString(liveRiskSizingMode) + ","
 						+ "\"dtmEnabled\":" + dtmEnabled + ","
 						+ "\"includeDepth\":" + orderFlowFeaturesEnabled + ","
 						+ "\"mode\":" + jsonString(normalizedMode) + ","
@@ -19032,6 +19078,7 @@ public class FuturesManager {
 				liveSession.fundedProfile = profile.code;
 				liveSession.strategyPreset = strategyPresetName;
 				liveSession.strategySlot = strategySlot;
+				liveSession.riskSizingMode = liveRiskSizingMode;
 			liveSession.accountSize = sessionAccountSize;
 			liveSession.maxTrailingDrawdown = sessionTrailingDrawdown;
 			liveSession.dailyLossLimit = sessionDailyLossLimit;
@@ -19079,6 +19126,7 @@ public class FuturesManager {
 						+ "\"strategyConfig\":" + jsonString(strategyPresetName) + ","
 						+ "\"strategyPreset\":" + jsonString(strategyPresetName) + ","
 					+ "\"riskConfig\":" + jsonString(profile.name) + ","
+					+ "\"riskSizingMode\":" + jsonString(liveRiskSizingMode) + ","
 					+ "\"dtmEnabled\":" + dtmEnabled + ","
 					+ "\"includeDepth\":" + orderFlowFeaturesEnabled + ","
 					+ "\"mode\":" + jsonString(normalizedMode) + ","
@@ -19244,6 +19292,8 @@ public class FuturesManager {
 			+ "\"fundedProfile\":" + jsonString(copy.fundedProfile) + ","
 			+ "\"strategyPreset\":" + jsonString(activeLiveStrategyPreset(copy, snapshot)) + ","
 			+ "\"strategySlot\":" + jsonString(activeLiveStrategySlot(copy, snapshot)) + ","
+			+ "\"riskSizingMode\":" + jsonString(dynamicRiskPolicyForMode(copy.riskSizingMode).mode) + ","
+			+ "\"dynamicRiskPolicy\":" + dynamicRiskPolicyJson(dynamicRiskPolicyForMode(copy.riskSizingMode)) + ","
 			+ "\"startedAt\":" + jsonString(copy.startedAt) + ","
 			+ "\"lastUpdatedAt\":" + jsonString(copy.lastUpdatedAt) + ","
 			+ "\"lastDryRunAt\":" + jsonString(copy.lastDryRunAt) + ","

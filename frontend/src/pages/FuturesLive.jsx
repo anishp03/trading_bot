@@ -40,7 +40,35 @@ const LIVE_ALL_TRADES_PAGE_SIZE = 500;
 const DEFAULT_PROFILE = "TOPSTEP_50K";
 const DEFAULT_ACCOUNT_PROFILE = "";
 const DEFAULT_STRATEGY_PRESET = "bestbiasfree";
-const LIVE_RISK_SIZING_MODE = "STATIC_WITHDRAW_DAILY";
+const RISK_SIZING_STATIC = "STATIC_WITHDRAW_DAILY";
+const RISK_SIZING_DYNAMIC = "DYNAMIC_COMPOUND_MLL";
+const LIVE_RISK_SIZING_MODE = RISK_SIZING_STATIC;
+const RISK_SIZING_OPTIONS = [
+  {
+    value: RISK_SIZING_STATIC,
+    label: "Static Baseline",
+    policy: {
+      stopRiskBufferMultiplier: 1,
+      dailyRoomUsagePct: 1,
+      mllRoomUsagePct: 1,
+      maxRiskMultiplier: 1,
+      dllReserveDollars: 0,
+      mllReserveDollars: 0,
+    },
+  },
+  {
+    value: RISK_SIZING_DYNAMIC,
+    label: "Dynamic DLL/MLL",
+    policy: {
+      stopRiskBufferMultiplier: 1.2,
+      dailyRoomUsagePct: 0.55,
+      mllRoomUsagePct: 0.3,
+      maxRiskMultiplier: 3,
+      dllReserveDollars: 200,
+      mllReserveDollars: 0,
+    },
+  },
+];
 const CONTROL_STRATEGY_PRESET = "backtestbias92k";
 const BIAS_FREE_STRATEGY_PRESET = "biasfree92k";
 const BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
@@ -151,6 +179,7 @@ export default function FuturesLive() {
   const [selectedAccountProfileCode, setSelectedAccountProfileCode] = useState(DEFAULT_ACCOUNT_PROFILE);
   const [selectedProfileCode, setSelectedProfileCode] = useState(DEFAULT_PROFILE);
   const [selectedStrategyPreset, setSelectedStrategyPreset] = useState(DEFAULT_STRATEGY_PRESET);
+  const [selectedRiskSizingMode, setSelectedRiskSizingMode] = useState(LIVE_RISK_SIZING_MODE);
   const [dtmEnabled, setDtmEnabled] = useState(true);
   const [liveRiskConfig, setLiveRiskConfig] = useState(DEFAULT_LIVE_RISK_CONFIG);
   const [fundedProfiles, setFundedProfiles] = useState([]);
@@ -243,6 +272,7 @@ export default function FuturesLive() {
     [strategyPresets]
   );
   const activeStrategyPreset = liveStatus?.running && liveStatus?.strategyPreset ? liveStatus.strategyPreset : selectedStrategyPreset;
+  const activeRiskSizingMode = normalizeRiskSizingMode(liveStatus?.running && liveStatus?.riskSizingMode ? liveStatus.riskSizingMode : selectedRiskSizingMode);
   const accountPreset = {
     label: selectedAccountProfile.label || selectedAccountProfile.name || "Topstep Account",
     accountId: selectedAccountProfile.accountId || "",
@@ -394,10 +424,11 @@ export default function FuturesLive() {
       profile: selectedProfile,
       accountId: accountScopeId,
       marketDate: marketSession?.marketDate || "",
+      riskSizingMode: activeRiskSizingMode,
       botStarted,
       backendOffline,
     }),
-    [accountScopeId, backendOffline, botStarted, liveStatus, marketSession?.marketDate, metrics, selectedProfile]
+    [accountScopeId, activeRiskSizingMode, backendOffline, botStarted, liveStatus, marketSession?.marketDate, metrics, selectedProfile]
   );
   const balanceTracksPnl = metricsBalanceTracksPnl(metrics);
   const balanceCardValue = balanceTracksPnl
@@ -553,6 +584,13 @@ export default function FuturesLive() {
       setSelectedStrategyPreset(runningPreset);
     }
   }, [liveStatus?.running, liveStatus?.strategyPreset, selectedStrategyPreset]);
+
+  useEffect(() => {
+    const runningRiskSizingMode = normalizeRiskSizingMode(liveStatus?.riskSizingMode || "");
+    if (liveStatus?.running && runningRiskSizingMode !== selectedRiskSizingMode) {
+      setSelectedRiskSizingMode(runningRiskSizingMode);
+    }
+  }, [liveStatus?.running, liveStatus?.riskSizingMode, selectedRiskSizingMode]);
 
   useEffect(() => {
     const runningProfile = String(liveStatus?.fundedProfile || "").trim();
@@ -1181,6 +1219,7 @@ export default function FuturesLive() {
         maxAggregateMiniUnits: String(riskProfileForStart.maxAggregateMiniUnits || liveRiskConfig.maxAggregateMiniUnits || 5),
         symbols: monitorSymbols.join(","),
         strategyPreset: selectedStrategyPreset || DEFAULT_STRATEGY_PRESET,
+        riskSizingMode: activeRiskSizingMode,
         dtmEnabled: String(dtmEnabled),
       });
       const response = await apiFetch(`/api/futures/live/start?${params.toString()}`, { method: "POST" });
@@ -1358,6 +1397,21 @@ export default function FuturesLive() {
             </select>
           </Field>
 
+          <Field label="Risk Sizing" className="futures-launch-account-field">
+            <select
+              value={activeRiskSizingMode}
+              onChange={(event) => setSelectedRiskSizingMode(normalizeRiskSizingMode(event.target.value))}
+              className="form-select app-input"
+              disabled={Boolean(liveStatus?.running)}
+            >
+              {RISK_SIZING_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+
           <div className="futures-launch-chip">
             <span>Account ID</span>
             <strong>{accountPreset.accountId || "Not connected"}</strong>
@@ -1492,12 +1546,12 @@ function LiveRiskHeartbeatCard({ heartbeat }) {
         <RiskHeartbeatMetric label="Daily PnL" value={formatCurrency(safe.dailyPnl)} accent={safe.dailyPnl} />
         <RiskHeartbeatMetric label="DLL Room" value={formatAccountCurrency(safe.dailyRiskRoom)} accent={safe.dailyRiskRoom > safe.configuredMaxRisk ? 1 : safe.dailyRiskRoom <= 0 ? -1 : 0} />
         <RiskHeartbeatMetric label="MLL Room" value={formatAccountCurrency(safe.trailingCushion)} accent={safe.trailingCushion > 0 ? 1 : -1} />
-        <RiskHeartbeatMetric label="Risk Cap" value={formatAccountCurrency(safe.configuredMaxRisk)} />
+        <RiskHeartbeatMetric label={safe.riskSizingMode === RISK_SIZING_DYNAMIC ? "Dynamic Cap" : "Risk Cap"} value={formatAccountCurrency(safe.dynamicMaxRisk)} />
         <RiskHeartbeatMetric label="Max Risk Now" value={formatAccountCurrency(safe.effectiveMaxRisk)} />
       </div>
       <div className="futures-risk-heartbeat-foot">
-        <span>Risk <b>Static Baseline</b></span>
-        <span>DLL Guard <b>{formatAccountCurrency(safe.dailyRiskRoom)}</b></span>
+        <span>Risk <b>{safe.riskSizingLabel}</b></span>
+        <span>{safe.riskSizingMode === RISK_SIZING_DYNAMIC ? "DLL Reserve" : "DLL Guard"} <b>{formatAccountCurrency(safe.riskSizingMode === RISK_SIZING_DYNAMIC ? safe.riskPolicy?.dllReserveDollars || 0 : safe.dailyRiskRoom)}</b></span>
         <span>Account <b>{safe.accountId || "Not selected"}</b></span>
         <span>Source <b>{safe.source}</b></span>
         <span>Cost <b>{formatCurrencyNoSign(safe.commissionPerContract)} / {formatNumber(safe.slippageTicks, 2)}t</b></span>
@@ -5891,6 +5945,7 @@ function buildLiveRiskHeartbeat({
   profile = FALLBACK_PROFILE,
   accountId = "",
   marketDate = "",
+  riskSizingMode = LIVE_RISK_SIZING_MODE,
   botStarted = false,
   backendOffline = false,
 } = {}) {
@@ -5929,7 +5984,17 @@ function buildLiveRiskHeartbeat({
       : trailingLimit,
     0
   );
-  const effectiveMaxRisk = Math.min(configuredMaxRisk, dailyRiskRoom, trailingCushion);
+  const selectedRiskSizingMode = normalizeRiskSizingMode(liveStatus?.riskSizingMode || riskSizingMode);
+  const riskOption = riskSizingOptionFor(selectedRiskSizingMode);
+  const riskPolicy = normalizeRiskPolicy(liveStatus?.dynamicRiskPolicy, riskOption.policy);
+  const mllBase = Math.max(1, trailingLimit);
+  const dynamicMultiplier = selectedRiskSizingMode === RISK_SIZING_DYNAMIC
+    ? clampNumber(trailingCushion / mllBase, 0, Math.max(0, riskPolicy.maxRiskMultiplier))
+    : 1;
+  const dynamicMaxRisk = Math.max(0, configuredMaxRisk * dynamicMultiplier);
+  const dllRiskBudget = Math.max(0, dailyRiskRoom - Math.max(0, riskPolicy.dllReserveDollars)) * clampNumber(riskPolicy.dailyRoomUsagePct, 0, 1);
+  const mllRiskBudget = Math.max(0, trailingCushion - Math.max(0, riskPolicy.mllReserveDollars)) * clampNumber(riskPolicy.mllRoomUsagePct, 0, 1);
+  const effectiveMaxRisk = Math.min(dynamicMaxRisk, dllRiskBudget, mllRiskBudget);
   const brokerReady = metrics?.brokerMetricsReady !== false && (metrics?.dataSource === BROKER_SOURCE_TOPSTEPX || isAuthoritativeTopstepBrokerSnapshot(broker, metrics));
   const selectedAccountId = String(accountId || metrics?.accountId || broker.accountId || liveStatus?.practiceAccountId || "").trim();
   const commissionPerContract = firstFiniteNumber(liveStatus?.commissionPerContract, 1.24);
@@ -5966,11 +6031,13 @@ function buildLiveRiskHeartbeat({
     dailyRiskRoom,
     trailingCushion,
     configuredMaxRisk,
-    dynamicMaxRisk: configuredMaxRisk,
-    dllRiskBudget: dailyRiskRoom,
-    mllRiskBudget: trailingCushion,
+    dynamicMaxRisk,
+    dllRiskBudget,
+    mllRiskBudget,
     effectiveMaxRisk,
-    riskSizingMode: LIVE_RISK_SIZING_MODE,
+    riskSizingMode: selectedRiskSizingMode,
+    riskSizingLabel: riskOption.label,
+    riskPolicy,
     commissionPerContract,
     slippageTicks,
     profitTarget,
@@ -6007,6 +6074,36 @@ function firstPositiveNumber(...values) {
     }
   }
   return 0;
+}
+
+function normalizeRiskSizingMode(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return RISK_SIZING_OPTIONS.some((option) => option.value === normalized)
+    ? normalized
+    : LIVE_RISK_SIZING_MODE;
+}
+
+function riskSizingOptionFor(value) {
+  const normalized = normalizeRiskSizingMode(value);
+  return RISK_SIZING_OPTIONS.find((option) => option.value === normalized) || RISK_SIZING_OPTIONS[0];
+}
+
+function normalizeRiskPolicy(policy, fallbackPolicy) {
+  const fallback = fallbackPolicy || RISK_SIZING_OPTIONS[0].policy;
+  return {
+    stopRiskBufferMultiplier: firstPositiveNumber(policy?.stopRiskBufferMultiplier, fallback.stopRiskBufferMultiplier),
+    dailyRoomUsagePct: firstFiniteNumber(policy?.dailyRoomUsagePct, fallback.dailyRoomUsagePct),
+    mllRoomUsagePct: firstFiniteNumber(policy?.mllRoomUsagePct, fallback.mllRoomUsagePct),
+    maxRiskMultiplier: firstPositiveNumber(policy?.maxRiskMultiplier, fallback.maxRiskMultiplier),
+    dllReserveDollars: Math.max(0, firstFiniteNumber(policy?.dllReserveDollars, fallback.dllReserveDollars)),
+    mllReserveDollars: Math.max(0, firstFiniteNumber(policy?.mllReserveDollars, fallback.mllReserveDollars)),
+  };
+}
+
+function clampNumber(value, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return min;
+  return Math.max(min, Math.min(max, number));
 }
 
 function contractLimitForProfile(profile, symbol) {

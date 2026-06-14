@@ -226,6 +226,44 @@ public class FuturesBacktestLiveParityIntegrityTest {
 	}
 
 	@Test
+	public void liveDynamicRiskSelectionUsesDynamicMllBudgetAfterAccountProfit() throws Exception {
+		List<String> symbols = new ArrayList<String>();
+		symbols.add("MES");
+		Object portfolioConfig = selfTestPortfolioConfig(symbols);
+		setField(portfolioConfig, "accountSize", Double.valueOf(50000.0));
+		setField(portfolioConfig, "dayStartBalance", Double.valueOf(55000.0));
+		setField(portfolioConfig, "currentBalance", Double.valueOf(55000.0));
+		setField(portfolioConfig, "dailyLossLimit", Double.valueOf(10000.0));
+		setField(portfolioConfig, "maxTrailingDrawdown", Double.valueOf(2000.0));
+		setField(portfolioConfig, "maxAggregateMiniUnits", Double.valueOf(5.0));
+
+		Object session = selfTestLiveSession(symbols);
+		setField(session, "riskSizingMode", "DYNAMIC_COMPOUND_MLL");
+		Object candidate = selfTestCandidate("MES", "ORB", "LONG");
+		Object context = field(candidate, "context");
+		Object signalConfig = field(context, "config");
+		setField(signalConfig, "maxRiskPerTrade", Double.valueOf(5000.0));
+		setField(signalConfig, "qualitativeRiskEnabled", Boolean.FALSE);
+		List<Object> openPositions = new ArrayList<Object>();
+		Object openPosition = portfolioPosition("MGC", "LONG", "ORB", 2350.0, 2346.0, 2354.0, 1);
+		setField(openPosition, "riskPerContract", Double.valueOf(400.0));
+		openPositions.add(openPosition);
+
+		Object order = validateLivePortfolioSignal(
+			session,
+			portfolioConfig,
+			selfTestContextMap("MES", context),
+			candidate,
+			openPositions
+		);
+		String diagnosticsJson = stringField(order, "diagnosticsJson");
+
+		assertTrue(booleanField(order, "accepted"), diagnosticsJson);
+		assertTrue(diagnosticsJson.contains("\"effectiveRiskBudget\":1380"), diagnosticsJson);
+		assertFalse(diagnosticsJson.contains("\"effectiveRiskBudget\":4600"), diagnosticsJson);
+	}
+
+	@Test
 	public void liveSignalConfigUsesSessionExecutionCostInputs() throws Exception {
 		Object session = nestedInstance("FuturesLiveSession");
 		setField(session, "accountSize", Double.valueOf(50000.0));
