@@ -122,6 +122,7 @@ export function liveWorkspaceRenderSignature(props) {
     status,
     symbolsSignature(props?.symbols),
     tradesSignature(props?.trades),
+    props?.sidebarSignature || "",
   ].join("|");
 }
 

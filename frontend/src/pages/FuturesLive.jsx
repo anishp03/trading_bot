@@ -176,7 +176,6 @@ export default function FuturesLive() {
   const [chartUiRevision, setChartUiRevision] = useState(0);
   const [lastMonitorRefreshAt, setLastMonitorRefreshAt] = useState("");
   const [backendOnline, setBackendOnline] = useState(true);
-  const [liveTradeFilters, setLiveTradeFilters] = useState(DEFAULT_TRADE_FILTERS);
   const [allTradeFilters, setAllTradeFilters] = useState(DEFAULT_TRADE_FILTERS);
   const [allTradePage, setAllTradePage] = useState(1);
   const [cachedAllTradeRows, setCachedAllTradeRows] = useState([]);
@@ -335,10 +334,6 @@ export default function FuturesLive() {
     () => attachDtmThinkingToTrades(enrichedClosedTradeRows, dtmThinkingEvents),
     [dtmThinkingEvents, enrichedClosedTradeRows]
   );
-  const filteredLiveTrades = useMemo(
-    () => filterTradeRows(liveTrades, liveTradeFilters),
-    [liveTradeFilters, liveTrades]
-  );
   const filteredAllTradeRows = useMemo(
     () => filterTradeRows(allTradeRows, allTradeFilters),
     [allTradeFilters, allTradeRows]
@@ -391,10 +386,26 @@ export default function FuturesLive() {
     () => accountAnalyticsActive ? accountScopedMetrics : defaultLiveAccountMetrics(effectiveLiveAccountSize, accountScopeId),
     [accountAnalyticsActive, accountScopeId, accountScopedMetrics, effectiveLiveAccountSize]
   );
+  const riskHeartbeat = useMemo(
+    () => buildLiveRiskHeartbeat({
+      liveStatus,
+      metrics,
+      profile: selectedProfile,
+      accountId: accountScopeId,
+      marketDate: marketSession?.marketDate || "",
+      botStarted,
+      backendOffline,
+    }),
+    [accountScopeId, backendOffline, botStarted, liveStatus, marketSession?.marketDate, metrics, selectedProfile]
+  );
   const balanceTracksPnl = metricsBalanceTracksPnl(metrics);
   const balanceCardValue = balanceTracksPnl
     ? Number(metrics?.currentPnl ?? metrics?.currentBalance ?? 0)
     : Number(metrics?.currentBalance ?? Number(metrics?.accountSize || 0) + Number(metrics?.currentPnl || 0));
+  const brokerTotalFees = finiteNumberOrNull(metrics?.totalFees ?? metrics?.broker?.totalFees);
+  const totalFeesCardValue = brokerTotalFees != null && metrics?.brokerMetricsReady !== false
+    ? brokerTotalFees
+    : allTradeMetrics.totalFees;
   const sidebarStartReady = Boolean(futuresSidebarStatus?.topstepApi?.ready);
   const chartLiveTradeRows = useMemo(
     () => liveTrades,
@@ -440,6 +451,28 @@ export default function FuturesLive() {
       botStarted: botAccountDataActive,
     }),
     [allTradeRows, botAccountDataActive, brokerSnapshot, displayTradeRows, liveMonitor?.marketData, monitorSymbols, symbolStates]
+  );
+  const botTrackerSignature = useMemo(
+    () => botTrackers.map((tracker) => [
+      tracker.symbol,
+      tracker.lastPrice,
+      tracker.pnl,
+      tracker.totalTrades,
+      tracker.liveTrades,
+      tracker.signal,
+      tracker.healthStatusText,
+      tracker.orderFlowLabel,
+    ].join(":")).join("|"),
+    [botTrackers]
+  );
+  const symbolTrackerSidebar = useMemo(
+    () => (
+      <SymbolTrackerSidebar
+        trackers={botTrackers}
+        selectedSymbol={selectedChartSymbol}
+      />
+    ),
+    [botTrackers, selectedChartSymbol]
   );
   const rawEquityReviewStatus = useMemo(
     () => buildEquityReviewStatus({
@@ -550,7 +583,6 @@ export default function FuturesLive() {
   ]);
 
   useEffect(() => {
-    setLiveTradeFilters(DEFAULT_TRADE_FILTERS);
     setAllTradeFilters(DEFAULT_TRADE_FILTERS);
     setAllTradePage(1);
     loadLiveTradeCache(accountScopeId);
@@ -1340,8 +1372,8 @@ export default function FuturesLive() {
       </section>
 
       <section className="app-live-grid futures-live-summary-grid">
-        <MetricCard label={balanceTracksPnl ? "Funded PnL" : "Current Balance"} value={formatAccountCurrency(balanceCardValue)} accent={balanceTracksPnl ? balanceCardValue : undefined} />
-        <MetricCard label="Current PnL" value={formatCurrency(metrics?.currentPnl)} accent={Number(metrics?.currentPnl || 0)} />
+        <MetricCard label="Current Balance" value={formatAccountCurrency(balanceCardValue)} accent={balanceTracksPnl ? balanceCardValue : undefined} />
+        <MetricCard label="Total Fees" value={formatFees(totalFeesCardValue)} />
         <MetricCard label="Return %" value={formatPct(metrics?.returnPct)} accent={Number(metrics?.returnPct || 0)} />
         <MetricCard label="Trades" value={String(tradeMetricCount)} />
         <MetricCard label="Win Rate" value={formatRate(allTradeMetrics.winRate)} />
@@ -1352,23 +1384,7 @@ export default function FuturesLive() {
         <MetricCard label="Avg Month" value={formatCurrency(allTradeMetrics.avgMonth)} accent={allTradeMetrics.avgMonth} />
       </section>
 
-      <section className="app-panel">
-        <div className="d-flex align-items-start justify-content-between gap-2 flex-wrap">
-          <div>
-            <div className="fw-bold app-kicker">Live Trades</div>
-          </div>
-          <button type="button" className="app-btn app-btn-small px-3" onClick={refreshLiveData}>
-            Refresh
-          </button>
-        </div>
-        <TradeFilters
-          trades={liveTrades}
-          filteredTrades={filteredLiveTrades}
-          filters={liveTradeFilters}
-          onChange={setLiveTradeFilters}
-        />
-        <TradesTable trades={filteredLiveTrades} mode="live" />
-      </section>
+      <LiveRiskHeartbeatCard heartbeat={riskHeartbeat} />
 
       <section className="futures-monitor-workspace-panel">
         <LiveTradingWorkspace
@@ -1393,12 +1409,9 @@ export default function FuturesLive() {
           backendOffline={backendOffline}
           marketIdle={marketIdle}
           onChartInteraction={noteChartInteraction}
+          sidebarBeforeTrades={symbolTrackerSidebar}
+          sidebarSignature={botTrackerSignature}
           uiRevision={chartUiRevision}
-        />
-        <FuturesBotTrackerPanel
-          trackers={botTrackers}
-          selectedSymbol={selectedChartSymbol}
-          botStarted={botAccountDataActive}
         />
       </section>
 
@@ -1457,44 +1470,67 @@ export default function FuturesLive() {
   );
 }
 
-function FuturesBotTrackerPanel({ trackers, selectedSymbol, botStarted }) {
-  const activeCount = trackers.filter((tracker) => tracker.liveTrades > 0).length;
-  const totalPnl = trackers.reduce((total, tracker) => total + Number(tracker.pnl || 0), 0);
+function LiveRiskHeartbeatCard({ heartbeat }) {
+  const safe = heartbeat || buildLiveRiskHeartbeat({});
   return (
-    <div className="futures-bot-tracker-panel">
-      <div className="futures-bot-tracker-header">
+    <div className={`futures-risk-heartbeat-panel ${safe.tone}`}>
+      <div className="futures-risk-heartbeat-header">
         <div>
-          <strong>Bot Symbol Trackers</strong>
-          <span>{botStarted ? `${activeCount} live positions | ${formatCurrency(totalPnl)} tracked PnL` : "Start the live bot to populate tracker state"}</span>
+          <strong>Live Risk Heartbeat</strong>
+          <span>{safe.summary}</span>
         </div>
-        <span className={activeCount > 0 ? "app-badge app-positive-badge" : "app-badge app-neutral-badge"}>
-          {activeCount > 0 ? `${activeCount} trading` : "No open trades"}
-        </span>
+        <span className={`futures-health-pill ${safe.tone}`}>{safe.status}</span>
       </div>
-      <div className="futures-bot-tracker-grid">
+      <div className="futures-risk-heartbeat-grid">
+        <RiskHeartbeatMetric label={safe.balanceMode === "PNL" ? "Funded PnL" : "Risk Equity"} value={formatAccountCurrency(safe.riskCurrentBalance)} accent={safe.dailyPnl} />
+        <RiskHeartbeatMetric label="Day Start" value={formatAccountCurrency(safe.dayStartBalance)} />
+        <RiskHeartbeatMetric label="Daily PnL" value={formatCurrency(safe.dailyPnl)} accent={safe.dailyPnl} />
+        <RiskHeartbeatMetric label="DLL Room" value={formatAccountCurrency(safe.dailyRiskRoom)} accent={safe.dailyRiskRoom > safe.configuredMaxRisk ? 1 : safe.dailyRiskRoom <= 0 ? -1 : 0} />
+        <RiskHeartbeatMetric label="Trail Cushion" value={formatAccountCurrency(safe.trailingCushion)} accent={safe.trailingCushion > 0 ? 1 : -1} />
+        <RiskHeartbeatMetric label="Max Risk Now" value={formatAccountCurrency(safe.effectiveMaxRisk)} />
+      </div>
+      <div className="futures-risk-heartbeat-foot">
+        <span>Account <b>{safe.accountId || "Not selected"}</b></span>
+        <span>Source <b>{safe.source}</b></span>
+        <span>Cost <b>{formatCurrencyNoSign(safe.commissionPerContract)} / {formatNumber(safe.slippageTicks, 2)}t</b></span>
+        <span>Target <b>{safe.profitTarget > 0 ? formatAccountCurrency(safe.profitTarget) : "Off"}</b></span>
+      </div>
+    </div>
+  );
+}
+
+function RiskHeartbeatMetric({ label, value, accent = 0 }) {
+  const tone = accent > 0 ? "pos" : accent < 0 ? "neg" : "";
+  return (
+    <div className="futures-risk-heartbeat-metric">
+      <span>{label}</span>
+      <strong className={tone}>{value}</strong>
+    </div>
+  );
+}
+
+function SymbolTrackerSidebar({ trackers, selectedSymbol }) {
+  return (
+    <div className="futures-symbol-tracker-sidebar">
+      <div className="futures-symbol-tracker-heading">Symbol Tracker</div>
+      <div className="futures-symbol-tracker-grid">
         {trackers.map((tracker) => (
           <div
             key={tracker.symbol}
             className={[
-              "futures-bot-tracker-card",
+              "futures-symbol-tracker-card",
               selectedSymbol === tracker.symbol ? "active" : "",
             ].filter(Boolean).join(" ")}
           >
-            <div className="futures-bot-tracker-topline">
+            <div className="futures-symbol-tracker-topline">
               <span>{tracker.symbol}</span>
               <strong>{formatPrice(tracker.lastPrice)}</strong>
             </div>
-            <div className="futures-bot-tracker-pnl">
-              <em className={tracker.pnl > 0 ? "app-pnl-pos" : tracker.pnl < 0 ? "app-pnl-neg" : "app-muted"}>{formatCurrency(tracker.pnl)}</em>
-            </div>
-            <div className="futures-bot-tracker-stats">
+            <em className={tracker.pnl > 0 ? "app-pnl-pos" : tracker.pnl < 0 ? "app-pnl-neg" : "app-muted"}>{formatCurrency(tracker.pnl)}</em>
+            <div className="futures-symbol-tracker-meta">
               <span><b>{tracker.totalTrades}</b> trades</span>
               <span><b>{tracker.liveTrades}</b> live</span>
               <span className={`futures-bot-signal ${tracker.signalTone}`}>{tracker.signal}</span>
-              <span className="futures-order-flow-chip">{tracker.orderFlowLabel}</span>
-            </div>
-            <div className="futures-bot-tracker-health">
-              <span className={`futures-health-pill ${tracker.healthTone}`}>{`Health: ${tracker.healthStatusText || tracker.healthLabel || "Waiting"}`}</span>
             </div>
           </div>
         ))}
@@ -5001,13 +5037,6 @@ function TradeMetricsGrid({ metrics, pnlLabel = "P/L", tradeLabel = "Trades", re
         <MetricCard label={tradeLabel} value={formatInteger(safeMetrics.trades)} />
         <MetricCard label="Win Rate" value={formatRate(safeMetrics.winRate)} />
       </div>
-      <div className="app-live-grid futures-live-filtered-average-grid">
-        <MetricCard label="Avg Win" value={formatCurrency(safeMetrics.avgWin)} accent={safeMetrics.avgWin} />
-        <MetricCard label="Avg Loss" value={formatCurrency(safeMetrics.avgLoss)} accent={safeMetrics.avgLoss} />
-        <MetricCard label="Avg Day" value={formatCurrency(safeMetrics.avgDay)} accent={safeMetrics.avgDay} />
-        <MetricCard label="Avg Week" value={formatCurrency(safeMetrics.avgWeek)} accent={safeMetrics.avgWeek} />
-        <MetricCard label="Avg Month" value={formatCurrency(safeMetrics.avgMonth)} accent={safeMetrics.avgMonth} />
-      </div>
     </div>
   );
 }
@@ -5843,6 +5872,120 @@ function metricsBalanceTracksPnl(metrics) {
   );
 }
 
+function buildLiveRiskHeartbeat({
+  liveStatus = null,
+  metrics = null,
+  profile = FALLBACK_PROFILE,
+  accountId = "",
+  marketDate = "",
+  botStarted = false,
+  backendOffline = false,
+} = {}) {
+  const broker = metrics?.broker || {};
+  const balanceTracksPnl = metricsBalanceTracksPnl(metrics);
+  const balanceMode = balanceTracksPnl ? "PNL" : String(metrics?.balanceMode || broker.balanceMode || "EQUITY").toUpperCase();
+  const configuredMaxRisk = firstPositiveNumber(liveStatus?.maxRiskPerTrade, profile?.maxRiskPerTrade, FALLBACK_PROFILE.maxRiskPerTrade);
+  const dailyLossLimit = Math.abs(firstPositiveNumber(liveStatus?.dailyLossLimit, profile?.dailyLossLimit, FALLBACK_PROFILE.dailyLossLimit));
+  const trailingLimit = Math.abs(firstPositiveNumber(metrics?.trailingDrawdownLimit, liveStatus?.drawdownCushion, profile?.maxTrailingDrawdown, FALLBACK_PROFILE.maxTrailingDrawdown));
+  const accountSize = firstPositiveNumber(metrics?.accountSize, broker.accountSize, liveStatus?.accountSize, profile?.accountSize, FALLBACK_PROFILE.accountSize);
+  const currentPnl = firstFiniteNumber(metrics?.currentPnl, broker.currentPnl, broker.realizedPnl, 0);
+  const fallbackRiskBalance = accountSize > 0 ? Math.max(0, accountSize + currentPnl) : 0;
+  const riskCurrentBalance = firstFiniteNumber(
+    metrics?.riskCurrentBalance,
+    metrics?.equityBalance,
+    broker.riskCurrentBalance,
+    broker.equityBalance,
+    balanceTracksPnl ? fallbackRiskBalance : 0,
+    metrics?.currentBalance,
+    broker.currentBalance,
+    fallbackRiskBalance,
+    accountSize
+  );
+  const sameDayClosedPnl = sameDayClosedPnlFromBrokerTrades(broker.trades, marketDate);
+  const dayStartBalance = riskCurrentBalance > 0 ? Math.max(0, riskCurrentBalance - sameDayClosedPnl) : accountSize;
+  const dailyPnl = riskCurrentBalance - dayStartBalance;
+  const dailyRiskRoom = Math.max(0, dailyLossLimit + dailyPnl);
+  const trailingCushion = firstFiniteNumber(
+    metrics?.drawdownCushion,
+    broker.drawdownCushion,
+    riskCurrentBalance > 0 && trailingLimit > 0
+      ? Math.max(0, riskCurrentBalance - Math.max(accountSize - trailingLimit, Math.min(accountSize, riskCurrentBalance - trailingLimit)))
+      : trailingLimit,
+    0
+  );
+  const sizingRatio = trailingLimit > 0
+    ? boundedNumber(trailingCushion / trailingLimit, 0.25, Math.max(1, dailyLossLimit / Math.max(1, configuredMaxRisk)))
+    : 1;
+  const effectiveMaxRisk = Math.min(
+    Math.max(1, dailyLossLimit * 0.70),
+    Math.max(1, configuredMaxRisk * sizingRatio),
+    Math.max(0, dailyRiskRoom)
+  );
+  const brokerReady = metrics?.brokerMetricsReady !== false && (metrics?.dataSource === BROKER_SOURCE_TOPSTEPX || isAuthoritativeTopstepBrokerSnapshot(broker, metrics));
+  const selectedAccountId = String(accountId || metrics?.accountId || broker.accountId || liveStatus?.practiceAccountId || "").trim();
+  const commissionPerContract = firstFiniteNumber(liveStatus?.commissionPerContract, 1.24);
+  const slippageTicks = firstFiniteNumber(liveStatus?.slippageTicks, 1);
+  const profitTarget = firstFiniteNumber(liveStatus?.profitTarget, profile?.profitTarget, 0);
+  let tone = "ok";
+  let status = "Live";
+  if (backendOffline) {
+    tone = "error";
+    status = "Offline";
+  } else if (!botStarted) {
+    tone = "idle";
+    status = "Idle";
+  } else if (!brokerReady) {
+    tone = "warn";
+    status = "Waiting";
+  } else if (dailyRiskRoom <= 0 || trailingCushion <= 0) {
+    tone = "error";
+    status = "Blocked";
+  } else if (dailyRiskRoom < configuredMaxRisk || (trailingLimit > 0 && trailingCushion < trailingLimit * 0.35)) {
+    tone = "warn";
+    status = "Reduced";
+  }
+  const source = brokerReady ? "TopstepX" : metrics?.dataSource || "Local";
+  const summary = botStarted
+    ? `${balanceMode === "PNL" ? "Funded PnL mode" : "Equity mode"} | ${formatAccountCurrency(dailyRiskRoom)} DLL room`
+    : "Start bot to stream account risk";
+  return {
+    accountId: selectedAccountId,
+    balanceMode,
+    riskCurrentBalance,
+    dayStartBalance,
+    dailyPnl,
+    dailyRiskRoom,
+    trailingCushion,
+    configuredMaxRisk,
+    effectiveMaxRisk,
+    commissionPerContract,
+    slippageTicks,
+    profitTarget,
+    source,
+    summary,
+    status,
+    tone,
+  };
+}
+
+function sameDayClosedPnlFromBrokerTrades(trades, marketDate) {
+  const targetDate = String(marketDate || "").slice(0, 10);
+  if (!targetDate || !Array.isArray(trades)) return 0;
+  return trades.reduce((total, trade) => {
+    if (!trade?.closed) return total;
+    const timestamp = trade.createdAt || trade.closedAt || "";
+    if (!isValidTimestamp(timestamp)) return total;
+    const tradeDate = localDateKey(timestamp);
+    if (tradeDate !== targetDate) return total;
+    return total + Number(trade.pnl || 0);
+  }, 0);
+}
+
+function isValidTimestamp(timestamp) {
+  if (!timestamp) return false;
+  return Number.isFinite(new Date(timestamp).getTime());
+}
+
 function firstPositiveNumber(...values) {
   for (const value of values) {
     const number = Number(value);
@@ -5851,6 +5994,12 @@ function firstPositiveNumber(...values) {
     }
   }
   return 0;
+}
+
+function boundedNumber(value, min, max) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return min;
+  return Math.max(min, Math.min(max, numeric));
 }
 
 function contractLimitForProfile(profile, symbol) {
@@ -5959,6 +6108,12 @@ function formatCurrency(value) {
   const numeric = Number(value || 0);
   const sign = numeric > 0 ? "+" : numeric < 0 ? "-" : "";
   return `${sign}$${Math.abs(numeric).toFixed(2)}`;
+}
+
+function formatCurrencyNoSign(value) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return "$0.00";
+  return `$${Math.abs(numeric).toFixed(2)}`;
 }
 
 function formatAccountCurrency(value) {

@@ -44,7 +44,9 @@ function LiveTradingWorkspaceComponent({
   backendOffline,
   marketIdle,
   onChartInteraction,
+  sidebarBeforeTrades = null,
   uiRevision = 0,
+  sidebarSignature = "",
 }, ref) {
   const chartHostRef = useRef(null);
   const chartRef = useRef(null);
@@ -57,6 +59,7 @@ function LiveTradingWorkspaceComponent({
   const [selectedTradeId, setSelectedTradeId] = useState("");
   const [chartReady, setChartReady] = useState(false);
   void uiRevision;
+  void sidebarSignature;
 
   const chartCandles = useMemo(() => normalizeCandles(candles), [candles]);
   const activeTrades = useMemo(() => normalizeTrades(trades), [trades]);
@@ -362,6 +365,7 @@ function LiveTradingWorkspaceComponent({
         <TradeInspector
           latestPrice={latestPrice}
           selectedTrade={selectedTrade}
+          sidebarBeforeTrades={sidebarBeforeTrades}
         />
       </div>
 
@@ -376,10 +380,11 @@ function LiveTradingWorkspaceComponent({
   );
 }
 
-function TradeInspector({ selectedTrade, latestPrice, compact = false }) {
+function TradeInspector({ selectedTrade, latestPrice, compact = false, sidebarBeforeTrades = null }) {
   if (!selectedTrade) {
     return (
       <aside className={`live-workspace-inspector ${compact ? "is-compact" : ""}`}>
+        {!compact && sidebarBeforeTrades}
         <div className="live-workspace-inspector-head">
           <span>Live Trades</span>
           <strong>No live trade on this symbol</strong>
@@ -399,6 +404,7 @@ function TradeInspector({ selectedTrade, latestPrice, compact = false }) {
 
   return (
     <aside className={`live-workspace-inspector ${compact ? "is-compact" : ""}`}>
+      {!compact && sidebarBeforeTrades}
       <div className="live-workspace-inspector-head">
         <span>Selected Live Trade</span>
         <strong>{textValue(selectedTrade.symbol) || "Live position"}</strong>

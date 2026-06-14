@@ -22,11 +22,39 @@ const DEFAULT_SETTINGS = {
   mymBreadthConfirmation: { enabled: false, maxTradesPerDay: 6 },
   mclTrendContinuation: { enabled: false, maxTradesPerDay: 6 },
   liquidityReclaim: { enabled: false, maxTradesPerDay: 50 },
+  orbEventPack: { enabled: false, maxTradesPerDay: 8 },
+  volumePriceManipulation: { enabled: false, maxTradesPerDay: 8 },
   liquidityReclaimSourceCodes: "FVG,VWAP,AFT,SWEEP,PDB,KREV,SHDW,VPB",
   liquidityReclaimStartMinute: 570,
   liquidityReclaimEndMinute: 930,
   liquidityReclaimAllowDuplicates: true,
   liquidityReclaimMaxContracts: 0,
+  orbEventPackSetups: "ALL",
+  orbEventPackMaxContracts: 0,
+  orbEventPackRequireSimilarOrb: false,
+  orbEventPackSimilarWindowBars: 45,
+  orbEventPackGroupOrbFamilyDailyLimit: false,
+  orbEventPackMinBreakVolumeRatio: 0,
+  orbEventPackMinRetestVolumeRatio: 0,
+  orbEventPackMinBreakBodyPct: 0,
+  orbEventPackMinRetestBodyPct: 0,
+  orbEventPackMaxExtensionPctOfRange: 0,
+  orbEventPackMinRetestBarsAfterBreak: 0,
+  orbEventPackMaxRiskTicks: 220,
+  orbEventPackMaxHoldBars: 390,
+  orbEventPackRequireEmaAlignment: false,
+  volumePriceMode: "ALL",
+  volumePriceStartMinute: 570,
+  volumePriceEndMinute: 930,
+  volumePriceLookbackBars: 24,
+  volumePriceMinVolumeRatio: 1.2,
+  volumePriceQuietVolumeRatio: 0.95,
+  volumePriceMinBodyPct: 45,
+  volumePriceMaxRiskTicks: 120,
+  volumePriceRewardRisk: 1.5,
+  volumePriceMaxHoldBars: 90,
+  volumePriceRequireHigherTimeframe: true,
+  volumePriceMaxContracts: 0,
   enableEarlySweep: true,
   enableLateSweep: true,
   enableSweepSecondChance: true,
@@ -202,6 +230,8 @@ const MODULES = [
   ["mymBreadthConfirmation", "MYM Breadth Fade"],
   ["mclTrendContinuation", "MCL Trend Fade"],
   ["liquidityReclaim", "Liquidity Reclaim"],
+  ["orbEventPack", "ORB Event Pack"],
+  ["volumePriceManipulation", "Volume Absorption"],
 ];
 
 const BEST_BIAS_FREE_LIVE_STRATEGIES = [];
@@ -215,6 +245,8 @@ const CUSTOM_MODULE_CAPS = {
   mymBreadthConfirmation: 20,
   mclTrendContinuation: 20,
   liquidityReclaim: 100,
+  orbEventPack: 30,
+  volumePriceManipulation: 30,
 };
 
 export default function FuturesStrategy() {
@@ -358,11 +390,41 @@ export default function FuturesStrategy() {
       mclTrendContinuationMaxTradesPerDay: String(settings.mclTrendContinuation.maxTradesPerDay),
       liquidityReclaimEnabled: String(settings.liquidityReclaim.enabled),
       liquidityReclaimMaxTradesPerDay: String(settings.liquidityReclaim.maxTradesPerDay),
+      orbEventPackEnabled: String(settings.orbEventPack.enabled),
+      orbEventPackMaxTradesPerDay: String(settings.orbEventPack.maxTradesPerDay),
+      volumePriceManipulationEnabled: String(settings.volumePriceManipulation.enabled),
+      volumePriceManipulationMaxTradesPerDay: String(settings.volumePriceManipulation.maxTradesPerDay),
       liquidityReclaimSourceCodes: String(settings.liquidityReclaimSourceCodes || ""),
       liquidityReclaimStartMinute: String(settings.liquidityReclaimStartMinute),
       liquidityReclaimEndMinute: String(settings.liquidityReclaimEndMinute),
       liquidityReclaimAllowDuplicates: String(settings.liquidityReclaimAllowDuplicates),
       liquidityReclaimMaxContracts: String(settings.liquidityReclaimMaxContracts),
+      orbEventPackSetups: String(settings.orbEventPackSetups || "ALL"),
+      orbEventPackMaxContracts: String(settings.orbEventPackMaxContracts),
+      orbEventPackRequireSimilarOrb: String(settings.orbEventPackRequireSimilarOrb),
+      orbEventPackSimilarWindowBars: String(settings.orbEventPackSimilarWindowBars),
+      orbEventPackGroupOrbFamilyDailyLimit: String(settings.orbEventPackGroupOrbFamilyDailyLimit),
+      orbEventPackMinBreakVolumeRatio: String(settings.orbEventPackMinBreakVolumeRatio),
+      orbEventPackMinRetestVolumeRatio: String(settings.orbEventPackMinRetestVolumeRatio),
+      orbEventPackMinBreakBodyPct: String(settings.orbEventPackMinBreakBodyPct),
+      orbEventPackMinRetestBodyPct: String(settings.orbEventPackMinRetestBodyPct),
+      orbEventPackMaxExtensionPctOfRange: String(settings.orbEventPackMaxExtensionPctOfRange),
+      orbEventPackMinRetestBarsAfterBreak: String(settings.orbEventPackMinRetestBarsAfterBreak),
+      orbEventPackMaxRiskTicks: String(settings.orbEventPackMaxRiskTicks),
+      orbEventPackMaxHoldBars: String(settings.orbEventPackMaxHoldBars),
+      orbEventPackRequireEmaAlignment: String(settings.orbEventPackRequireEmaAlignment),
+      volumePriceMode: String(settings.volumePriceMode || "ALL"),
+      volumePriceStartMinute: String(settings.volumePriceStartMinute),
+      volumePriceEndMinute: String(settings.volumePriceEndMinute),
+      volumePriceLookbackBars: String(settings.volumePriceLookbackBars),
+      volumePriceMinVolumeRatio: String(settings.volumePriceMinVolumeRatio),
+      volumePriceQuietVolumeRatio: String(settings.volumePriceQuietVolumeRatio),
+      volumePriceMinBodyPct: String(settings.volumePriceMinBodyPct),
+      volumePriceMaxRiskTicks: String(settings.volumePriceMaxRiskTicks),
+      volumePriceRewardRisk: String(settings.volumePriceRewardRisk),
+      volumePriceMaxHoldBars: String(settings.volumePriceMaxHoldBars),
+      volumePriceRequireHigherTimeframe: String(settings.volumePriceRequireHigherTimeframe),
+      volumePriceMaxContracts: String(settings.volumePriceMaxContracts),
       enableEarlySweep: String(settings.enableEarlySweep),
       enableLateSweep: String(settings.enableLateSweep),
       enableSweepSecondChance: String(settings.enableSweepSecondChance),
@@ -675,6 +737,10 @@ export default function FuturesStrategy() {
           <ToggleField label="FVG HTF Guard" field="fvgRequireHigherTimeframeGuard" settings={settings} updateField={updateField} />
           <ToggleField label="IFVG Structure Break" field="fvgRequireInversionStructureBreak" settings={settings} updateField={updateField} />
           <ToggleField label="LIQREC Duplicates" field="liquidityReclaimAllowDuplicates" settings={settings} updateField={updateField} />
+          <ToggleField label="ORBX Similar ORB" field="orbEventPackRequireSimilarOrb" settings={settings} updateField={updateField} />
+          <ToggleField label="ORBX Daily Grouping" field="orbEventPackGroupOrbFamilyDailyLimit" settings={settings} updateField={updateField} />
+          <ToggleField label="ORBX EMA Alignment" field="orbEventPackRequireEmaAlignment" settings={settings} updateField={updateField} />
+          <ToggleField label="VABS HTF Guard" field="volumePriceRequireHigherTimeframe" settings={settings} updateField={updateField} />
 
           <NumberField label="ORB End Minute" field="orbBreakoutEndMinute" settings={settings} updateField={updateField} />
           <NumberField label="ORB Short Confirm" field="orbShortConfirmationMinute" settings={settings} updateField={updateField} />
@@ -701,6 +767,28 @@ export default function FuturesStrategy() {
           <NumberField label="LIQREC Start Minute" field="liquidityReclaimStartMinute" settings={settings} updateField={updateField} />
           <NumberField label="LIQREC End Minute" field="liquidityReclaimEndMinute" settings={settings} updateField={updateField} />
           <NumberField label="LIQREC Max Contracts" field="liquidityReclaimMaxContracts" settings={settings} updateField={updateField} />
+          <TextField label="ORBX Setups" field="orbEventPackSetups" settings={settings} updateField={updateField} />
+          <NumberField label="ORBX Max Contracts" field="orbEventPackMaxContracts" settings={settings} updateField={updateField} />
+          <NumberField label="ORBX Similar Window" field="orbEventPackSimilarWindowBars" settings={settings} updateField={updateField} />
+          <NumberField label="ORBX Break Volume" field="orbEventPackMinBreakVolumeRatio" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="ORBX Retest Volume" field="orbEventPackMinRetestVolumeRatio" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="ORBX Break Body %" field="orbEventPackMinBreakBodyPct" settings={settings} updateField={updateField} />
+          <NumberField label="ORBX Retest Body %" field="orbEventPackMinRetestBodyPct" settings={settings} updateField={updateField} />
+          <NumberField label="ORBX Max Extension" field="orbEventPackMaxExtensionPctOfRange" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="ORBX Min Retest Bars" field="orbEventPackMinRetestBarsAfterBreak" settings={settings} updateField={updateField} />
+          <NumberField label="ORBX Max Risk Ticks" field="orbEventPackMaxRiskTicks" settings={settings} updateField={updateField} />
+          <NumberField label="ORBX Max Hold Bars" field="orbEventPackMaxHoldBars" settings={settings} updateField={updateField} />
+          <TextField label="Volume Price Mode" field="volumePriceMode" settings={settings} updateField={updateField} />
+          <NumberField label="VABS Start Minute" field="volumePriceStartMinute" settings={settings} updateField={updateField} />
+          <NumberField label="VABS End Minute" field="volumePriceEndMinute" settings={settings} updateField={updateField} />
+          <NumberField label="VABS Lookback Bars" field="volumePriceLookbackBars" settings={settings} updateField={updateField} />
+          <NumberField label="VABS Min Volume" field="volumePriceMinVolumeRatio" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="VABS Quiet Volume" field="volumePriceQuietVolumeRatio" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="VABS Min Body %" field="volumePriceMinBodyPct" settings={settings} updateField={updateField} />
+          <NumberField label="VABS Max Risk Ticks" field="volumePriceMaxRiskTicks" settings={settings} updateField={updateField} />
+          <NumberField label="VABS Reward/Risk" field="volumePriceRewardRisk" settings={settings} updateField={updateField} step="0.05" />
+          <NumberField label="VABS Max Hold Bars" field="volumePriceMaxHoldBars" settings={settings} updateField={updateField} />
+          <NumberField label="VABS Max Contracts" field="volumePriceMaxContracts" settings={settings} updateField={updateField} />
           <SelectField
             label="FVG Source Mode"
             field="fvgSourceMode"
@@ -849,6 +937,8 @@ function normalizeSettings(data) {
     mymBreadthConfirmation: { ...DEFAULT_SETTINGS.mymBreadthConfirmation, ...(data?.mymBreadthConfirmation || {}) },
     mclTrendContinuation: { ...DEFAULT_SETTINGS.mclTrendContinuation, ...(data?.mclTrendContinuation || {}) },
     liquidityReclaim: { ...DEFAULT_SETTINGS.liquidityReclaim, ...(data?.liquidityReclaim || {}) },
+    orbEventPack: { ...DEFAULT_SETTINGS.orbEventPack, ...(data?.orbEventPack || {}) },
+    volumePriceManipulation: { ...DEFAULT_SETTINGS.volumePriceManipulation, ...(data?.volumePriceManipulation || {}) },
   };
 }
 

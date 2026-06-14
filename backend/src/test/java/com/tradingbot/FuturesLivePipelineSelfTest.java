@@ -32,15 +32,17 @@ public class FuturesLivePipelineSelfTest {
 		String json = FuturesManager.runLivePipelineSelfTestJson();
 		assertTrue(json.contains("\"success\":true"), json);
 		assertTrue(json.contains("\"symbols\":\"MES,MNQ,NQ,MGC,ES,M2K,MYM,MCL,GC\""), json);
-		assertTrue(json.contains("\"strategyCases\":279"), json);
-		assertTrue(json.contains("\"acceptedSubmitGateCases\":279"), json);
-		assertTrue(json.contains("\"completedTradeCases\":279"), json);
-		assertTrue(json.contains("\"totalCases\":603"), json);
+		assertTrue(json.contains("\"strategyCases\":297"), json);
+		assertTrue(json.contains("\"acceptedSubmitGateCases\":297"), json);
+		assertTrue(json.contains("\"completedTradeCases\":297"), json);
+		assertTrue(json.contains("\"totalCases\":639"), json);
 		assertTrue(json.contains("\"failed\":0"), json);
 		assertTrue(json.contains("\"fullTradePathVerified\":true"), json);
 		assertTrue(json.contains("\"riskConfigEnvelopeOk\":true"), json);
 		assertTrue(json.contains("\"dailyLossBaselineOk\":true"), json);
 		assertTrue(json.contains("\"strategyCode\":\"IFVG\""), json);
+		assertTrue(json.contains("\"strategyCode\":\"ORBX\""), json);
+		assertTrue(json.contains("\"strategyCode\":\"VABS\""), json);
 		assertTrue(json.contains("\"case\":\"valid signal reaches submit gate\""), json);
 		assertTrue(json.contains("\"case\":\"accepted signal completes through exit engine\""), json);
 		assertTrue(json.contains("\"case\":\"unverified broker exposure blocks submit\""), json);
@@ -67,6 +69,6 @@ public class FuturesLivePipelineSelfTest {
 
 		assertTrue(json.contains("\"success\":true"), json);
 		assertTrue(json.contains("\"failed\":0"), json);
-		assertTrue(json.contains("\"acceptedSubmitGateCases\":279"), json);
+		assertTrue(json.contains("\"acceptedSubmitGateCases\":297"), json);
 	}
 }

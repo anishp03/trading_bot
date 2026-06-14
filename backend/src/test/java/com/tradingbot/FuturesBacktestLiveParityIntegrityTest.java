@@ -189,6 +189,28 @@ public class FuturesBacktestLiveParityIntegrityTest {
 	}
 
 	@Test
+	public void liveSignalConfigUsesSessionExecutionCostInputs() throws Exception {
+		Object session = nestedInstance("FuturesLiveSession");
+		setField(session, "accountSize", Double.valueOf(50000.0));
+		setField(session, "maxTrailingDrawdown", Double.valueOf(2000.0));
+		setField(session, "dailyLossLimit", Double.valueOf(1000.0));
+		setField(session, "maxRiskPerTrade", Double.valueOf(700.0));
+		setField(session, "maxContracts", Integer.valueOf(50));
+		setField(session, "commissionPerContract", Double.valueOf(2.75));
+		setField(session, "slippageTicks", Double.valueOf(1.5));
+		setField(session, "profitTarget", Double.valueOf(1250.0));
+		setField(session, "fundedProfile", "TOPSTEP_50K");
+		setField(session, "strategyPreset", "bestbiasfree");
+		setField(session, "strategySlot", "PRESET_BESTBIASFREE");
+
+		Object config = liveSignalConfigFor("MNQ", session, null);
+
+		assertEquals(2.75, doubleField(config, "commissionPerContract"), 0.0001);
+		assertEquals(1.5, doubleField(config, "slippageTicks"), 0.0001);
+		assertEquals(1250.0, doubleField(config, "profitTarget"), 0.0001);
+	}
+
+	@Test
 	public void riskConfigSlotSaveRoundTripsTickCaps() throws Exception {
 		TestDatabaseSupport.useTempDatabase(tempDir);
 		FuturesManager.FuturesRiskSettings settings = FuturesManager.loadFuturesRiskSettings("MGC", "PRESET_BESTBIASFREE");
@@ -391,6 +413,17 @@ public class FuturesBacktestLiveParityIntegrityTest {
 		Method method = FuturesManager.class.getDeclaredMethod("riskProfileUsesSavedRisk", String.class);
 		method.setAccessible(true);
 		return ((Boolean) method.invoke(null, profile)).booleanValue();
+	}
+
+	private static Object liveSignalConfigFor(String symbol, Object session, Object snapshot) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod(
+			"liveSignalConfigFor",
+			String.class,
+			session.getClass(),
+			Class.forName("com.tradingbot.FuturesManager$LiveStrategySnapshotRow")
+		);
+		method.setAccessible(true);
+		return method.invoke(null, symbol, session, snapshot);
 	}
 
 	private static Object buildPortfolioBacktestConfig(String symbols, boolean useSavedRisk) throws Exception {

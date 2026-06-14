@@ -1025,6 +1025,7 @@ public class FuturesConnectionManager {
 			List<String> tradeObjects = extractJsonArrayObjects(trades.body, "trades");
 			StringBuilder tradesJson = new StringBuilder("[");
 			double closedTradePnl = 0.0;
+			double totalFees = topstepxTotalTradeCosts(tradeObjects);
 			int closedTrades = 0;
 			for (int index = 0; index < tradeObjects.size(); index++) {
 				String trade = tradeObjects.get(index);
@@ -1090,6 +1091,7 @@ public class FuturesConnectionManager {
 					+ "\"accountSizeSource\":" + jsonString(accountSizeSource) + ","
 				+ "\"realizedPnl\":" + numberOrZero(realizedPnl) + ","
 				+ "\"closedTradePnl\":" + numberOrZero(closedTradePnl) + ","
+				+ "\"totalFees\":" + numberOrZero(totalFees) + ","
 				+ "\"unrealizedPnl\":0.0,"
 				+ "\"currentBalance\":" + numberOrZero(brokerBalance) + ","
 				+ "\"riskCurrentBalance\":" + numberOrZero(riskCurrentBalance) + ","
@@ -2225,6 +2227,17 @@ public class FuturesConnectionManager {
 			hasCost = true;
 		}
 		return hasCost ? total : Double.NaN;
+	}
+
+	static double topstepxTotalTradeCosts(List<String> tradeJsonObjects) {
+		double total = 0.0;
+		for (String tradeJson : tradeJsonObjects) {
+			double cost = topstepxTradeCost(tradeJson);
+			if (!Double.isNaN(cost)) {
+				total += cost;
+			}
+		}
+		return total;
 	}
 
 	private static String numberOrZero(double value) {

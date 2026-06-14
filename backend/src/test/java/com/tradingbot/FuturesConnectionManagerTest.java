@@ -160,6 +160,17 @@ public class FuturesConnectionManagerTest {
 	}
 
 	@Test
+	public void topstepxTradeCostsSumEntireAccountHistory() {
+		List<String> trades = List.of(
+			"{\"profitAndLoss\":100.0,\"fees\":2.75,\"commission\":4.25}",
+			"{\"profitAndLoss\":-25.0,\"fees\":1.10}",
+			"{\"profitAndLoss\":12.0,\"commissions\":2.40}"
+		);
+
+		assertEquals(10.50, FuturesConnectionManager.topstepxTotalTradeCosts(trades), 0.0001);
+	}
+
+	@Test
 	public void topstepxFundedAccountBalancesTrackPnlInsteadOfEquity() {
 		assertTrue(FuturesConnectionManager.topstepxAccountBalanceTracksPnl("EXPRESS-V2-CT-DLL-592396-36395858"));
 		assertTrue(FuturesConnectionManager.topstepxAccountBalanceTracksPnl("50K Funded"));

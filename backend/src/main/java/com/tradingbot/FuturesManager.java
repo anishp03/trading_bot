@@ -114,7 +114,7 @@ public class FuturesManager {
 	private static final String LIQREC_SOURCE_2268_RESOURCE = "liqrec-source2268.properties";
 	private static final String DEFAULT_STRATEGY_PRESET = WINDOWED_94K_STRATEGY_PRESET;
 	private static final String WIP_STRATEGY_PRESET = "wip";
-	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-06-01-bestbiasfree-v18-liqrec-all-day-mnqcap";
+	private static final String APPROVED_STRATEGY_PRESET_POLICY_VERSION = "2026-06-14-bestbiasfree-v19-orbx-vabs";
 	private static final String[] VISIBLE_STRATEGY_PRESETS = new String[] { WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET };
 	private static final String[] SEEDED_STRATEGY_PRESETS = new String[] { LEGACY_94K_STRATEGY_PRESET, WINDOWED_94K_STRATEGY_PRESET, BIAS_FREE_94K_STRATEGY_PRESET, BEST_BIAS_FREE_STRATEGY_PRESET, WIP_STRATEGY_PRESET };
 	private static final String RESEARCH_RELAXED_WINDOWS_PROPERTY = "tradingbot.research.relaxedWindows";
@@ -622,6 +622,8 @@ public class FuturesManager {
 		public StrategyToggle liquidityReclaim = new StrategyToggle(false, 50);
 		public StrategyToggle rangeMidpointContinuation = new StrategyToggle(false, 8);
 		public StrategyToggle bosRetest = new StrategyToggle(false, 2);
+		public StrategyToggle orbEventPack = new StrategyToggle(false, 8);
+		public StrategyToggle volumePriceManipulation = new StrategyToggle(false, 8);
 		public String liquidityReclaimSourceCodes = "FVG,VWAP,AFT,SWEEP,PDB,KREV,SHDW,VPB";
 		public int liquidityReclaimStartMinute = 570;
 		public int liquidityReclaimEndMinute = 930;
@@ -669,6 +671,32 @@ public class FuturesManager {
 		public double bosRetestMinRewardRisk = 1.50;
 		public double bosRetestMaxRiskTicks = 60.0;
 		public int bosRetestMaxHoldBars = 90;
+		public String orbEventPackSetups = "ALL";
+		public int orbEventPackMaxContracts = 0;
+		public boolean orbEventPackRequireSimilarOrb = false;
+		public int orbEventPackSimilarWindowBars = 45;
+		public boolean orbEventPackGroupOrbFamilyDailyLimit = false;
+		public double orbEventPackMinBreakVolumeRatio = 0.0;
+		public double orbEventPackMinRetestVolumeRatio = 0.0;
+		public double orbEventPackMinBreakBodyPct = 0.0;
+		public double orbEventPackMinRetestBodyPct = 0.0;
+		public double orbEventPackMaxExtensionPctOfRange = 0.0;
+		public int orbEventPackMinRetestBarsAfterBreak = 0;
+		public double orbEventPackMaxRiskTicks = 220.0;
+		public int orbEventPackMaxHoldBars = 390;
+		public boolean orbEventPackRequireEmaAlignment = false;
+		public String volumePriceMode = "ALL";
+		public int volumePriceStartMinute = 570;
+		public int volumePriceEndMinute = 930;
+		public int volumePriceLookbackBars = 24;
+		public double volumePriceMinVolumeRatio = 1.20;
+		public double volumePriceQuietVolumeRatio = 0.95;
+		public double volumePriceMinBodyPct = 45.0;
+		public double volumePriceMaxRiskTicks = 120.0;
+		public double volumePriceRewardRisk = 1.50;
+		public int volumePriceMaxHoldBars = 90;
+		public boolean volumePriceRequireHigherTimeframe = true;
+		public int volumePriceMaxContracts = 0;
 		public boolean enableEarlySweep = true;
 		public boolean enableLateSweep = true;
 		public boolean enableSweepSecondChance = true;
@@ -1594,7 +1622,8 @@ public class FuturesManager {
 			"microScalp", "microShadow", "microEcho", "winnerFollowThrough", "trendLadder",
 			"rangeCompressionBreakout", "valueAreaReclaim", "mclEiaContinuation",
 			"mclCrudeSessionOpen", "mymIndexConfirmation", "mymOrbRetest",
-			"mymBreadthConfirmation", "mclTrendContinuation", "liquidityReclaim"
+			"mymBreadthConfirmation", "mclTrendContinuation", "liquidityReclaim",
+			"orbEventPack", "volumePriceManipulation"
 		};
 		for (String symbol : supportedInstrumentSymbols()) {
 			for (int index = 0; index < modules.length; index++) {
@@ -1608,18 +1637,71 @@ public class FuturesManager {
 		enableBestBiasFreeModules(conn, slot, "NQ", new String[] { "orb", "lateOrbContinuation", "openingMomentum", "sweep", "priorDayBreakout", "vwapPullback", "vwapReclaim", "fvg", "marketIntradayMomentum", "keltnerReversion" });
 		enableBestBiasFreeModules(conn, slot, "MGC", new String[] { "orb", "openingMomentum", "sweep", "priorDayBreakout", "vwapPullback", "closeMomentum" });
 		enableBestBiasFreeModules(conn, slot, "ES", new String[] { "orb" });
-		enableBestBiasFreeModules(conn, slot, "M2K", new String[] { "orb", "openingMomentum", "closeMomentum" });
+		enableBestBiasFreeModules(conn, slot, "M2K", new String[] { "orb", "openingMomentum", "closeMomentum", "orbEventPack", "volumePriceManipulation" });
 		enableBestBiasFreeModules(conn, slot, "MYM", new String[] { "orb", "openingMomentum", "closeMomentum" });
 		enableBestBiasFreeModules(conn, slot, "MCL", new String[] { "orb", "ifvg", "afternoonContinuation", "marketIntradayMomentum", "closeMomentum" });
 
 		applyBestBiasFreeSidePolicy(conn, slot);
 		applyBestBiasFreeLiquidityReclaimPolicy(conn, slot);
+		applyBestBiasFreeOrbEventPackPolicy(conn, slot);
+		applyBestBiasFreeVolumePricePolicy(conn, slot);
 	}
 
 	private static void enableBestBiasFreeModules(Connection conn, String slot, String symbol, String[] modules) throws SQLException {
 		for (int index = 0; index < modules.length; index++) {
 			setSlotSymbolSetting(conn, slot, symbol, modules[index] + ".enabled", "true");
 		}
+	}
+
+	private static void applyBestBiasFreeOrbEventPackPolicy(Connection conn, String slot) throws SQLException {
+		for (String symbol : supportedInstrumentSymbols()) {
+			boolean m2k = "M2K".equals(normalizeSymbol(symbol));
+			setSlotSymbolSetting(conn, slot, symbol, "orbEventPack.enabled", Boolean.toString(m2k));
+			setSlotSymbolSetting(conn, slot, symbol, "orbEventPack.maxTradesPerDay", "8");
+			setSlotSymbolSetting(conn, slot, symbol, "orbEventPackSetups", m2k ? "M2K_RETEST_LONG" : "ALL");
+			setSlotSymbolSetting(conn, slot, symbol, "orbEventPackMaxContracts", m2k ? "8" : "0");
+			setSlotSymbolSetting(conn, slot, symbol, "orbEventPackRequireSimilarOrb", "false");
+			setSlotSymbolSetting(conn, slot, symbol, "orbEventPackSimilarWindowBars", "45");
+			setSlotSymbolSetting(conn, slot, symbol, "orbEventPackGroupOrbFamilyDailyLimit", "false");
+			setSlotSymbolSetting(conn, slot, symbol, "orbEventPackMinBreakVolumeRatio", "0.0");
+			setSlotSymbolSetting(conn, slot, symbol, "orbEventPackMinRetestVolumeRatio", "0.0");
+			setSlotSymbolSetting(conn, slot, symbol, "orbEventPackMinBreakBodyPct", "0.0");
+			setSlotSymbolSetting(conn, slot, symbol, "orbEventPackMinRetestBodyPct", "0.0");
+			setSlotSymbolSetting(conn, slot, symbol, "orbEventPackMaxExtensionPctOfRange", "0.0");
+			setSlotSymbolSetting(conn, slot, symbol, "orbEventPackMinRetestBarsAfterBreak", "0");
+			setSlotSymbolSetting(conn, slot, symbol, "orbEventPackMaxRiskTicks", "220.0");
+			setSlotSymbolSetting(conn, slot, symbol, "orbEventPackMaxHoldBars", "390");
+			setSlotSymbolSetting(conn, slot, symbol, "orbEventPackRequireEmaAlignment", "false");
+		}
+	}
+
+	private static void applyBestBiasFreeVolumePricePolicy(Connection conn, String slot) throws SQLException {
+		for (String symbol : supportedInstrumentSymbols()) {
+			boolean enabled = isBestBiasFreeVolumePriceSymbol(symbol);
+			setSlotSymbolSetting(conn, slot, symbol, "volumePriceManipulation.enabled", Boolean.toString(enabled));
+			setSlotSymbolSetting(conn, slot, symbol, "volumePriceManipulation.maxTradesPerDay", "4");
+			setSlotSymbolSetting(conn, slot, symbol, "volumePriceMode", "VABS");
+			setSlotSymbolSetting(conn, slot, symbol, "volumePriceStartMinute", "600");
+			setSlotSymbolSetting(conn, slot, symbol, "volumePriceEndMinute", "719");
+			setSlotSymbolSetting(conn, slot, symbol, "volumePriceLookbackBars", "24");
+			setSlotSymbolSetting(conn, slot, symbol, "volumePriceMinVolumeRatio", "1.20");
+			setSlotSymbolSetting(conn, slot, symbol, "volumePriceQuietVolumeRatio", "0.95");
+			setSlotSymbolSetting(conn, slot, symbol, "volumePriceMinBodyPct", "45.0");
+			setSlotSymbolSetting(conn, slot, symbol, "volumePriceMaxRiskTicks", "120.0");
+			setSlotSymbolSetting(conn, slot, symbol, "volumePriceRewardRisk", "1.50");
+			setSlotSymbolSetting(conn, slot, symbol, "volumePriceMaxHoldBars", "90");
+			setSlotSymbolSetting(conn, slot, symbol, "volumePriceRequireHigherTimeframe", "true");
+			setSlotSymbolSetting(conn, slot, symbol, "volumePriceMaxContracts", "0");
+		}
+	}
+
+	private static boolean isBestBiasFreeVolumePriceSymbol(String symbol) {
+		String normalized = normalizeSymbol(symbol);
+		return "ES".equals(normalized)
+			|| "M2K".equals(normalized)
+			|| "MGC".equals(normalized)
+			|| "MNQ".equals(normalized)
+			|| "MYM".equals(normalized);
 	}
 
 	private static void applyBestBiasFreeLiquidityReclaimPolicy(Connection conn, String slot) throws SQLException {
@@ -2443,6 +2525,10 @@ public class FuturesManager {
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "rangeMidpointContinuation.maxTradesPerDay"), safeSettings.rangeMidpointContinuation.maxTradesPerDay);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetest.enabled"), safeSettings.bosRetest.enabled);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetest.maxTradesPerDay"), safeSettings.bosRetest.maxTradesPerDay);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbEventPack.enabled"), safeSettings.orbEventPack.enabled);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbEventPack.maxTradesPerDay"), safeSettings.orbEventPack.maxTradesPerDay);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "volumePriceManipulation.enabled"), safeSettings.volumePriceManipulation.enabled);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "volumePriceManipulation.maxTradesPerDay"), safeSettings.volumePriceManipulation.maxTradesPerDay);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaimSourceCodes"), safeSettings.liquidityReclaimSourceCodes == null ? "" : safeSettings.liquidityReclaimSourceCodes);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaimStartMinute"), safeSettings.liquidityReclaimStartMinute);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "liquidityReclaimEndMinute"), safeSettings.liquidityReclaimEndMinute);
@@ -2490,6 +2576,32 @@ public class FuturesManager {
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestMinRewardRisk"), safeSettings.bosRetestMinRewardRisk);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestMaxRiskTicks"), safeSettings.bosRetestMaxRiskTicks);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "bosRetestMaxHoldBars"), safeSettings.bosRetestMaxHoldBars);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbEventPackSetups"), safeSettings.orbEventPackSetups == null ? "ALL" : safeSettings.orbEventPackSetups);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbEventPackMaxContracts"), safeSettings.orbEventPackMaxContracts);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbEventPackRequireSimilarOrb"), safeSettings.orbEventPackRequireSimilarOrb);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbEventPackSimilarWindowBars"), safeSettings.orbEventPackSimilarWindowBars);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbEventPackGroupOrbFamilyDailyLimit"), safeSettings.orbEventPackGroupOrbFamilyDailyLimit);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbEventPackMinBreakVolumeRatio"), safeSettings.orbEventPackMinBreakVolumeRatio);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbEventPackMinRetestVolumeRatio"), safeSettings.orbEventPackMinRetestVolumeRatio);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbEventPackMinBreakBodyPct"), safeSettings.orbEventPackMinBreakBodyPct);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbEventPackMinRetestBodyPct"), safeSettings.orbEventPackMinRetestBodyPct);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbEventPackMaxExtensionPctOfRange"), safeSettings.orbEventPackMaxExtensionPctOfRange);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbEventPackMinRetestBarsAfterBreak"), safeSettings.orbEventPackMinRetestBarsAfterBreak);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbEventPackMaxRiskTicks"), safeSettings.orbEventPackMaxRiskTicks);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbEventPackMaxHoldBars"), safeSettings.orbEventPackMaxHoldBars);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "orbEventPackRequireEmaAlignment"), safeSettings.orbEventPackRequireEmaAlignment);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "volumePriceMode"), safeSettings.volumePriceMode == null ? "ALL" : safeSettings.volumePriceMode);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "volumePriceStartMinute"), safeSettings.volumePriceStartMinute);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "volumePriceEndMinute"), safeSettings.volumePriceEndMinute);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "volumePriceLookbackBars"), safeSettings.volumePriceLookbackBars);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "volumePriceMinVolumeRatio"), safeSettings.volumePriceMinVolumeRatio);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "volumePriceQuietVolumeRatio"), safeSettings.volumePriceQuietVolumeRatio);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "volumePriceMinBodyPct"), safeSettings.volumePriceMinBodyPct);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "volumePriceMaxRiskTicks"), safeSettings.volumePriceMaxRiskTicks);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "volumePriceRewardRisk"), safeSettings.volumePriceRewardRisk);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "volumePriceMaxHoldBars"), safeSettings.volumePriceMaxHoldBars);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "volumePriceRequireHigherTimeframe"), safeSettings.volumePriceRequireHigherTimeframe);
+			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "volumePriceMaxContracts"), safeSettings.volumePriceMaxContracts);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "enableEarlySweep"), safeSettings.enableEarlySweep);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "enableLateSweep"), safeSettings.enableLateSweep);
 			saveSetting(pstmt, symbolSettingKey(normalizedSymbol, "enableSweepSecondChance"), safeSettings.enableSweepSecondChance);
@@ -2988,6 +3100,8 @@ public class FuturesManager {
 			+ "\"liquidityReclaim\":" + toggleJson(settings.liquidityReclaim) + ","
 			+ "\"rangeMidpointContinuation\":" + toggleJson(settings.rangeMidpointContinuation) + ","
 			+ "\"bosRetest\":" + toggleJson(settings.bosRetest) + ","
+			+ "\"orbEventPack\":" + toggleJson(settings.orbEventPack) + ","
+			+ "\"volumePriceManipulation\":" + toggleJson(settings.volumePriceManipulation) + ","
 			+ "\"liquidityReclaimSourceCodes\":" + jsonString(settings.liquidityReclaimSourceCodes) + ","
 			+ "\"liquidityReclaimStartMinute\":" + settings.liquidityReclaimStartMinute + ","
 			+ "\"liquidityReclaimEndMinute\":" + settings.liquidityReclaimEndMinute + ","
@@ -3035,6 +3149,32 @@ public class FuturesManager {
 			+ "\"bosRetestMinRewardRisk\":" + settings.bosRetestMinRewardRisk + ","
 			+ "\"bosRetestMaxRiskTicks\":" + settings.bosRetestMaxRiskTicks + ","
 			+ "\"bosRetestMaxHoldBars\":" + settings.bosRetestMaxHoldBars + ","
+			+ "\"orbEventPackSetups\":" + jsonString(settings.orbEventPackSetups) + ","
+			+ "\"orbEventPackMaxContracts\":" + settings.orbEventPackMaxContracts + ","
+			+ "\"orbEventPackRequireSimilarOrb\":" + settings.orbEventPackRequireSimilarOrb + ","
+			+ "\"orbEventPackSimilarWindowBars\":" + settings.orbEventPackSimilarWindowBars + ","
+			+ "\"orbEventPackGroupOrbFamilyDailyLimit\":" + settings.orbEventPackGroupOrbFamilyDailyLimit + ","
+			+ "\"orbEventPackMinBreakVolumeRatio\":" + settings.orbEventPackMinBreakVolumeRatio + ","
+			+ "\"orbEventPackMinRetestVolumeRatio\":" + settings.orbEventPackMinRetestVolumeRatio + ","
+			+ "\"orbEventPackMinBreakBodyPct\":" + settings.orbEventPackMinBreakBodyPct + ","
+			+ "\"orbEventPackMinRetestBodyPct\":" + settings.orbEventPackMinRetestBodyPct + ","
+			+ "\"orbEventPackMaxExtensionPctOfRange\":" + settings.orbEventPackMaxExtensionPctOfRange + ","
+			+ "\"orbEventPackMinRetestBarsAfterBreak\":" + settings.orbEventPackMinRetestBarsAfterBreak + ","
+			+ "\"orbEventPackMaxRiskTicks\":" + settings.orbEventPackMaxRiskTicks + ","
+			+ "\"orbEventPackMaxHoldBars\":" + settings.orbEventPackMaxHoldBars + ","
+			+ "\"orbEventPackRequireEmaAlignment\":" + settings.orbEventPackRequireEmaAlignment + ","
+			+ "\"volumePriceMode\":" + jsonString(settings.volumePriceMode) + ","
+			+ "\"volumePriceStartMinute\":" + settings.volumePriceStartMinute + ","
+			+ "\"volumePriceEndMinute\":" + settings.volumePriceEndMinute + ","
+			+ "\"volumePriceLookbackBars\":" + settings.volumePriceLookbackBars + ","
+			+ "\"volumePriceMinVolumeRatio\":" + settings.volumePriceMinVolumeRatio + ","
+			+ "\"volumePriceQuietVolumeRatio\":" + settings.volumePriceQuietVolumeRatio + ","
+			+ "\"volumePriceMinBodyPct\":" + settings.volumePriceMinBodyPct + ","
+			+ "\"volumePriceMaxRiskTicks\":" + settings.volumePriceMaxRiskTicks + ","
+			+ "\"volumePriceRewardRisk\":" + settings.volumePriceRewardRisk + ","
+			+ "\"volumePriceMaxHoldBars\":" + settings.volumePriceMaxHoldBars + ","
+			+ "\"volumePriceRequireHigherTimeframe\":" + settings.volumePriceRequireHigherTimeframe + ","
+			+ "\"volumePriceMaxContracts\":" + settings.volumePriceMaxContracts + ","
 			+ "\"enableEarlySweep\":" + settings.enableEarlySweep + ","
 			+ "\"enableLateSweep\":" + settings.enableLateSweep + ","
 			+ "\"enableSweepSecondChance\":" + settings.enableSweepSecondChance + ","
@@ -3947,6 +4087,10 @@ public class FuturesManager {
 		else if ("rangeMidpointContinuation.maxTradesPerDay".equals(key)) settings.rangeMidpointContinuation.maxTradesPerDay = parseInt(value, settings.rangeMidpointContinuation.maxTradesPerDay);
 		else if ("bosRetest.enabled".equals(key)) settings.bosRetest.enabled = parseBoolean(value, settings.bosRetest.enabled);
 		else if ("bosRetest.maxTradesPerDay".equals(key)) settings.bosRetest.maxTradesPerDay = parseInt(value, settings.bosRetest.maxTradesPerDay);
+		else if ("orbEventPack.enabled".equals(key)) settings.orbEventPack.enabled = parseBoolean(value, settings.orbEventPack.enabled);
+		else if ("orbEventPack.maxTradesPerDay".equals(key)) settings.orbEventPack.maxTradesPerDay = parseInt(value, settings.orbEventPack.maxTradesPerDay);
+		else if ("volumePriceManipulation.enabled".equals(key)) settings.volumePriceManipulation.enabled = parseBoolean(value, settings.volumePriceManipulation.enabled);
+		else if ("volumePriceManipulation.maxTradesPerDay".equals(key)) settings.volumePriceManipulation.maxTradesPerDay = parseInt(value, settings.volumePriceManipulation.maxTradesPerDay);
 		else if ("liquidityReclaimSourceCodes".equals(key)) settings.liquidityReclaimSourceCodes = value == null ? "" : value.trim();
 		else if ("liquidityReclaimStartMinute".equals(key)) settings.liquidityReclaimStartMinute = parseInt(value, settings.liquidityReclaimStartMinute);
 		else if ("liquidityReclaimEndMinute".equals(key)) settings.liquidityReclaimEndMinute = parseInt(value, settings.liquidityReclaimEndMinute);
@@ -3994,6 +4138,32 @@ public class FuturesManager {
 		else if ("bosRetestMinRewardRisk".equals(key)) settings.bosRetestMinRewardRisk = parseDouble(value, settings.bosRetestMinRewardRisk);
 		else if ("bosRetestMaxRiskTicks".equals(key)) settings.bosRetestMaxRiskTicks = parseDouble(value, settings.bosRetestMaxRiskTicks);
 		else if ("bosRetestMaxHoldBars".equals(key)) settings.bosRetestMaxHoldBars = parseInt(value, settings.bosRetestMaxHoldBars);
+		else if ("orbEventPackSetups".equals(key)) settings.orbEventPackSetups = value == null ? "ALL" : value.trim();
+		else if ("orbEventPackMaxContracts".equals(key)) settings.orbEventPackMaxContracts = parseInt(value, settings.orbEventPackMaxContracts);
+		else if ("orbEventPackRequireSimilarOrb".equals(key)) settings.orbEventPackRequireSimilarOrb = parseBoolean(value, settings.orbEventPackRequireSimilarOrb);
+		else if ("orbEventPackSimilarWindowBars".equals(key)) settings.orbEventPackSimilarWindowBars = parseInt(value, settings.orbEventPackSimilarWindowBars);
+		else if ("orbEventPackGroupOrbFamilyDailyLimit".equals(key)) settings.orbEventPackGroupOrbFamilyDailyLimit = parseBoolean(value, settings.orbEventPackGroupOrbFamilyDailyLimit);
+		else if ("orbEventPackMinBreakVolumeRatio".equals(key)) settings.orbEventPackMinBreakVolumeRatio = parseDouble(value, settings.orbEventPackMinBreakVolumeRatio);
+		else if ("orbEventPackMinRetestVolumeRatio".equals(key)) settings.orbEventPackMinRetestVolumeRatio = parseDouble(value, settings.orbEventPackMinRetestVolumeRatio);
+		else if ("orbEventPackMinBreakBodyPct".equals(key)) settings.orbEventPackMinBreakBodyPct = parseDouble(value, settings.orbEventPackMinBreakBodyPct);
+		else if ("orbEventPackMinRetestBodyPct".equals(key)) settings.orbEventPackMinRetestBodyPct = parseDouble(value, settings.orbEventPackMinRetestBodyPct);
+		else if ("orbEventPackMaxExtensionPctOfRange".equals(key)) settings.orbEventPackMaxExtensionPctOfRange = parseDouble(value, settings.orbEventPackMaxExtensionPctOfRange);
+		else if ("orbEventPackMinRetestBarsAfterBreak".equals(key)) settings.orbEventPackMinRetestBarsAfterBreak = parseInt(value, settings.orbEventPackMinRetestBarsAfterBreak);
+		else if ("orbEventPackMaxRiskTicks".equals(key)) settings.orbEventPackMaxRiskTicks = parseDouble(value, settings.orbEventPackMaxRiskTicks);
+		else if ("orbEventPackMaxHoldBars".equals(key)) settings.orbEventPackMaxHoldBars = parseInt(value, settings.orbEventPackMaxHoldBars);
+		else if ("orbEventPackRequireEmaAlignment".equals(key)) settings.orbEventPackRequireEmaAlignment = parseBoolean(value, settings.orbEventPackRequireEmaAlignment);
+		else if ("volumePriceMode".equals(key)) settings.volumePriceMode = value == null ? "ALL" : value.trim();
+		else if ("volumePriceStartMinute".equals(key)) settings.volumePriceStartMinute = parseInt(value, settings.volumePriceStartMinute);
+		else if ("volumePriceEndMinute".equals(key)) settings.volumePriceEndMinute = parseInt(value, settings.volumePriceEndMinute);
+		else if ("volumePriceLookbackBars".equals(key)) settings.volumePriceLookbackBars = parseInt(value, settings.volumePriceLookbackBars);
+		else if ("volumePriceMinVolumeRatio".equals(key)) settings.volumePriceMinVolumeRatio = parseDouble(value, settings.volumePriceMinVolumeRatio);
+		else if ("volumePriceQuietVolumeRatio".equals(key)) settings.volumePriceQuietVolumeRatio = parseDouble(value, settings.volumePriceQuietVolumeRatio);
+		else if ("volumePriceMinBodyPct".equals(key)) settings.volumePriceMinBodyPct = parseDouble(value, settings.volumePriceMinBodyPct);
+		else if ("volumePriceMaxRiskTicks".equals(key)) settings.volumePriceMaxRiskTicks = parseDouble(value, settings.volumePriceMaxRiskTicks);
+		else if ("volumePriceRewardRisk".equals(key)) settings.volumePriceRewardRisk = parseDouble(value, settings.volumePriceRewardRisk);
+		else if ("volumePriceMaxHoldBars".equals(key)) settings.volumePriceMaxHoldBars = parseInt(value, settings.volumePriceMaxHoldBars);
+		else if ("volumePriceRequireHigherTimeframe".equals(key)) settings.volumePriceRequireHigherTimeframe = parseBoolean(value, settings.volumePriceRequireHigherTimeframe);
+		else if ("volumePriceMaxContracts".equals(key)) settings.volumePriceMaxContracts = parseInt(value, settings.volumePriceMaxContracts);
 		else if ("enableEarlySweep".equals(key)) settings.enableEarlySweep = parseBoolean(value, settings.enableEarlySweep);
 		else if ("enableLateSweep".equals(key)) settings.enableLateSweep = parseBoolean(value, settings.enableLateSweep);
 		else if ("enableSweepSecondChance".equals(key)) settings.enableSweepSecondChance = parseBoolean(value, settings.enableSweepSecondChance);
@@ -4490,6 +4660,8 @@ public class FuturesManager {
 		settings.liquidityReclaim.maxTradesPerDay = boundedInt(settings.liquidityReclaim.maxTradesPerDay, 50, 0, 100);
 		settings.rangeMidpointContinuation.maxTradesPerDay = boundedInt(settings.rangeMidpointContinuation.maxTradesPerDay, 8, 0, 30);
 		settings.bosRetest.maxTradesPerDay = boundedInt(settings.bosRetest.maxTradesPerDay, 2, 0, 4);
+		settings.orbEventPack.maxTradesPerDay = boundedInt(settings.orbEventPack.maxTradesPerDay, 8, 0, 30);
+		settings.volumePriceManipulation.maxTradesPerDay = boundedInt(settings.volumePriceManipulation.maxTradesPerDay, 8, 0, 30);
 		settings.liquidityReclaimStartMinute = boundedInt(settings.liquidityReclaimStartMinute, 570, 0, 930);
 		settings.liquidityReclaimEndMinute = boundedInt(settings.liquidityReclaimEndMinute, 930, 0, 930);
 		if (settings.liquidityReclaimEndMinute < settings.liquidityReclaimStartMinute) {
@@ -4539,6 +4711,31 @@ public class FuturesManager {
 		settings.bosRetestMinRewardRisk = clamp(settings.bosRetestMinRewardRisk, 0.20, 5.0);
 		settings.bosRetestMaxRiskTicks = clamp(settings.bosRetestMaxRiskTicks, 2.0, 500.0);
 		settings.bosRetestMaxHoldBars = boundedInt(settings.bosRetestMaxHoldBars, 90, 1, 390);
+		settings.orbEventPackSetups = cleanOrDefault(settings.orbEventPackSetups, "ALL").trim().toUpperCase(Locale.US);
+		settings.orbEventPackMaxContracts = boundedInt(settings.orbEventPackMaxContracts, 0, 0, 50);
+		settings.orbEventPackSimilarWindowBars = boundedInt(settings.orbEventPackSimilarWindowBars, 45, 1, 240);
+		settings.orbEventPackMinBreakVolumeRatio = clamp(settings.orbEventPackMinBreakVolumeRatio, 0.0, 5.0);
+		settings.orbEventPackMinRetestVolumeRatio = clamp(settings.orbEventPackMinRetestVolumeRatio, 0.0, 5.0);
+		settings.orbEventPackMinBreakBodyPct = clamp(settings.orbEventPackMinBreakBodyPct, 0.0, 100.0);
+		settings.orbEventPackMinRetestBodyPct = clamp(settings.orbEventPackMinRetestBodyPct, 0.0, 100.0);
+		settings.orbEventPackMaxExtensionPctOfRange = clamp(settings.orbEventPackMaxExtensionPctOfRange, 0.0, 5.0);
+		settings.orbEventPackMinRetestBarsAfterBreak = boundedInt(settings.orbEventPackMinRetestBarsAfterBreak, 0, 0, 45);
+		settings.orbEventPackMaxRiskTicks = clamp(settings.orbEventPackMaxRiskTicks, 1.0, 500.0);
+		settings.orbEventPackMaxHoldBars = boundedInt(settings.orbEventPackMaxHoldBars, 390, 1, 390);
+		settings.volumePriceMode = normalizedVolumePriceMode(settings.volumePriceMode);
+		settings.volumePriceStartMinute = boundedInt(settings.volumePriceStartMinute, 570, 0, 930);
+		settings.volumePriceEndMinute = boundedInt(settings.volumePriceEndMinute, 930, 0, 930);
+		if (settings.volumePriceEndMinute < settings.volumePriceStartMinute) {
+			settings.volumePriceEndMinute = settings.volumePriceStartMinute;
+		}
+		settings.volumePriceLookbackBars = boundedInt(settings.volumePriceLookbackBars, 24, 8, 120);
+		settings.volumePriceMinVolumeRatio = clamp(settings.volumePriceMinVolumeRatio, 0.0, 10.0);
+		settings.volumePriceQuietVolumeRatio = clamp(settings.volumePriceQuietVolumeRatio, 0.0, 10.0);
+		settings.volumePriceMinBodyPct = clamp(settings.volumePriceMinBodyPct, 0.0, 100.0);
+		settings.volumePriceMaxRiskTicks = clamp(settings.volumePriceMaxRiskTicks, 1.0, 500.0);
+		settings.volumePriceRewardRisk = clamp(settings.volumePriceRewardRisk, 0.20, 5.0);
+		settings.volumePriceMaxHoldBars = boundedInt(settings.volumePriceMaxHoldBars, 90, 1, 390);
+		settings.volumePriceMaxContracts = boundedInt(settings.volumePriceMaxContracts, 0, 0, 50);
 		settings.orbRetestStartMinutes = boundedInt(settings.orbRetestStartMinutes, 0, 0, 150);
 		settings.orbRetestEndMinutes = boundedInt(settings.orbRetestEndMinutes, 135, 0, 150);
 		if (settings.orbRetestEndMinutes < settings.orbRetestStartMinutes) {
@@ -6623,6 +6820,8 @@ public class FuturesManager {
 		copy.liquidityReclaim = new StrategyToggle(safe.liquidityReclaim.enabled, safe.liquidityReclaim.maxTradesPerDay);
 		copy.rangeMidpointContinuation = new StrategyToggle(safe.rangeMidpointContinuation.enabled, safe.rangeMidpointContinuation.maxTradesPerDay);
 		copy.bosRetest = new StrategyToggle(safe.bosRetest.enabled, safe.bosRetest.maxTradesPerDay);
+		copy.orbEventPack = new StrategyToggle(safe.orbEventPack.enabled, safe.orbEventPack.maxTradesPerDay);
+		copy.volumePriceManipulation = new StrategyToggle(safe.volumePriceManipulation.enabled, safe.volumePriceManipulation.maxTradesPerDay);
 		copy.liquidityReclaimSourceCodes = safe.liquidityReclaimSourceCodes;
 		copy.liquidityReclaimStartMinute = safe.liquidityReclaimStartMinute;
 		copy.liquidityReclaimEndMinute = safe.liquidityReclaimEndMinute;
@@ -6670,6 +6869,32 @@ public class FuturesManager {
 		copy.bosRetestMinRewardRisk = safe.bosRetestMinRewardRisk;
 		copy.bosRetestMaxRiskTicks = safe.bosRetestMaxRiskTicks;
 		copy.bosRetestMaxHoldBars = safe.bosRetestMaxHoldBars;
+		copy.orbEventPackSetups = safe.orbEventPackSetups;
+		copy.orbEventPackMaxContracts = safe.orbEventPackMaxContracts;
+		copy.orbEventPackRequireSimilarOrb = safe.orbEventPackRequireSimilarOrb;
+		copy.orbEventPackSimilarWindowBars = safe.orbEventPackSimilarWindowBars;
+		copy.orbEventPackGroupOrbFamilyDailyLimit = safe.orbEventPackGroupOrbFamilyDailyLimit;
+		copy.orbEventPackMinBreakVolumeRatio = safe.orbEventPackMinBreakVolumeRatio;
+		copy.orbEventPackMinRetestVolumeRatio = safe.orbEventPackMinRetestVolumeRatio;
+		copy.orbEventPackMinBreakBodyPct = safe.orbEventPackMinBreakBodyPct;
+		copy.orbEventPackMinRetestBodyPct = safe.orbEventPackMinRetestBodyPct;
+		copy.orbEventPackMaxExtensionPctOfRange = safe.orbEventPackMaxExtensionPctOfRange;
+		copy.orbEventPackMinRetestBarsAfterBreak = safe.orbEventPackMinRetestBarsAfterBreak;
+		copy.orbEventPackMaxRiskTicks = safe.orbEventPackMaxRiskTicks;
+		copy.orbEventPackMaxHoldBars = safe.orbEventPackMaxHoldBars;
+		copy.orbEventPackRequireEmaAlignment = safe.orbEventPackRequireEmaAlignment;
+		copy.volumePriceMode = safe.volumePriceMode;
+		copy.volumePriceStartMinute = safe.volumePriceStartMinute;
+		copy.volumePriceEndMinute = safe.volumePriceEndMinute;
+		copy.volumePriceLookbackBars = safe.volumePriceLookbackBars;
+		copy.volumePriceMinVolumeRatio = safe.volumePriceMinVolumeRatio;
+		copy.volumePriceQuietVolumeRatio = safe.volumePriceQuietVolumeRatio;
+		copy.volumePriceMinBodyPct = safe.volumePriceMinBodyPct;
+		copy.volumePriceMaxRiskTicks = safe.volumePriceMaxRiskTicks;
+		copy.volumePriceRewardRisk = safe.volumePriceRewardRisk;
+		copy.volumePriceMaxHoldBars = safe.volumePriceMaxHoldBars;
+		copy.volumePriceRequireHigherTimeframe = safe.volumePriceRequireHigherTimeframe;
+		copy.volumePriceMaxContracts = safe.volumePriceMaxContracts;
 		copy.enableEarlySweep = safe.enableEarlySweep;
 		copy.enableLateSweep = safe.enableLateSweep;
 		copy.enableSweepSecondChance = safe.enableSweepSecondChance;
@@ -8705,6 +8930,7 @@ public class FuturesManager {
 			double displayReturnPct = returnPct;
 			int displayTrades = exitTrades;
 			int displayOpenTrades = openTrades;
+			double totalFees = 0.0;
 			String dataSource = "LOCAL_DECISIONS";
 			boolean brokerBalanceTracksPnl = false;
 			String brokerBalanceMode = "EQUITY";
@@ -8715,6 +8941,7 @@ public class FuturesManager {
 				double brokerRiskBalance = jsonFirstNumber(brokerMetricsJson, new String[] { "riskCurrentBalance", "equityBalance" }, Double.NaN);
 				double brokerReturnPct = jsonFirstNumber(brokerMetricsJson, new String[] { "returnPct" }, Double.NaN);
 				double brokerDrawdown = jsonFirstNumber(brokerMetricsJson, new String[] { "drawdown" }, Double.NaN);
+				double brokerTotalFees = jsonFirstNumber(brokerMetricsJson, new String[] { "totalFees" }, Double.NaN);
 			double brokerTrades = jsonFirstNumber(brokerMetricsJson, new String[] { "numberOfTrades" }, Double.NaN);
 			double brokerOpenTrades = jsonFirstNumber(brokerMetricsJson, new String[] { "openTrades" }, Double.NaN);
 			brokerBalanceTracksPnl = jsonBoolean(brokerMetricsJson, "balanceTracksPnl");
@@ -8737,6 +8964,9 @@ public class FuturesManager {
 				}
 				if (!Double.isNaN(brokerDrawdown)) {
 					displayDrawdown = brokerDrawdown;
+				}
+				if (!Double.isNaN(brokerTotalFees)) {
+					totalFees = brokerTotalFees;
 				}
 			if (!Double.isNaN(brokerTrades)) {
 				displayTrades = (int) Math.round(brokerTrades);
@@ -8765,6 +8995,7 @@ public class FuturesManager {
 				+ "\"equityBalance\":" + round(riskCurrentBalance) + ","
 				+ "\"balanceMode\":" + jsonString(brokerBalanceMode) + ","
 				+ "\"balanceTracksPnl\":" + brokerBalanceTracksPnl + ","
+				+ "\"totalFees\":" + round(totalFees) + ","
 				+ "\"returnPct\":" + round(displayReturnPct) + ","
 				+ "\"winRate\":" + round(winRate) + ","
 				+ "\"numberOfTrades\":" + displayTrades + ","
@@ -10178,13 +10409,14 @@ public class FuturesManager {
 
 	private static String[] selfTestStrategyCodes() {
 		return new String[] {
-			"ORB", "ORB2", "LORB", "OMOM", "SWEEP", "SWEEP2", "PDB", "VWAP", "VRCL", "MRVWAP", "FVG", "IFVG", "CMOM", "AFT", "MIM", "IPB", "KELT", "KREV", "MSCALP", "SHDW", "ECHO", "WFT", "TLAD", "RCB", "VPB", "EIA", "COPEN", "IDXCONF", "MYMORB2", "MYMBR", "MCLTC"
+			"ORB", "ORB2", "ORBX", "LORB", "OMOM", "SWEEP", "SWEEP2", "PDB", "VWAP", "VRCL", "MRVWAP", "FVG", "IFVG", "CMOM", "AFT", "MIM", "IPB", "KELT", "KREV", "MSCALP", "SHDW", "ECHO", "WFT", "TLAD", "RCB", "VPB", "VABS", "EIA", "COPEN", "IDXCONF", "MYMORB2", "MYMBR", "MCLTC"
 		};
 	}
 
 	private static String selfTestStrategyName(String strategyCode) {
 		if ("ORB".equals(strategyCode)) return "Opening Range";
 		if ("ORB2".equals(strategyCode)) return "Opening Range Retest";
+		if ("ORBX".equals(strategyCode)) return "ORB Event Pack";
 		if ("LORB".equals(strategyCode)) return "Late ORB Continuation";
 		if ("OMOM".equals(strategyCode)) return "Opening Momentum";
 		if ("SWEEP".equals(strategyCode)) return "Liquidity Sweep";
@@ -10208,6 +10440,7 @@ public class FuturesManager {
 		if ("TLAD".equals(strategyCode)) return "Trend Ladder";
 		if ("RCB".equals(strategyCode)) return "Compression Breakout";
 		if ("VPB".equals(strategyCode)) return "Value Area Reclaim";
+		if ("VABS".equals(strategyCode)) return "Volume Absorption Reversal";
 		if ("EIA".equals(strategyCode)) return "MCL EIA Continuation";
 		if ("COPEN".equals(strategyCode)) return "MCL Crude Session Open";
 		if ("IDXCONF".equals(strategyCode)) return "MYM Index Confirmation";
@@ -12532,6 +12765,7 @@ public class FuturesManager {
 		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
 		if ("ORB".equals(code)) return "ENTRY_ORB_BREAKOUT";
 		if ("ORB2".equals(code)) return "ENTRY_ORB_RETEST";
+		if ("ORBX".equals(code)) return "ENTRY_ORB_EVENT_PACK";
 		if ("OMOM".equals(code)) return "ENTRY_OPENING_MOMENTUM";
 		if ("LORB".equals(code)) return "ENTRY_LATE_ORB_CONTINUATION";
 		if ("VWAP".equals(code)) return "ENTRY_VWAP_PULLBACK";
@@ -12552,6 +12786,7 @@ public class FuturesManager {
 		if ("MYMBR".equals(code)) return "ENTRY_MYM_BREADTH_CONFIRMATION";
 		if ("MCLTC".equals(code)) return "ENTRY_MCL_TREND_CONTINUATION";
 		if ("LIQREC".equals(code)) return "ENTRY_LIQUIDITY_RECLAIM";
+		if ("VABS".equals(code)) return "ENTRY_VOLUME_ABSORPTION_REVERSAL";
 		if ("OFLOW_EQ".equals(code)) return "ENTRY_ORDER_FLOW_EQUILIBRIUM";
 		if (code.contains("OFLOW")) return "ENTRY_ORDER_FLOW_CONTINUATION";
 		return "ENTRY_CONFIGURED_STRATEGY";
@@ -12562,6 +12797,7 @@ public class FuturesManager {
 		String dir = "short".equals(direction) ? "downside" : "upside";
 		if ("ORB".equals(code)) return "the opening range broke in the trade direction after ORB filters passed.";
 		if ("ORB2".equals(code)) return "the opening range breakout retested and held before continuation.";
+		if ("ORBX".equals(code)) return "the 1-minute opening-range event pack detected a mined retest, reclaim, or continuation structure.";
 		if ("OMOM".equals(code)) return "compressed opening momentum broke in the trade direction with volume/range filters aligned.";
 		if ("LORB".equals(code)) return "opening-range structure stayed valid into a later continuation window.";
 		if ("VWAP".equals(code)) return "a trend-side VWAP/EMA pullback held and resumed.";
@@ -12588,6 +12824,7 @@ public class FuturesManager {
 		if ("MYMBR".equals(code)) return "MYM faded an index-breadth stretch after the Dow contract reached a structured breakout/breakdown zone.";
 		if ("MCLTC".equals(code)) return "MCL faded an extended crude trend push after price stretched away from the session open with bounded reversal risk.";
 		if ("LIQREC".equals(code)) return "a first-class Liquidity Reclaim source-stack setup triggered with reclaim structure and executable risk geometry.";
+		if ("VABS".equals(code)) return "a high-volume absorption candle rejected an attempted sweep and the next candle reclaimed the failure level.";
 		if ("OFLOW_EQ".equals(code)) return "order-flow equilibrium logic confirmed a dislocation reversion setup.";
 		return "the configured strategy filters passed for " + dir + " expectancy.";
 	}
@@ -17479,9 +17716,9 @@ public class FuturesManager {
 			session.dailyLossLimit,
 			session.maxRiskPerTrade,
 			session.maxContracts,
-			1.24,
-			1.0,
-			0.0
+			session.commissionPerContract,
+			session.slippageTicks,
+			session.profitTarget
 		);
 		String liveStrategySlot = activeLiveStrategySlot(session, snapshot);
 		config.strategySettings = loadFuturesStrategySettings(symbol, liveStrategySlot);
@@ -20786,6 +21023,8 @@ public class FuturesManager {
 		double limit = safe.maxInitialRiskTicks;
 		if ("ORB2".equals(code)) {
 			limit = safe.orbRetestMaxRiskTicks;
+		} else if ("ORBX".equals(code)) {
+			limit = safe.orbEventPackMaxRiskTicks;
 		} else if ("LORB".equals(code)) {
 			limit = safe.lateOrbContinuationMaxRiskTicks;
 		} else if ("KREV".equals(code) || "KELT".equals(code)) {
@@ -20798,6 +21037,8 @@ public class FuturesManager {
 			limit = Math.min(limit, safe.rangeMidpointMaxRiskTicks);
 		} else if ("BOSRT".equals(code)) {
 			limit = Math.min(limit, safe.bosRetestMaxRiskTicks);
+		} else if (isVolumePriceStrategyCode(code)) {
+			limit = Math.min(limit, safe.volumePriceMaxRiskTicks);
 		}
 		return Math.max(1.0, limit);
 	}
@@ -20894,6 +21135,12 @@ public class FuturesManager {
 		FuturesStrategySettings safe = settings == null ? defaultFuturesStrategySettings() : settings;
 		if ("LIQREC".equals(code) && safe.liquidityReclaimMaxContracts > 0) {
 			maxContracts = maxContracts <= 0 ? safe.liquidityReclaimMaxContracts : Math.min(maxContracts, safe.liquidityReclaimMaxContracts);
+		}
+		if ("ORBX".equals(code) && safe.orbEventPackMaxContracts > 0) {
+			maxContracts = maxContracts <= 0 ? safe.orbEventPackMaxContracts : Math.min(maxContracts, safe.orbEventPackMaxContracts);
+		}
+		if (isVolumePriceStrategyCode(code) && safe.volumePriceMaxContracts > 0) {
+			maxContracts = maxContracts <= 0 ? safe.volumePriceMaxContracts : Math.min(maxContracts, safe.volumePriceMaxContracts);
 		}
 		return maxContracts;
 	}
@@ -21817,6 +22064,9 @@ public class FuturesManager {
 		if (settings.lateOrbContinuation.enabled) {
 			signals.addAll(findLateOrbContinuationSignals(spec, bars, settings));
 		}
+		if (settings.orbEventPack.enabled) {
+			signals.addAll(findOrbEventPackSignals(spec, bars, settings, signals));
+		}
 		if (settings.openingMomentum.enabled) {
 			signals.addAll(findOpeningMomentumSignals(spec, bars, settings));
 		}
@@ -21888,6 +22138,9 @@ public class FuturesManager {
 		}
 		if (settings.mclTrendContinuation.enabled) {
 			signals.addAll(findMclTrendContinuationSignals(spec, bars, settings));
+		}
+		if (settings.volumePriceManipulation.enabled) {
+			signals.addAll(findVolumePriceManipulationSignals(spec, bars, fifteenMinuteBars, oneHourBars, settings));
 		}
 		if (settings.liquidityReclaim.enabled) {
 			signals.addAll(findLiquidityReclaimSignals(spec, bars, previousBars, fifteenMinuteBars, oneHourBars, settings, signals));
@@ -23193,6 +23446,485 @@ public class FuturesManager {
 			return false;
 		}
 		return isLong ? (bar.ema9 >= bar.ema20 && bar.ema20 >= bar.ema50) : (bar.ema9 <= bar.ema20 && bar.ema20 <= bar.ema50);
+	}
+
+	private static List<Signal> findOrbEventPackSignals(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, List<Signal> existingSignals) {
+		List<Signal> signals = new ArrayList<Signal>();
+		FuturesStrategySettings safe = settings == null ? defaultFuturesStrategySettings() : settings;
+		if (spec == null || bars == null || bars.size() < 120) {
+			return signals;
+		}
+		String symbol = normalizeSymbol(spec.symbol);
+		if ("M2K".equals(symbol)) {
+			if (orbEventPackSetupEnabled(safe, "M2K_FAIL_LONG")) {
+				addOrbEventPackFailedReclaim(signals, spec, bars, safe, 5, "LONG", 2.0, true);
+			}
+			if (orbEventPackSetupEnabled(safe, "M2K_RETEST_LONG")) {
+				addOrbEventPackRetest(signals, spec, bars, safe, 5, "LONG", 1.5, false, true);
+			}
+		} else if ("MNQ".equals(symbol)) {
+			if (orbEventPackSetupEnabled(safe, "MNQ_RETEST_LONG")) {
+				addOrbEventPackRetest(signals, spec, bars, safe, 5, "LONG", 2.0, true, true);
+			}
+		} else if ("NQ".equals(symbol)) {
+			if (orbEventPackSetupEnabled(safe, "NQ_RETEST_LONG")) {
+				addOrbEventPackRetest(signals, spec, bars, safe, 5, "LONG", 1.5, false, true);
+			}
+		} else if ("MES".equals(symbol)) {
+			if (orbEventPackSetupEnabled(safe, "MES_RETEST_LONG")) {
+				addOrbEventPackRetest(signals, spec, bars, safe, 5, "LONG", 2.0, true, true);
+			}
+		} else if ("MCL".equals(symbol)) {
+			if (orbEventPackSetupEnabled(safe, "MCL_FIRST_LONG")) {
+				addOrbEventPackFirstBreak(signals, spec, bars, safe, 15, "LONG", 1.2, false, true);
+			}
+		} else if ("MGC".equals(symbol)) {
+			if (orbEventPackSetupEnabled(safe, "MGC_FIRST_SHORT")) {
+				addOrbEventPackFirstBreak(signals, spec, bars, safe, 5, "SHORT", 1.5, true, true);
+			}
+			if (orbEventPackSetupEnabled(safe, "MGC_FAIL_SHORT")) {
+				addOrbEventPackFailedReclaim(signals, spec, bars, safe, 15, "SHORT", 1.5, true);
+			}
+		} else if ("MYM".equals(symbol) && orbEventPackSetupEnabled(safe, "MYM_FAIL_SHORT")) {
+			addOrbEventPackFailedReclaim(signals, spec, bars, safe, 5, "SHORT", 1.2, true);
+		}
+		if (safe.orbEventPackRequireSimilarOrb) {
+			List<Signal> filtered = new ArrayList<Signal>();
+			for (int index = 0; index < signals.size(); index++) {
+				Signal signal = signals.get(index);
+				if (hasSimilarOrbFamilySignal(signal, existingSignals, safe.orbEventPackSimilarWindowBars)) {
+					filtered.add(signal);
+				}
+			}
+			signals = filtered;
+		}
+		signals = limitSignalsByDailyCount(dedupeByHour(signals, safe.orbEventPack.maxTradesPerDay), safe.orbEventPack.maxTradesPerDay);
+		return signals;
+	}
+
+	private static boolean hasSimilarOrbFamilySignal(Signal candidate, List<Signal> existingSignals, int windowBars) {
+		if (candidate == null || existingSignals == null || existingSignals.isEmpty()) {
+			return false;
+		}
+		for (int index = 0; index < existingSignals.size(); index++) {
+			Signal existing = existingSignals.get(index);
+			if (existing == null || !isOrbFamilyStrategy(existing.strategyCode)) {
+				continue;
+			}
+			if (!cleanOrDefault(candidate.side, "").equals(cleanOrDefault(existing.side, ""))) {
+				continue;
+			}
+			if (Math.abs(candidate.entryIndex - existing.entryIndex) <= Math.max(1, windowBars)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean isOrbFamilyStrategy(String strategyCode) {
+		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
+		return "ORB".equals(code) || "ORB2".equals(code) || "LORB".equals(code) || "ORBX".equals(code);
+	}
+
+	private static boolean orbEventPackSetupEnabled(FuturesStrategySettings settings, String setup) {
+		String selected = cleanOrDefault(settings == null ? "ALL" : settings.orbEventPackSetups, "ALL").toUpperCase(Locale.US);
+		if (selected.length() == 0 || "ALL".equals(selected)) {
+			return true;
+		}
+		String normalized = cleanOrDefault(setup, "").toUpperCase(Locale.US);
+		String[] parts = selected.split(",");
+		for (int index = 0; index < parts.length; index++) {
+			if (normalized.equals(parts[index].trim().toUpperCase(Locale.US))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static void addOrbEventPackFirstBreak(List<Signal> signals, InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int rangeMinutes, String side, double targetR, boolean requireEma, boolean requireVwap) {
+		OrbOpeningRange range = orbOpeningRange(bars, rangeMinutes);
+		if (range == null) {
+			return;
+		}
+		OrbBreak firstBreak = firstOrbBreak(spec, bars, range);
+		if (firstBreak == null || !side.equals(firstBreak.side)) {
+			return;
+		}
+		Bar bar = bars.get(firstBreak.index);
+		if (!orbEventPackBreakQualityOk(spec, bars, range, firstBreak.index, side, settings)) {
+			return;
+		}
+		if (requireVwap && !orbEventVwapSide(bar, side)) {
+			return;
+		}
+		if ((requireEma || settings.orbEventPackRequireEmaAlignment) && !emaStackAligned(bar, "LONG".equals(side))) {
+			return;
+		}
+		double stop = "LONG".equals(side) ? range.low - (spec.tickSize * 2.0) : range.high + (spec.tickSize * 2.0);
+		addOrbEventPackSignal(signals, spec, bars, settings, firstBreak.index, side, stop, targetR, "1m ORB event-pack first break with VWAP/EMA participation.");
+	}
+
+	private static void addOrbEventPackRetest(List<Signal> signals, InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int rangeMinutes, String side, double targetR, boolean requireEma, boolean requireVwap) {
+		OrbOpeningRange range = orbOpeningRange(bars, rangeMinutes);
+		if (range == null) {
+			return;
+		}
+		OrbBreak firstBreak = firstOrbBreak(spec, bars, range);
+		if (firstBreak == null || !side.equals(firstBreak.side)) {
+			return;
+		}
+		if (!orbEventPackBreakQualityOk(spec, bars, range, firstBreak.index, side, settings)) {
+			return;
+		}
+		double level = "LONG".equals(side) ? range.high : range.low;
+		int firstRetestIndex = Math.max(firstBreak.index + 2, firstBreak.index + settings.orbEventPackMinRetestBarsAfterBreak);
+		for (int index = firstRetestIndex; index < Math.min(bars.size() - 1, firstBreak.index + 45); index++) {
+			Bar bar = bars.get(index);
+			if (bar.marketTime != null && bar.marketTime.isAfter(LocalTime.of(12, 0))) {
+				break;
+			}
+			boolean touched;
+			boolean confirmed;
+			double stop;
+			if ("LONG".equals(side)) {
+				touched = bar.low <= level + (spec.tickSize * 2.0);
+				confirmed = bar.close > level && bar.close > bar.open && closeLocation(bar) >= 0.58;
+				stop = recentSwingLow(bars, index, 5) - (spec.tickSize * 2.0);
+			} else {
+				touched = bar.high >= level - (spec.tickSize * 2.0);
+				confirmed = bar.close < level && bar.close < bar.open && closeLocation(bar) <= 0.42;
+				stop = recentSwingHigh(bars, index, 5) + (spec.tickSize * 2.0);
+			}
+			if (!touched || !confirmed) {
+				continue;
+			}
+			if (bar.bodyPct < settings.orbEventPackMinRetestBodyPct) {
+				continue;
+			}
+			if (range.averageVolume() > 0.0 && bar.volume < range.averageVolume() * settings.orbEventPackMinRetestVolumeRatio) {
+				continue;
+			}
+			if (!orbEventPackExtensionOk(spec, range, bar.close, side, settings)) {
+				continue;
+			}
+			if (requireVwap && !orbEventVwapSide(bar, side)) {
+				continue;
+			}
+			if ((requireEma || settings.orbEventPackRequireEmaAlignment) && !emaStackAligned(bar, "LONG".equals(side))) {
+				continue;
+			}
+			if (riskTicks(spec, bar.close, stop) > settings.orbEventPackMaxRiskTicks) {
+				return;
+			}
+			addOrbEventPackSignal(signals, spec, bars, settings, index, side, stop, targetR, "1m ORB event-pack retest after first range break held the broken level.");
+			return;
+		}
+	}
+
+	private static void addOrbEventPackFailedReclaim(List<Signal> signals, InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int rangeMinutes, String side, double targetR, boolean requireVwap) {
+		OrbOpeningRange range = orbOpeningRange(bars, rangeMinutes);
+		if (range == null) {
+			return;
+		}
+		OrbBreak firstBreak = firstOrbBreak(spec, bars, range);
+		if (firstBreak == null) {
+			return;
+		}
+		if (!orbEventPackBreakQualityOk(spec, bars, range, firstBreak.index, firstBreak.side, settings)) {
+			return;
+		}
+		String reversalSide = "LONG".equals(firstBreak.side) ? "SHORT" : "LONG";
+		if (!side.equals(reversalSide)) {
+			return;
+		}
+		double midpoint = (range.high + range.low) / 2.0;
+		for (int index = firstBreak.index + 1; index < Math.min(bars.size() - 1, firstBreak.index + 20); index++) {
+			Bar bar = bars.get(index);
+			boolean trigger;
+			double stop;
+			if ("LONG".equals(firstBreak.side)) {
+				trigger = bar.close < range.high && bar.close < bar.open && bar.close < midpoint;
+				stop = recentSwingHigh(bars, index, Math.max(1, index - firstBreak.index + 1)) + (spec.tickSize * 2.0);
+			} else {
+				trigger = bar.close > range.low && bar.close > bar.open && bar.close > midpoint;
+				stop = recentSwingLow(bars, index, Math.max(1, index - firstBreak.index + 1)) - (spec.tickSize * 2.0);
+			}
+			if (!trigger) {
+				continue;
+			}
+			if (bar.bodyPct < settings.orbEventPackMinRetestBodyPct) {
+				continue;
+			}
+			if (range.averageVolume() > 0.0 && bar.volume < range.averageVolume() * settings.orbEventPackMinRetestVolumeRatio) {
+				continue;
+			}
+			if (requireVwap && !orbEventVwapSide(bar, side)) {
+				continue;
+			}
+			addOrbEventPackSignal(signals, spec, bars, settings, index, side, stop, targetR, "1m ORB event-pack failed break reclaimed the range midpoint and reversed.");
+			return;
+		}
+	}
+
+	private static void addOrbEventPackSignal(List<Signal> signals, InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings, int index, String side, double stop, double targetR, String notes) {
+		if (index < 0 || index >= bars.size()) {
+			return;
+		}
+		Bar bar = bars.get(index);
+		double risk = "LONG".equals(side) ? bar.close - stop : stop - bar.close;
+		if (risk <= 0.0 || riskTicks(spec, bar.close, stop) > settings.orbEventPackMaxRiskTicks) {
+			return;
+		}
+		double target = "LONG".equals(side) ? bar.close + (risk * targetR) : bar.close - (risk * targetR);
+		signals.add(signal("ORBX", "ORB Event Pack", side, index, bar.close, stop, target, settings.orbEventPackMaxHoldBars, notes));
+	}
+
+	private static boolean orbEventPackBreakQualityOk(InstrumentSpec spec, List<Bar> bars, OrbOpeningRange range, int index, String side, FuturesStrategySettings settings) {
+		if (index < 0 || index >= bars.size()) {
+			return false;
+		}
+		Bar bar = bars.get(index);
+		if (bar.bodyPct < settings.orbEventPackMinBreakBodyPct) {
+			return false;
+		}
+		if (range.averageVolume() > 0.0 && bar.volume < range.averageVolume() * settings.orbEventPackMinBreakVolumeRatio) {
+			return false;
+		}
+		return orbEventPackExtensionOk(spec, range, bar.close, side, settings);
+	}
+
+	private static boolean orbEventPackExtensionOk(InstrumentSpec spec, OrbOpeningRange range, double close, String side, FuturesStrategySettings settings) {
+		if (settings.orbEventPackMaxExtensionPctOfRange <= 0.0) {
+			return true;
+		}
+		double rangeTicks = Math.max(1.0, riskTicks(spec, range.high, range.low));
+		double extensionTicks = "LONG".equals(side) ? riskTicks(spec, close, range.high) : riskTicks(spec, range.low, close);
+		return Math.max(0.0, extensionTicks) / rangeTicks <= settings.orbEventPackMaxExtensionPctOfRange;
+	}
+
+	private static boolean orbEventVwapSide(Bar bar, String side) {
+		if (bar == null || bar.vwap <= 0.0) {
+			return false;
+		}
+		return "LONG".equals(side) ? bar.close >= bar.vwap : bar.close <= bar.vwap;
+	}
+
+	private static OrbOpeningRange orbOpeningRange(List<Bar> bars, int rangeMinutes) {
+		int start = -1;
+		for (int index = 0; index < bars.size(); index++) {
+			Bar bar = bars.get(index);
+			if (bar.marketTime != null && !bar.marketTime.isBefore(RTH_START)) {
+				start = index;
+				break;
+			}
+		}
+		if (start < 0 || start + rangeMinutes >= bars.size()) {
+			return null;
+		}
+		OrbOpeningRange range = new OrbOpeningRange();
+		range.startIndex = start;
+		range.endIndex = start + rangeMinutes - 1;
+		range.high = Double.NEGATIVE_INFINITY;
+		range.low = Double.POSITIVE_INFINITY;
+		for (int index = start; index < start + rangeMinutes; index++) {
+			Bar bar = bars.get(index);
+			range.high = Math.max(range.high, bar.high);
+			range.low = Math.min(range.low, bar.low);
+			range.volume += Math.max(0.0, bar.volume);
+			range.bars++;
+		}
+		return range.high > range.low ? range : null;
+	}
+
+	private static OrbBreak firstOrbBreak(InstrumentSpec spec, List<Bar> bars, OrbOpeningRange range) {
+		for (int index = range.endIndex + 1; index < bars.size() - 1; index++) {
+			Bar bar = bars.get(index);
+			if (bar.marketTime != null && bar.marketTime.isAfter(LocalTime.of(12, 0))) {
+				break;
+			}
+			if (bar.close > range.high + (spec.tickSize * 2.0)) {
+				return new OrbBreak(index, "LONG");
+			}
+			if (bar.close < range.low - (spec.tickSize * 2.0)) {
+				return new OrbBreak(index, "SHORT");
+			}
+		}
+		return null;
+	}
+
+	private static class OrbOpeningRange {
+		private int startIndex;
+		private int endIndex;
+		private double high;
+		private double low;
+		private double volume;
+		private int bars;
+
+		private double averageVolume() {
+			return bars <= 0 ? 0.0 : volume / bars;
+		}
+	}
+
+	private static class OrbBreak {
+		private final int index;
+		private final String side;
+
+		private OrbBreak(int index, String side) {
+			this.index = index;
+			this.side = side;
+		}
+	}
+
+	private static List<Signal> findVolumePriceManipulationSignals(InstrumentSpec spec, List<Bar> bars, List<Bar> fifteenMinuteBars, List<Bar> oneHourBars, FuturesStrategySettings settings) {
+		List<Signal> signals = new ArrayList<Signal>();
+		FuturesStrategySettings safe = settings == null ? defaultFuturesStrategySettings() : settings;
+		if (spec == null || bars == null || bars.size() < 40) {
+			return signals;
+		}
+		if (volumePriceModeAllows(safe, "VABS")) {
+			signals.addAll(findVolumeAbsorptionReversals(spec, bars, fifteenMinuteBars, oneHourBars, safe));
+		}
+		return limitSignalsByDailyCount(dedupeByHour(signals, safe.volumePriceManipulation.maxTradesPerDay), safe.volumePriceManipulation.maxTradesPerDay);
+	}
+
+	private static List<Signal> findVolumeAbsorptionReversals(InstrumentSpec spec, List<Bar> bars, List<Bar> fifteenMinuteBars, List<Bar> oneHourBars, FuturesStrategySettings settings) {
+		List<Signal> signals = new ArrayList<Signal>();
+		double tick = Math.max(0.000001, spec.tickSize);
+		int lookback = Math.max(8, settings.volumePriceLookbackBars);
+		for (int index = Math.max(lookback + 2, 30); index < bars.size(); index++) {
+			Bar entry = bars.get(index);
+			Bar absorption = bars.get(index - 1);
+			if (!volumePriceBaseEntryOk(entry, settings) || !sameMarketDateWindow(bars, index, lookback)) {
+				continue;
+			}
+			double recentLow = lowestLowBetween(bars, index - lookback, index - 2);
+			if (absorption.low < recentLow - tick
+				&& volumeRatio(absorption) >= Math.max(settings.volumePriceMinVolumeRatio, 1.5)
+				&& closeLocation(absorption) >= 0.55
+				&& entry.close > absorption.high + tick
+				&& entry.close > entry.open
+				&& closeLocation(entry) >= 0.62
+				&& volumePriceHtfOk(true, entry, fifteenMinuteBars, oneHourBars, settings)) {
+				Signal signal = volumePriceSignal(spec, bars, index, true, "VABS", "Volume Absorption Reversal", absorption.low, "high-volume downside effort rejected, next candle reclaimed the absorption high", settings);
+				if (signal != null) {
+					signals.add(signal);
+				}
+			}
+			if (settings.allowShorts) {
+				double recentHigh = highestHighBetween(bars, index - lookback, index - 2);
+				if (absorption.high > recentHigh + tick
+					&& volumeRatio(absorption) >= Math.max(settings.volumePriceMinVolumeRatio, 1.5)
+					&& closeLocation(absorption) <= 0.45
+					&& entry.close < absorption.low - tick
+					&& entry.close < entry.open
+					&& closeLocation(entry) <= 0.38
+					&& volumePriceHtfOk(false, entry, fifteenMinuteBars, oneHourBars, settings)) {
+					Signal signal = volumePriceSignal(spec, bars, index, false, "VABS", "Volume Absorption Reversal", absorption.high, "high-volume upside effort rejected, next candle lost the absorption low", settings);
+					if (signal != null) {
+						signals.add(signal);
+					}
+				}
+			}
+		}
+		return signals;
+	}
+
+	private static boolean volumePriceBaseEntryOk(Bar bar, FuturesStrategySettings settings) {
+		if (bar == null || bar.marketTime == null) {
+			return false;
+		}
+		if (!inMinuteWindow(minuteOfDay(bar), settings.volumePriceStartMinute, settings.volumePriceEndMinute)) {
+			return false;
+		}
+		double bodyPct = bar.bodyPct > 0.0 ? bar.bodyPct : defaultBodyPct(bar);
+		return bodyPct >= settings.volumePriceMinBodyPct && volumeRatio(bar) >= settings.volumePriceMinVolumeRatio;
+	}
+
+	private static Signal volumePriceSignal(InstrumentSpec spec, List<Bar> bars, int index, boolean longSide, String code, String name, double invalidation, String thesis, FuturesStrategySettings settings) {
+		Bar bar = bars.get(index);
+		double tick = Math.max(0.000001, spec.tickSize);
+		double entry = roundToTick(spec, bar.close);
+		double stop = longSide
+			? roundToTick(spec, invalidation - (2.0 * tick))
+			: roundToTick(spec, invalidation + (2.0 * tick));
+		double risk = longSide ? entry - stop : stop - entry;
+		if (risk <= 0.0 || riskTicks(spec, entry, stop) > settings.volumePriceMaxRiskTicks) {
+			return null;
+		}
+		double target = longSide
+			? roundToTick(spec, entry + (risk * settings.volumePriceRewardRisk))
+			: roundToTick(spec, entry - (risk * settings.volumePriceRewardRisk));
+		String notes = name + ": " + thesis
+			+ ", volume ratio " + round(volumeRatio(bar))
+			+ ", body " + round(bar.bodyPct > 0.0 ? bar.bodyPct : defaultBodyPct(bar))
+			+ "%, close location " + round(closeLocation(bar))
+			+ ".";
+		return signal(code, name, longSide ? "LONG" : "SHORT", index, entry, stop, target, settings.volumePriceMaxHoldBars, notes);
+	}
+
+	private static boolean volumePriceHtfOk(boolean longSide, Bar bar, List<Bar> fifteenMinuteBars, List<Bar> oneHourBars, FuturesStrategySettings settings) {
+		if (!settings.volumePriceRequireHigherTimeframe) {
+			return true;
+		}
+		return longSide
+			? higherTimeframeConstructive(fifteenMinuteBars, oneHourBars, bar.marketTime)
+			: higherTimeframeBearish(fifteenMinuteBars, oneHourBars, bar.marketTime);
+	}
+
+	private static boolean sameMarketDateWindow(List<Bar> bars, int endIndex, int lookback) {
+		if (bars == null || bars.isEmpty() || endIndex < 0 || endIndex >= bars.size()) {
+			return false;
+		}
+		LocalDate date = bars.get(endIndex).marketDate;
+		if (date == null) {
+			return true;
+		}
+		int start = Math.max(0, endIndex - Math.max(1, lookback));
+		for (int index = start; index <= endIndex; index++) {
+			if (bars.get(index).marketDate != null && !date.equals(bars.get(index).marketDate)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static boolean isVolumePriceStrategyCode(String strategyCode) {
+		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
+		return "VABS".equals(code);
+	}
+
+	private static String normalizedVolumePriceMode(String mode) {
+		String clean = cleanOrDefault(mode, "ALL").trim().toUpperCase(Locale.US);
+		if (clean.length() == 0 || "ALL".equals(clean)) {
+			return "ALL";
+		}
+		StringBuilder builder = new StringBuilder();
+		String[] parts = clean.split(",");
+		for (int index = 0; index < parts.length; index++) {
+			String part = parts[index].trim();
+			if (isVolumePriceStrategyCode(part)) {
+				if (builder.length() > 0) {
+					builder.append(",");
+				}
+				builder.append(part);
+			}
+		}
+		return builder.length() == 0 ? "ALL" : builder.toString();
+	}
+
+	private static boolean volumePriceModeAllows(FuturesStrategySettings settings, String strategyCode) {
+		String mode = normalizedVolumePriceMode(settings == null ? "ALL" : settings.volumePriceMode);
+		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
+		if ("ALL".equals(mode)) {
+			return true;
+		}
+		String[] parts = mode.split(",");
+		for (int index = 0; index < parts.length; index++) {
+			if (code.equals(parts[index].trim())) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static List<Signal> findLateOrbContinuationSignals(InstrumentSpec spec, List<Bar> bars, FuturesStrategySettings settings) {
@@ -26764,6 +27496,12 @@ public class FuturesManager {
 		}
 		if ("BOSRT".equals(strategyCode)) {
 			return safeSettings.bosRetest.maxTradesPerDay;
+		}
+		if ("ORBX".equals(strategyCode)) {
+			return safeSettings.orbEventPack.maxTradesPerDay;
+		}
+		if (isVolumePriceStrategyCode(strategyCode)) {
+			return safeSettings.volumePriceManipulation.maxTradesPerDay;
 		}
 		return 1;
 	}
