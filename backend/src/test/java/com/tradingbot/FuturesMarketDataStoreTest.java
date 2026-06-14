@@ -30,6 +30,16 @@ public class FuturesMarketDataStoreTest {
 	}
 
 	@Test
+	public void recentCapturedBarsReadInitializesStoreOnCleanDatabase() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+
+		assertEquals(0, FuturesMarketDataStore.readRecentCapturedBars("M2K", 180).size());
+		assertEquals(1, TestDatabaseSupport.countRows(
+			"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'FuturesLiveCapturedBars'"
+		));
+	}
+
+	@Test
 	public void level2GapFillPreservesCapturedRowsAndDerivesOnlyMissingMinutes() throws Exception {
 		TestDatabaseSupport.useTempDatabase(tempDir);
 		Path futuresDir = tempDir.resolve("futures");

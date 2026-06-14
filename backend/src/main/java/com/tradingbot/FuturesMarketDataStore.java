@@ -396,6 +396,7 @@ final class FuturesMarketDataStore {
 		if (startInclusive == null || endInclusive == null || endInclusive.isBefore(startInclusive)) {
 			return bars;
 		}
+		initializeStore();
 		String sql = "SELECT timestamp, open, high, low, close, volume FROM FuturesLiveCapturedBars "
 			+ "WHERE symbol = ? AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp";
 		try (Connection conn = DatabaseManager.getConnection();
@@ -414,6 +415,7 @@ final class FuturesMarketDataStore {
 
 	static List<FuturesConnectionManager.InternalBar> readRecentCapturedBars(String symbol, int limit) throws SQLException {
 		List<FuturesConnectionManager.InternalBar> bars = new ArrayList<FuturesConnectionManager.InternalBar>();
+		initializeStore();
 		String sql = "SELECT timestamp, open, high, low, close, volume FROM ("
 			+ "SELECT timestamp, open, high, low, close, volume FROM FuturesLiveCapturedBars "
 			+ "WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?"
@@ -433,6 +435,7 @@ final class FuturesMarketDataStore {
 
 	private static List<FuturesConnectionManager.InternalBar> readCapturedBars(String symbol) throws SQLException {
 		List<FuturesConnectionManager.InternalBar> bars = new ArrayList<FuturesConnectionManager.InternalBar>();
+		initializeStore();
 		String sql = "SELECT timestamp, open, high, low, close, volume FROM FuturesLiveCapturedBars WHERE symbol = ? ORDER BY timestamp";
 		try (Connection conn = DatabaseManager.getConnection();
 			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -460,6 +463,7 @@ final class FuturesMarketDataStore {
 	}
 
 	private static String liveCapturedStatsJson(String symbol) {
+		initializeStore();
 		String sql = "SELECT timestamp, updatedAt FROM FuturesLiveCapturedBars WHERE symbol = ? ORDER BY timestamp";
 		try (Connection conn = DatabaseManager.getConnection();
 			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
