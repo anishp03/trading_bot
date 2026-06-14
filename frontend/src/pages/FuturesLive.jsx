@@ -40,15 +40,7 @@ const LIVE_ALL_TRADES_PAGE_SIZE = 500;
 const DEFAULT_PROFILE = "TOPSTEP_50K";
 const DEFAULT_ACCOUNT_PROFILE = "";
 const DEFAULT_STRATEGY_PRESET = "bestbiasfree";
-const LIVE_RISK_SIZING_MODE = "DYNAMIC_COMPOUND_MLL";
-const LIVE_RISK_POLICY = {
-  stopRiskBufferMultiplier: 1.2,
-  dailyRoomUsagePct: 0.55,
-  mllRoomUsagePct: 0.3,
-  maxRiskMultiplier: 3,
-  dllReserveDollars: 200,
-  mllReserveDollars: 0,
-};
+const LIVE_RISK_SIZING_MODE = "STATIC_WITHDRAW_DAILY";
 const CONTROL_STRATEGY_PRESET = "backtestbias92k";
 const BIAS_FREE_STRATEGY_PRESET = "biasfree92k";
 const BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
@@ -1500,12 +1492,12 @@ function LiveRiskHeartbeatCard({ heartbeat }) {
         <RiskHeartbeatMetric label="Daily PnL" value={formatCurrency(safe.dailyPnl)} accent={safe.dailyPnl} />
         <RiskHeartbeatMetric label="DLL Room" value={formatAccountCurrency(safe.dailyRiskRoom)} accent={safe.dailyRiskRoom > safe.configuredMaxRisk ? 1 : safe.dailyRiskRoom <= 0 ? -1 : 0} />
         <RiskHeartbeatMetric label="MLL Room" value={formatAccountCurrency(safe.trailingCushion)} accent={safe.trailingCushion > 0 ? 1 : -1} />
-        <RiskHeartbeatMetric label="Dynamic Cap" value={formatAccountCurrency(safe.dynamicMaxRisk)} />
+        <RiskHeartbeatMetric label="Risk Cap" value={formatAccountCurrency(safe.configuredMaxRisk)} />
         <RiskHeartbeatMetric label="Max Risk Now" value={formatAccountCurrency(safe.effectiveMaxRisk)} />
       </div>
       <div className="futures-risk-heartbeat-foot">
-        <span>Risk <b>Dynamic DLL/MLL</b></span>
-        <span>DLL Reserve <b>{formatAccountCurrency(safe.riskPolicy?.dllReserveDollars || 0)}</b></span>
+        <span>Risk <b>Static Baseline</b></span>
+        <span>DLL Guard <b>{formatAccountCurrency(safe.dailyRiskRoom)}</b></span>
         <span>Account <b>{safe.accountId || "Not selected"}</b></span>
         <span>Source <b>{safe.source}</b></span>
         <span>Cost <b>{formatCurrencyNoSign(safe.commissionPerContract)} / {formatNumber(safe.slippageTicks, 2)}t</b></span>
@@ -5937,11 +5929,7 @@ function buildLiveRiskHeartbeat({
       : trailingLimit,
     0
   );
-  const riskMultiplier = trailingLimit > 0 ? boundedNumber(trailingCushion / trailingLimit, 0, LIVE_RISK_POLICY.maxRiskMultiplier) : 1;
-  const dynamicMaxRisk = Math.max(0, configuredMaxRisk * riskMultiplier);
-  const dllRiskBudget = Math.max(0, dailyRiskRoom - LIVE_RISK_POLICY.dllReserveDollars) * LIVE_RISK_POLICY.dailyRoomUsagePct;
-  const mllRiskBudget = Math.max(0, trailingCushion - LIVE_RISK_POLICY.mllReserveDollars) * LIVE_RISK_POLICY.mllRoomUsagePct;
-  const effectiveMaxRisk = Math.min(dynamicMaxRisk, dllRiskBudget, mllRiskBudget);
+  const effectiveMaxRisk = Math.min(configuredMaxRisk, dailyRiskRoom, trailingCushion);
   const brokerReady = metrics?.brokerMetricsReady !== false && (metrics?.dataSource === BROKER_SOURCE_TOPSTEPX || isAuthoritativeTopstepBrokerSnapshot(broker, metrics));
   const selectedAccountId = String(accountId || metrics?.accountId || broker.accountId || liveStatus?.practiceAccountId || "").trim();
   const commissionPerContract = firstFiniteNumber(liveStatus?.commissionPerContract, 1.24);
@@ -5978,12 +5966,11 @@ function buildLiveRiskHeartbeat({
     dailyRiskRoom,
     trailingCushion,
     configuredMaxRisk,
-    dynamicMaxRisk,
-    dllRiskBudget,
-    mllRiskBudget,
+    dynamicMaxRisk: configuredMaxRisk,
+    dllRiskBudget: dailyRiskRoom,
+    mllRiskBudget: trailingCushion,
     effectiveMaxRisk,
     riskSizingMode: LIVE_RISK_SIZING_MODE,
-    riskPolicy: LIVE_RISK_POLICY,
     commissionPerContract,
     slippageTicks,
     profitTarget,
@@ -6020,12 +6007,6 @@ function firstPositiveNumber(...values) {
     }
   }
   return 0;
-}
-
-function boundedNumber(value, min, max) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return min;
-  return Math.max(min, Math.min(max, numeric));
 }
 
 function contractLimitForProfile(profile, symbol) {

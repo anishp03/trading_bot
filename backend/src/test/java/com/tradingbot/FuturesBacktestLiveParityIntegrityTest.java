@@ -189,7 +189,7 @@ public class FuturesBacktestLiveParityIntegrityTest {
 	}
 
 	@Test
-	public void liveDynamicRiskUsesLockedMllFloorAfterAccountProfit() throws Exception {
+	public void liveStaticRiskUsesLockedMllFloorAfterAccountProfit() throws Exception {
 		List<String> symbols = new ArrayList<String>();
 		symbols.add("MES");
 		Object portfolioConfig = selfTestPortfolioConfig(symbols);
@@ -221,8 +221,8 @@ public class FuturesBacktestLiveParityIntegrityTest {
 		String diagnosticsJson = stringField(order, "diagnosticsJson");
 
 		assertTrue(booleanField(order, "accepted"), diagnosticsJson);
-		assertTrue(diagnosticsJson.contains("\"effectiveRiskBudget\":1380"), diagnosticsJson);
-		assertFalse(diagnosticsJson.contains("\"effectiveRiskBudget\":1980"), diagnosticsJson);
+		assertTrue(diagnosticsJson.contains("\"effectiveRiskBudget\":4600"), diagnosticsJson);
+		assertFalse(diagnosticsJson.contains("\"effectiveRiskBudget\":6600"), diagnosticsJson);
 	}
 
 	@Test

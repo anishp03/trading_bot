@@ -14066,8 +14066,8 @@ public class FuturesManager {
 			+ "\"practiceAccountId\":" + jsonString(accountId) + ","
 			+ "\"strategyPreset\":" + jsonString(presetName) + ","
 			+ "\"strategySlot\":" + jsonString(strategyPresetSlot(presetName)) + ","
-			+ "\"riskSizingMode\":" + jsonString(RISK_SIZING_DYNAMIC_COMPOUND_MLL) + ","
-			+ "\"dynamicRiskPolicy\":" + dynamicRiskPolicyJson(dynamicRiskPolicyForMode(RISK_SIZING_DYNAMIC_COMPOUND_MLL)) + ","
+			+ "\"riskSizingMode\":" + jsonString(RISK_SIZING_STATIC_WITHDRAW_DAILY) + ","
+			+ "\"dynamicRiskPolicy\":" + dynamicRiskPolicyJson(dynamicRiskPolicyForMode(RISK_SIZING_STATIC_WITHDRAW_DAILY)) + ","
 			+ "\"settingsSource\":" + jsonString("Live strategy settings loaded from the selected preset.")
 			+ "}";
 	}
@@ -17549,7 +17549,7 @@ public class FuturesManager {
 		double dailyRiskBudget = Math.abs(portfolioConfig.dailyLossLimit) + (equityAtOpen - dayStartBalance) - reservedOpenRisk;
 		double trailingRiskBudget = equityAtOpen - trailingThreshold - reservedOpenRisk;
 		double aggregateGuardBudget = Math.min(dailyRiskBudget, trailingRiskBudget);
-		DynamicRiskPolicy liveRiskPolicy = dynamicRiskPolicyForMode(RISK_SIZING_DYNAMIC_COMPOUND_MLL);
+		DynamicRiskPolicy liveRiskPolicy = dynamicRiskPolicyForMode(RISK_SIZING_STATIC_WITHDRAW_DAILY);
 		DynamicRiskBudget liveRiskBudget = dynamicRiskBudget(
 			liveRiskPolicy,
 			context.config.maxRiskPerTrade,
