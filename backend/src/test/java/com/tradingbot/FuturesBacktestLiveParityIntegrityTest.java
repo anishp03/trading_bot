@@ -189,6 +189,43 @@ public class FuturesBacktestLiveParityIntegrityTest {
 	}
 
 	@Test
+	public void liveDynamicRiskUsesLockedMllFloorAfterAccountProfit() throws Exception {
+		List<String> symbols = new ArrayList<String>();
+		symbols.add("MES");
+		Object portfolioConfig = selfTestPortfolioConfig(symbols);
+		setField(portfolioConfig, "accountSize", Double.valueOf(50000.0));
+		setField(portfolioConfig, "dayStartBalance", Double.valueOf(55000.0));
+		setField(portfolioConfig, "currentBalance", Double.valueOf(55000.0));
+		setField(portfolioConfig, "dailyLossLimit", Double.valueOf(10000.0));
+		setField(portfolioConfig, "maxTrailingDrawdown", Double.valueOf(2000.0));
+		setField(portfolioConfig, "maxAggregateMiniUnits", Double.valueOf(5.0));
+
+		Object session = selfTestLiveSession(symbols);
+		Object candidate = selfTestCandidate("MES", "ORB", "LONG");
+		Object context = field(candidate, "context");
+		Object signalConfig = field(context, "config");
+		setField(signalConfig, "maxRiskPerTrade", Double.valueOf(5000.0));
+		setField(signalConfig, "qualitativeRiskEnabled", Boolean.FALSE);
+		List<Object> openPositions = new ArrayList<Object>();
+		Object openPosition = portfolioPosition("MGC", "LONG", "ORB", 2350.0, 2346.0, 2354.0, 1);
+		setField(openPosition, "riskPerContract", Double.valueOf(400.0));
+		openPositions.add(openPosition);
+
+		Object order = validateLivePortfolioSignal(
+			session,
+			portfolioConfig,
+			selfTestContextMap("MES", context),
+			candidate,
+			openPositions
+		);
+		String diagnosticsJson = stringField(order, "diagnosticsJson");
+
+		assertTrue(booleanField(order, "accepted"), diagnosticsJson);
+		assertTrue(diagnosticsJson.contains("\"effectiveRiskBudget\":1380"), diagnosticsJson);
+		assertFalse(diagnosticsJson.contains("\"effectiveRiskBudget\":1980"), diagnosticsJson);
+	}
+
+	@Test
 	public void liveSignalConfigUsesSessionExecutionCostInputs() throws Exception {
 		Object session = nestedInstance("FuturesLiveSession");
 		setField(session, "accountSize", Double.valueOf(50000.0));
@@ -424,6 +461,60 @@ public class FuturesBacktestLiveParityIntegrityTest {
 		);
 		method.setAccessible(true);
 		return method.invoke(null, symbol, session, snapshot);
+	}
+
+	private static Object selfTestPortfolioConfig(List<String> symbols) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("selfTestPortfolioConfig", List.class);
+		method.setAccessible(true);
+		return method.invoke(null, symbols);
+	}
+
+	private static Object selfTestLiveSession(List<String> symbols) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("selfTestLiveSession", List.class);
+		method.setAccessible(true);
+		return method.invoke(null, symbols);
+	}
+
+	private static Object selfTestCandidate(String symbol, String strategyCode, String side) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("selfTestCandidate", String.class, String.class, String.class);
+		method.setAccessible(true);
+		return method.invoke(null, symbol, strategyCode, side);
+	}
+
+	private static Object validateLivePortfolioSignal(
+		Object session,
+		Object portfolioConfig,
+		Object contexts,
+		Object candidate,
+		List<Object> openPositions
+	) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod(
+			"validateLivePortfolioSignal",
+			session.getClass(),
+			portfolioConfig.getClass(),
+			java.util.Map.class,
+			candidate.getClass(),
+			List.class,
+			java.util.Map.class,
+			Class.forName("com.tradingbot.FuturesManager$LiveBrokerExposure")
+		);
+		method.setAccessible(true);
+		return method.invoke(
+			null,
+			session,
+			portfolioConfig,
+			contexts,
+			candidate,
+			openPositions,
+			new java.util.HashMap<String, Integer>(),
+			nestedInstance("LiveBrokerExposure")
+		);
+	}
+
+	private static java.util.Map<String, Object> selfTestContextMap(String symbol, Object context) {
+		java.util.Map<String, Object> contexts = new java.util.HashMap<String, Object>();
+		contexts.put(symbol, context);
+		return contexts;
 	}
 
 	private static Object buildPortfolioBacktestConfig(String symbols, boolean useSavedRisk) throws Exception {

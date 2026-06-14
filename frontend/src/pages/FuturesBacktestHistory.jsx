@@ -189,6 +189,10 @@ export default function FuturesBacktestHistory() {
                     <b>Trades</b>
                     <em>{run.trades}</em>
                   </span>
+                  <span>
+                    <b>Breaches</b>
+                    <em>DLL {run.dailyLossBreaches || 0} / MLL {run.trailingDrawdownBreaches || 0}</em>
+                  </span>
                 </div>
                 <div className="mobile-run-card-foot">
                   <span>{formatEstTime(run.startDate)} to {formatEstTime(run.endDate)}</span>
@@ -244,6 +248,7 @@ export default function FuturesBacktestHistory() {
                   <span className={run.trades === 0 ? "app-badge app-neutral-badge" : run.ruleViolation ? "app-badge app-risk-badge" : "app-badge app-positive-badge"}>
                     {run.trades === 0 ? "No Trades" : run.ruleViolation ? (run.continueAfterRuleViolation ? "Violation Trail" : "Violation") : "Pass"}
                   </span>
+                  <div className="small app-muted-text mt-1">DLL {run.dailyLossBreaches || 0} / MLL {run.trailingDrawdownBreaches || 0}</div>
                 </div>
                 <div className="text-end">
                   <button
@@ -484,12 +489,14 @@ function formatStrategyConfig(run) {
 
 function formatRiskConfig(run) {
   const label = String(run?.riskConfig || "").trim();
-  if (label) return label;
+  const mode = String(run?.riskSizingMode || "").trim();
+  const modeLabel = mode === "DYNAMIC_COMPOUND_MLL" ? " | Dynamic" : mode === "STATIC_WITHDRAW_DAILY" ? " | Static" : "";
+  if (label) return `${label}${modeLabel}`;
   const code = String(run?.riskConfigCode || run?.fundedProfile || "").trim();
-  if (code === "TOPSTEP_50K") return "50K";
-  if (code === "TOPSTEP_100K") return "100K";
-  if (code === "TOPSTEP_150K") return "150K";
-  return code || "--";
+  if (code === "TOPSTEP_50K") return `50K${modeLabel}`;
+  if (code === "TOPSTEP_100K") return `100K${modeLabel}`;
+  if (code === "TOPSTEP_150K") return `150K${modeLabel}`;
+  return code ? `${code}${modeLabel}` : "--";
 }
 
 function formatSegmentPeriod(value) {

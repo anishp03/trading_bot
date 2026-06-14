@@ -25,7 +25,7 @@ public class FuturesBacktestDefaultConfigTest {
 
 		String defaults = FuturesManager.getPortfolioBacktestDefaultConfigJson();
 
-		assertTrue(defaults.contains("\"startDate\":\"2025-05-01\""), defaults);
+		assertTrue(defaults.contains("\"startDate\":\"2024-05-01\""), defaults);
 	}
 
 	@Test
@@ -37,7 +37,7 @@ public class FuturesBacktestDefaultConfigTest {
 		String defaults = FuturesManager.getPortfolioBacktestDefaultConfigJson();
 
 		assertTrue(defaults.contains("\"success\":true"), defaults);
-		assertTrue(defaults.contains("\"startDate\":\"2025-05-01\""), defaults);
+		assertTrue(defaults.contains("\"startDate\":\"2024-05-01\""), defaults);
 	}
 
 	private static void insertRecommendedSourceRun(String startDate) throws Exception {

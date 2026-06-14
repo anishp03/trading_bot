@@ -81,6 +81,7 @@ final class FuturesBacktestRoutes {
             boolean continueAfterRuleViolation = ApiRequestUtils.parseBooleanOrDefault(ctx.queryParam("continueAfterRuleViolation"), false);
             boolean qualitativeRiskEnabled = true;
             boolean dtmEnabled = ApiRequestUtils.parseBooleanOrDefault(ctx.queryParam("dtmEnabled"), true);
+            String riskSizingMode = ApiRequestUtils.valueOrDefault(ctx.queryParam("riskSizingMode"), "STATIC_WITHDRAW_DAILY");
             String strategyPreset = ApiRequestUtils.valueOrDefault(ctx.queryParam("strategyPreset"), "bestbiasfree");
             String presetValidationMessage = FuturesManager.validateStrategyPresetForSymbols(strategyPreset, symbols);
             if (!presetValidationMessage.isEmpty()) {
@@ -109,7 +110,8 @@ final class FuturesBacktestRoutes {
                 sourcePortfolioBacktestId,
                 continueAfterRuleViolation,
                 qualitativeRiskEnabled,
-                dtmEnabled
+                dtmEnabled,
+                riskSizingMode
             );
 
             if (backtestId > 0) {

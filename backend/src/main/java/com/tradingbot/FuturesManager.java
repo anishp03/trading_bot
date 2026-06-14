@@ -52,7 +52,7 @@ public class FuturesManager {
 	private static final ZoneId NEW_YORK_ZONE = ZoneId.of("America/New_York");
 	private static final DateTimeFormatter DISPLAY_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 	private static final DateTimeFormatter SERVER_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-	private static final LocalDate DEFAULT_BACKTEST_START_DATE = LocalDate.of(2025, 5, 1);
+	private static final LocalDate DEFAULT_BACKTEST_START_DATE = LocalDate.of(2024, 5, 1);
 	private static final LocalTime RTH_START = LocalTime.of(9, 30);
 	private static final LocalTime RTH_END = LocalTime.of(16, 0);
 	private static final LocalTime FORCED_EXIT_TIME = LocalTime.of(15, 55);
@@ -77,6 +77,8 @@ public class FuturesManager {
 	private static final LocalTime KELTNER_SCALP_END = LocalTime.of(15, 20);
 	private static final LocalTime MEAN_REVERSION_START = LocalTime.of(11, 30);
 	private static final LocalTime MEAN_REVERSION_END = LocalTime.of(15, 15);
+	private static final String RISK_SIZING_STATIC_WITHDRAW_DAILY = "STATIC_WITHDRAW_DAILY";
+	private static final String RISK_SIZING_DYNAMIC_COMPOUND_MLL = "DYNAMIC_COMPOUND_MLL";
 	private static final double ORB_LONG_MIN_CLOSE_LOCATION = 0.58;
 	private static final double ORB_LONG_MAX_CLOSE_LOCATION = 0.68;
 	private static final LocalTime ORB_SHORT_CONFIRMATION_TIME = LocalTime.of(9, 50);
@@ -453,6 +455,28 @@ public class FuturesManager {
 		private boolean continueAfterRuleViolation;
 		private boolean qualitativeRiskEnabled = true;
 		private boolean dtmEnabled = true;
+		private String riskSizingMode = RISK_SIZING_STATIC_WITHDRAW_DAILY;
+		private DynamicRiskPolicy dynamicRiskPolicy = dynamicRiskPolicyForMode(RISK_SIZING_STATIC_WITHDRAW_DAILY);
+		private boolean dynamicMllRiskEnabled;
+		private double dynamicMllRiskMaxMultiplier = 1.0;
+		private boolean dynamicMllAggregateMiniUnits;
+	}
+
+	private static class DynamicRiskPolicy {
+		private String mode = RISK_SIZING_STATIC_WITHDRAW_DAILY;
+		private double stopRiskBufferMultiplier = 1.0;
+		private double dailyRoomUsagePct = 1.0;
+		private double mllRoomUsagePct = 1.0;
+		private double maxRiskMultiplier = 1.0;
+		private double dllReserveDollars = 0.0;
+		private double mllReserveDollars = 0.0;
+	}
+
+	private static class DynamicRiskBudget {
+		private double dynamicMaxRisk;
+		private double dailyRoomBudget;
+		private double mllRoomBudget;
+		private double availableRiskBudget;
 	}
 
 	private static class PortfolioBacktestResult {
@@ -2348,6 +2372,56 @@ public class FuturesManager {
 		boolean qualitativeRiskEnabled,
 		boolean dtmEnabled
 	) {
+		return generatePortfolioBacktest(
+			symbols,
+			startDate,
+			endDate,
+			accountSize,
+			maxTrailingDrawdown,
+			dailyLossLimit,
+			maxRiskPerTrade,
+			maxContracts,
+			commissionPerContract,
+			slippageTicks,
+			maxOpenPositions,
+			maxAggregateContracts,
+			maxAggregateMiniUnits,
+			useSavedRisk,
+			profitTarget,
+			fundedProfile,
+			strategyPreset,
+			sourcePortfolioBacktestId,
+			continueAfterRuleViolation,
+			qualitativeRiskEnabled,
+			dtmEnabled,
+			RISK_SIZING_STATIC_WITHDRAW_DAILY
+		);
+	}
+
+	public static int generatePortfolioBacktest(
+		String symbols,
+		String startDate,
+		String endDate,
+		double accountSize,
+		double maxTrailingDrawdown,
+		double dailyLossLimit,
+		double maxRiskPerTrade,
+		int maxContracts,
+		double commissionPerContract,
+		double slippageTicks,
+		int maxOpenPositions,
+		int maxAggregateContracts,
+		double maxAggregateMiniUnits,
+		boolean useSavedRisk,
+		double profitTarget,
+		String fundedProfile,
+		String strategyPreset,
+		int sourcePortfolioBacktestId,
+		boolean continueAfterRuleViolation,
+		boolean qualitativeRiskEnabled,
+		boolean dtmEnabled,
+		String riskSizingMode
+	) {
 		initializeStore();
 		String normalizedStrategyPreset = normalizeStrategyPresetName(strategyPreset);
 		String presetValidationMessage = validateStrategyPresetForSymbols(normalizedStrategyPreset, symbols);
@@ -2378,6 +2452,76 @@ public class FuturesManager {
 		config.continueAfterRuleViolation = continueAfterRuleViolation;
 		config.qualitativeRiskEnabled = qualitativeRiskEnabled;
 		config.dtmEnabled = dtmEnabled;
+		config.dynamicRiskPolicy = dynamicRiskPolicyForMode(riskSizingMode);
+		config.riskSizingMode = config.dynamicRiskPolicy.mode;
+		PortfolioBacktestResult result = runPortfolioBacktest(config);
+		if (result == null) {
+			return -1;
+		}
+		return savePortfolioBacktest(result, config);
+	}
+
+	static int generateDynamicMllRiskPortfolioBacktest(
+		String symbols,
+		String startDate,
+		String endDate,
+		double accountSize,
+		double maxTrailingDrawdown,
+		double dailyLossLimit,
+		double maxRiskPerTrade,
+		int maxContracts,
+		double commissionPerContract,
+		double slippageTicks,
+		int maxOpenPositions,
+		int maxAggregateContracts,
+		double maxAggregateMiniUnits,
+		boolean useSavedRisk,
+		double profitTarget,
+		String fundedProfile,
+		String strategyPreset,
+		int sourcePortfolioBacktestId,
+		boolean continueAfterRuleViolation,
+		boolean qualitativeRiskEnabled,
+		boolean dtmEnabled,
+		double maxRiskMultiplier,
+		boolean scaleAggregateMiniUnits
+	) {
+		initializeStore();
+		String normalizedStrategyPreset = normalizeStrategyPresetName(strategyPreset);
+		String presetValidationMessage = validateStrategyPresetForSymbols(normalizedStrategyPreset, symbols);
+		if (presetValidationMessage.length() > 0) {
+			return -1;
+		}
+		PortfolioBacktestConfig config = buildPortfolioBacktestConfig(
+			symbols,
+			startDate,
+			endDate,
+			accountSize,
+			maxTrailingDrawdown,
+			dailyLossLimit,
+			maxRiskPerTrade,
+			maxContracts,
+			commissionPerContract,
+			slippageTicks,
+			maxOpenPositions,
+			maxAggregateContracts,
+			maxAggregateMiniUnits,
+			useSavedRisk,
+			profitTarget,
+			fundedProfile
+		);
+		config.strategyPreset = normalizedStrategyPreset;
+		config.strategySlot = strategyPresetSlot(config.strategyPreset);
+		config.sourcePortfolioBacktestId = Math.max(0, sourcePortfolioBacktestId);
+		config.continueAfterRuleViolation = continueAfterRuleViolation;
+		config.qualitativeRiskEnabled = qualitativeRiskEnabled;
+		config.dtmEnabled = dtmEnabled;
+		config.dynamicMllRiskEnabled = true;
+		config.dynamicMllRiskMaxMultiplier = clamp(maxRiskMultiplier, 0.25, 5.0);
+		config.dynamicMllAggregateMiniUnits = scaleAggregateMiniUnits;
+		config.dynamicRiskPolicy = dynamicRiskPolicyForMode(RISK_SIZING_DYNAMIC_COMPOUND_MLL);
+		config.dynamicRiskPolicy.maxRiskMultiplier = config.dynamicMllRiskMaxMultiplier;
+		config.riskSizingMode = config.dynamicRiskPolicy.mode;
 		PortfolioBacktestResult result = runPortfolioBacktest(config);
 		if (result == null) {
 			return -1;
@@ -5273,6 +5417,7 @@ public class FuturesManager {
 					storedStrategyPreset = strategyPresetNameFromSlot(jsonText(portfolioSettingsJson, "strategySlot", ""));
 				}
 				String strategyPreset = normalizeStrategyPresetName(storedStrategyPreset);
+				String riskSizingMode = cleanOrDefault(jsonText(portfolioSettingsJson, "riskSizingMode", ""), RISK_SIZING_STATIC_WITHDRAW_DAILY);
 				String fundedProfile = cleanOrDefault(rs.getString("fundedProfile"), jsonText(portfolioSettingsJson, "fundedProfile", "CUSTOM"));
 				FundedRuleProfile riskProfile = fundedRuleProfileFor(fundedProfile);
 				json.append("{")
@@ -5282,6 +5427,7 @@ public class FuturesManager {
 					.append("\"strategyConfig\":").append(jsonString(strategyPresetLabel(strategyPreset))).append(",")
 					.append("\"riskConfigCode\":").append(jsonString(riskProfile.code)).append(",")
 					.append("\"riskConfig\":").append(jsonString(riskProfile.name)).append(",")
+					.append("\"riskSizingMode\":").append(jsonString(riskSizingMode)).append(",")
 					.append("\"symbols\":").append(jsonString(rs.getString("symbols"))).append(",")
 					.append("\"startDate\":").append(jsonString(rs.getString("startDate"))).append(",")
 					.append("\"endDate\":").append(jsonString(rs.getString("endDate"))).append(",")
@@ -5390,7 +5536,7 @@ public class FuturesManager {
 		if (portfolioBacktestExists(3154) && portfolioBacktestUsesVisibleStrategyPreset(3154)) {
 			return 3154;
 		}
-		String sql = "SELECT portfolioBacktestID FROM FuturesPortfolioBacktests WHERE ruleViolation = 0 AND json_extract(portfolioSettingsJson, '$.strategyPreset') IN ('backtestbias92k', 'biasfree92k', 'bestbiasfree') ORDER BY totalProfit DESC, portfolioBacktestID DESC LIMIT 1";
+		String sql = "SELECT portfolioBacktestID FROM FuturesPortfolioBacktests WHERE ruleViolation = 0 AND json_valid(portfolioSettingsJson) = 1 AND json_extract(portfolioSettingsJson, '$.strategyPreset') IN ('backtestbias92k', 'biasfree92k', 'bestbiasfree') ORDER BY totalProfit DESC, portfolioBacktestID DESC LIMIT 1";
 		try (Connection conn = DatabaseManager.getConnection();
 			 Statement stmt = conn.createStatement();
 			 ResultSet rs = stmt.executeQuery(sql)) {
@@ -9323,7 +9469,7 @@ public class FuturesManager {
 		PortfolioBacktestConfig config = selfTestPortfolioConfig(symbols);
 		config.accountSize = 50000.0;
 		config.dayStartBalance = 50000.0;
-		config.currentBalance = 49125.0;
+		config.currentBalance = 49300.0;
 		config.dailyLossLimit = 1000.0;
 		config.maxRiskPerTrade = 700.0;
 		config.maxTrailingDrawdown = 2000.0;
@@ -9858,7 +10004,9 @@ public class FuturesManager {
 		config.fundedProfile = "TOPSTEP_50K";
 		config.accountSize = 50000.0;
 		config.maxTrailingDrawdown = 2000.0;
-		config.dailyLossLimit = 5000.0;
+		config.dayStartBalance = 65000.0;
+		config.currentBalance = 65000.0;
+		config.dailyLossLimit = 10000.0;
 		config.maxRiskPerTrade = 5000.0;
 		config.maxContracts = 50;
 		config.commissionPerContract = 1.24;
@@ -9878,7 +10026,7 @@ public class FuturesManager {
 		session.executionMode = "TOPSTEPX";
 		session.accountSize = 50000.0;
 		session.maxTrailingDrawdown = 2000.0;
-		session.dailyLossLimit = 5000.0;
+		session.dailyLossLimit = 10000.0;
 		session.maxRiskPerTrade = 5000.0;
 		session.maxContracts = 50;
 		session.maxAggregateMiniUnits = 5.0;
@@ -13851,6 +13999,8 @@ public class FuturesManager {
 			+ "\"continueAfterRuleViolation\":" + safeConfig.continueAfterRuleViolation + ","
 			+ "\"qualitativeRiskEnabled\":" + safeConfig.qualitativeRiskEnabled + ","
 			+ "\"dtmEnabled\":" + safeConfig.dtmEnabled + ","
+			+ "\"riskSizingMode\":" + jsonString(cleanOrDefault(safeConfig.riskSizingMode, RISK_SIZING_STATIC_WITHDRAW_DAILY)) + ","
+			+ "\"dynamicRiskPolicy\":" + dynamicRiskPolicyJson(safeConfig.dynamicRiskPolicy) + ","
 			+ "\"dtmDynamicProtectiveOrdersEnabled\":" + dtmDynamicProtectiveOrdersEnabled() + ","
 			+ "\"dtmOneContractExtensionEnabled\":" + dtmOneContractExtensionEnabled() + ","
 			+ "\"dtmHalfRunnerEnabled\":" + dtmExperimentalHalfRunnerEnabled() + ","
@@ -13874,6 +14024,19 @@ public class FuturesManager {
 			+ "\"resultTrades\":" + safeResult.trades + ","
 			+ "\"resultTotalProfit\":" + round(safeResult.totalProfit) + ","
 			+ "\"settingsSource\":" + jsonString("Per-symbol strategy and risk settings captured into FuturesPortfolioBacktestSettings.")
+			+ "}";
+	}
+
+	private static String dynamicRiskPolicyJson(DynamicRiskPolicy policy) {
+		DynamicRiskPolicy safe = policy == null ? dynamicRiskPolicyForMode(RISK_SIZING_STATIC_WITHDRAW_DAILY) : policy;
+		return "{"
+			+ "\"mode\":" + jsonString(cleanOrDefault(safe.mode, RISK_SIZING_STATIC_WITHDRAW_DAILY)) + ","
+			+ "\"stopRiskBufferMultiplier\":" + round(safe.stopRiskBufferMultiplier) + ","
+			+ "\"dailyRoomUsagePct\":" + round(safe.dailyRoomUsagePct) + ","
+			+ "\"mllRoomUsagePct\":" + round(safe.mllRoomUsagePct) + ","
+			+ "\"maxRiskMultiplier\":" + round(safe.maxRiskMultiplier) + ","
+			+ "\"dllReserveDollars\":" + round(safe.dllReserveDollars) + ","
+			+ "\"mllReserveDollars\":" + round(safe.mllReserveDollars)
 			+ "}";
 	}
 
@@ -13903,6 +14066,8 @@ public class FuturesManager {
 			+ "\"practiceAccountId\":" + jsonString(accountId) + ","
 			+ "\"strategyPreset\":" + jsonString(presetName) + ","
 			+ "\"strategySlot\":" + jsonString(strategyPresetSlot(presetName)) + ","
+			+ "\"riskSizingMode\":" + jsonString(RISK_SIZING_DYNAMIC_COMPOUND_MLL) + ","
+			+ "\"dynamicRiskPolicy\":" + dynamicRiskPolicyJson(dynamicRiskPolicyForMode(RISK_SIZING_DYNAMIC_COMPOUND_MLL)) + ","
 			+ "\"settingsSource\":" + jsonString("Live strategy settings loaded from the selected preset.")
 			+ "}";
 	}
@@ -17358,8 +17523,9 @@ public class FuturesManager {
 		}
 		double dayStartBalance = positiveOrDefault(portfolioConfig.dayStartBalance, portfolioConfig.accountSize);
 		double balance = positiveOrDefault(portfolioConfig.currentBalance, dayStartBalance);
-		double trailingThreshold = positiveOrDefault(portfolioConfig.accountSize, dayStartBalance) - Math.abs(portfolioConfig.maxTrailingDrawdown);
 		double equityAtOpen = balance + aggregateOpenPnl(openPositions, currentBars, "open");
+		double accountBase = positiveOrDefault(portfolioConfig.accountSize, dayStartBalance);
+		double trailingThreshold = liveTrailingDrawdownFloor(accountBase, equityAtOpen, Math.abs(portfolioConfig.maxTrailingDrawdown));
 		if (equityAtOpen - dayStartBalance <= -Math.abs(portfolioConfig.dailyLossLimit)) {
 			order.reason = "Rejected: live portfolio daily loss guard blocked new entries.";
 			order.diagnosticsJson = liveValidationDiagnosticsJson(
@@ -17383,6 +17549,14 @@ public class FuturesManager {
 		double dailyRiskBudget = Math.abs(portfolioConfig.dailyLossLimit) + (equityAtOpen - dayStartBalance) - reservedOpenRisk;
 		double trailingRiskBudget = equityAtOpen - trailingThreshold - reservedOpenRisk;
 		double aggregateGuardBudget = Math.min(dailyRiskBudget, trailingRiskBudget);
+		DynamicRiskPolicy liveRiskPolicy = dynamicRiskPolicyForMode(RISK_SIZING_DYNAMIC_COMPOUND_MLL);
+		DynamicRiskBudget liveRiskBudget = dynamicRiskBudget(
+			liveRiskPolicy,
+			context.config.maxRiskPerTrade,
+			dailyRiskBudget,
+			trailingRiskBudget,
+			portfolioConfig.maxTrailingDrawdown
+		);
 		double riskBudgetMultiplier = context.config.qualitativeRiskEnabled ? portfolioRiskBudgetMultiplier(
 			context,
 			event,
@@ -17390,7 +17564,7 @@ public class FuturesManager {
 			aggregateGuardBudget,
 			openPositionCount
 		) : 1.0;
-		double symbolRiskBudget = context.config.maxRiskPerTrade * riskBudgetMultiplier;
+		double symbolRiskBudget = liveRiskBudget.availableRiskBudget * riskBudgetMultiplier;
 		double availableRiskBudget = Math.min(symbolRiskBudget, aggregateGuardBudget);
 		int aggregateRoom = portfolioConfig.maxAggregateContracts - openContracts;
 		if (portfolioConfig.maxAggregateMiniUnits > 0.0) {
@@ -17406,7 +17580,7 @@ public class FuturesManager {
 			return order;
 		}
 
-		PortfolioPosition position = openPortfolioPosition(context, event, candidate.entryBar, availableRiskBudget, aggregateRoom, aggregateGuardBudget, portfolioRiskCompressionAllowed(signal.strategyCode));
+		PortfolioPosition position = openPortfolioPosition(context, event, candidate.entryBar, availableRiskBudget, aggregateRoom, aggregateGuardBudget, portfolioRiskCompressionAllowed(signal.strategyCode), liveRiskPolicy.stopRiskBufferMultiplier);
 		if (position == null) {
 			String failingRule = liveSizingFirstFailingRule(context, event, candidate.entryBar, availableRiskBudget, aggregateRoom, aggregateGuardBudget);
 			order.reason = "Rejected: live signal failed portfolio sizing or risk validation (" + failingRule + ").";
@@ -19579,6 +19753,17 @@ public class FuturesManager {
 		result.endDate = days.get(days.size() - 1).toString();
 		result.startingBalance = round(config.accountSize);
 		result.dataSource = "native futures csv portfolio 1min";
+		if (RISK_SIZING_DYNAMIC_COMPOUND_MLL.equals(config.riskSizingMode)) {
+			result.dataSource += " risk_sizing_mode=" + config.riskSizingMode
+				+ " dllUsage=" + round(config.dynamicRiskPolicy.dailyRoomUsagePct)
+				+ " mllUsage=" + round(config.dynamicRiskPolicy.mllRoomUsagePct)
+				+ " maxRiskMultiplier=" + round(config.dynamicRiskPolicy.maxRiskMultiplier)
+				+ " dllReserve=" + round(config.dynamicRiskPolicy.dllReserveDollars);
+		}
+		if (config.dynamicMllRiskEnabled) {
+			result.dataSource += " dynamic_mll_risk maxMultiplier=" + round(config.dynamicMllRiskMaxMultiplier)
+				+ " aggregateMiniUnits=" + config.dynamicMllAggregateMiniUnits;
+		}
 
 		double balance = config.accountSize;
 		double peakEquity = balance;
@@ -19639,9 +19824,10 @@ public class FuturesManager {
 								result.overlapRejections++;
 								continue;
 							}
-							int openContracts = openContractCount(openPositions);
+						int openContracts = openContractCount(openPositions);
 						double openMiniUnits = openMiniUnitCount(openPositions);
-						if (openContracts >= config.maxAggregateContracts || fundedMiniUnitLimitReached(config, openMiniUnits)) {
+						double aggregateMiniUnitLimit = dynamicMllAggregateMiniUnitLimit(config, dayStartBalance);
+						if (openContracts >= config.maxAggregateContracts || fundedMiniUnitLimitReached(config, openMiniUnits, aggregateMiniUnitLimit)) {
 							result.exposureRejections++;
 							continue;
 						}
@@ -19679,6 +19865,13 @@ public class FuturesManager {
 							double dailyRiskBudget = Math.abs(config.dailyLossLimit) + (equityAtOpen - dayStartBalance) - reservedOpenRisk;
 							double trailingRiskBudget = equityAtOpen - trailingThreshold - reservedOpenRisk;
 							double aggregateGuardBudget = Math.min(dailyRiskBudget, trailingRiskBudget);
+							DynamicRiskBudget policyBudget = dynamicRiskBudget(
+								config.dynamicRiskPolicy,
+								context.config.maxRiskPerTrade,
+								dailyRiskBudget,
+								trailingRiskBudget,
+								config.maxTrailingDrawdown
+							);
 							double riskBudgetMultiplier = context.config.qualitativeRiskEnabled ? portfolioRiskBudgetMultiplier(
 							context,
 							event,
@@ -19686,11 +19879,11 @@ public class FuturesManager {
 							aggregateGuardBudget,
 							openPositions.size()
 						) : 1.0;
-						double symbolRiskBudget = context.config.maxRiskPerTrade * riskBudgetMultiplier;
+						double symbolRiskBudget = policyBudget.availableRiskBudget * riskBudgetMultiplier;
 						double availableRiskBudget = Math.min(symbolRiskBudget, aggregateGuardBudget);
 						int aggregateRoom = config.maxAggregateContracts - openContracts;
-						if (config.maxAggregateMiniUnits > 0.0) {
-							aggregateRoom = Math.min(aggregateRoom, contractsAllowedByMiniUnitRoom(event.symbol, config.maxAggregateMiniUnits - openMiniUnits));
+						if (aggregateMiniUnitLimit > 0.0) {
+							aggregateRoom = Math.min(aggregateRoom, contractsAllowedByMiniUnitRoom(event.symbol, aggregateMiniUnitLimit - openMiniUnits));
 						}
 						if (availableRiskBudget <= 0.0 || aggregateRoom <= 0) {
 							result.riskRejections++;
@@ -19704,7 +19897,8 @@ public class FuturesManager {
 							availableRiskBudget,
 							aggregateRoom,
 							aggregateGuardBudget,
-							portfolioBacktestAllowsLiveRiskCompression(event.signal.strategyCode)
+							portfolioBacktestAllowsLiveRiskCompression(event.signal.strategyCode),
+							config.dynamicRiskPolicy.stopRiskBufferMultiplier
 						);
 						if (position == null) {
 							result.riskRejections++;
@@ -21118,6 +21312,56 @@ public class FuturesManager {
 		return config.maxAggregateMiniUnits > 0.0 && openMiniUnits >= config.maxAggregateMiniUnits - 0.000001;
 	}
 
+	private static boolean fundedMiniUnitLimitReached(PortfolioBacktestConfig config, double openMiniUnits, double aggregateMiniUnitLimit) {
+		return aggregateMiniUnitLimit > 0.0 && openMiniUnits >= aggregateMiniUnitLimit - 0.000001;
+	}
+
+	private static DynamicRiskPolicy dynamicRiskPolicyForMode(String mode) {
+		String normalized = cleanOrDefault(mode, RISK_SIZING_STATIC_WITHDRAW_DAILY).trim().toUpperCase(Locale.US);
+		DynamicRiskPolicy policy = new DynamicRiskPolicy();
+		if (RISK_SIZING_DYNAMIC_COMPOUND_MLL.equals(normalized)) {
+			policy.mode = RISK_SIZING_DYNAMIC_COMPOUND_MLL;
+			policy.stopRiskBufferMultiplier = 1.20;
+			policy.dailyRoomUsagePct = 0.55;
+			policy.mllRoomUsagePct = 0.30;
+			policy.maxRiskMultiplier = 3.0;
+			policy.dllReserveDollars = 200.0;
+			policy.mllReserveDollars = 0.0;
+		}
+		return policy;
+	}
+
+	private static DynamicRiskBudget dynamicRiskBudget(
+		DynamicRiskPolicy policy,
+		double configuredMaxRisk,
+		double dllRoom,
+		double mllRoom,
+		double configuredMllLimit
+	) {
+		DynamicRiskPolicy safe = policy == null ? dynamicRiskPolicyForMode(RISK_SIZING_STATIC_WITHDRAW_DAILY) : policy;
+		DynamicRiskBudget budget = new DynamicRiskBudget();
+		double mllBase = Math.max(1.0, Math.abs(configuredMllLimit));
+		double multiplier = RISK_SIZING_DYNAMIC_COMPOUND_MLL.equals(safe.mode)
+			? clamp(mllRoom / mllBase, 0.0, Math.max(0.0, safe.maxRiskMultiplier))
+			: 1.0;
+		budget.dynamicMaxRisk = Math.max(0.0, configuredMaxRisk * multiplier);
+		budget.dailyRoomBudget = Math.max(0.0, dllRoom - Math.max(0.0, safe.dllReserveDollars)) * clamp(safe.dailyRoomUsagePct, 0.0, 1.0);
+		budget.mllRoomBudget = Math.max(0.0, mllRoom - Math.max(0.0, safe.mllReserveDollars)) * clamp(safe.mllRoomUsagePct, 0.0, 1.0);
+		budget.availableRiskBudget = Math.min(budget.dynamicMaxRisk, Math.min(budget.dailyRoomBudget, budget.mllRoomBudget));
+		return budget;
+	}
+
+	private static double dynamicMllAggregateMiniUnitLimit(PortfolioBacktestConfig config, double dayStartBalance) {
+		if (config == null || !config.dynamicMllRiskEnabled || !config.dynamicMllAggregateMiniUnits || config.maxAggregateMiniUnits <= 0.0) {
+			return config == null ? 0.0 : config.maxAggregateMiniUnits;
+		}
+		double baseMllRoom = Math.max(1.0, Math.abs(config.maxTrailingDrawdown));
+		double accountPnlAtDayStart = dayStartBalance - config.accountSize;
+		double mllRoom = Math.max(0.0, accountPnlAtDayStart + baseMllRoom);
+		double multiplier = clamp(mllRoom / baseMllRoom, 0.0, Math.max(0.0, config.dynamicMllRiskMaxMultiplier));
+		return Math.max(0.0, config.maxAggregateMiniUnits * multiplier);
+	}
+
 	private static int contractsAllowedByMiniUnitRoom(String symbol, double room) {
 		if (room <= 0.0) {
 			return 0;
@@ -21164,6 +21408,19 @@ public class FuturesManager {
 		int aggregateRoom,
 		double aggregateGuardBudget,
 		boolean allowLiveRiskCompression
+	) {
+		return openPortfolioPosition(context, event, entryBar, riskBudget, aggregateRoom, aggregateGuardBudget, allowLiveRiskCompression, 1.0);
+	}
+
+	private static PortfolioPosition openPortfolioPosition(
+		PortfolioSymbolContext context,
+		SignalEvent event,
+		Bar entryBar,
+		double riskBudget,
+		int aggregateRoom,
+		double aggregateGuardBudget,
+		boolean allowLiveRiskCompression,
+		double stopRiskBufferMultiplier
 	) {
 		Signal signal = event.signal;
 		double signalRisk = Math.abs(signal.entryPrice - signal.stopPrice);
@@ -21220,9 +21477,10 @@ public class FuturesManager {
 		double stopFillForRisk = applySlippage(context.spec, stopPrice, signal.side, context.config.slippageTicks, false);
 		double riskPerContract = (Math.abs(entryPrice - stopFillForRisk) / context.spec.tickSize * context.spec.tickValue) + (context.config.commissionPerContract * 2.0);
 		double sizingRiskPerContract = riskPerContract * settings.openMaeRiskMultiplier;
+		double bufferedRiskPerContract = riskPerContract * Math.max(1.0, stopRiskBufferMultiplier);
 		double effectiveRiskBudget = Math.max(0.0, riskBudget);
 		int maxContracts = strategySpecificMaxContracts(context.symbol, signal.strategyCode, settings, context.config.maxContracts);
-		int contracts = Math.min(maxContracts, Math.min(aggregateRoom, (int) Math.floor(effectiveRiskBudget / Math.max(1.0, riskPerContract))));
+		int contracts = Math.min(maxContracts, Math.min(aggregateRoom, (int) Math.floor(effectiveRiskBudget / Math.max(1.0, bufferedRiskPerContract))));
 		while (contracts > 0 && (sizingRiskPerContract * contracts) > Math.max(0.0, aggregateGuardBudget)) {
 			contracts--;
 		}

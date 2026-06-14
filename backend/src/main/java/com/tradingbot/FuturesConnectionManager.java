@@ -126,6 +126,8 @@ public class FuturesConnectionManager {
 		private boolean inferred;
 		private double tickSize;
 		private double tickValue;
+		private LocalDate usableStart;
+		private LocalDate usableEnd;
 	}
 
 	private static class CachedTopstepContracts {
@@ -490,7 +492,11 @@ public class FuturesConnectionManager {
 	}
 
 	public static String updateBacktestData(String symbols, String startDate, String endDate, String requestedSchema) {
-		return FuturesMarketDataStore.refreshBacktestMarketData(symbols, startDate, endDate, 1);
+		return updateBacktestData(symbols, startDate, endDate, requestedSchema, 1);
+	}
+
+	public static String updateBacktestData(String symbols, String startDate, String endDate, String requestedSchema, int maxContractsPerSymbol) {
+		return FuturesMarketDataStore.refreshBacktestMarketData(symbols, startDate, endDate, maxContractsPerSymbol);
 	}
 
 	public static String rebuildDerivedFuturesData(String symbol) {
@@ -2364,7 +2370,7 @@ public class FuturesConnectionManager {
 			TopstepContract contract = contracts.get(index);
 			List<InternalBar> contractBars;
 			try {
-				contractBars = topstepxBarsForContract(baseUrl, token, liveContracts, contract.id, startDate, endDate);
+				contractBars = topstepxBarsForContract(baseUrl, token, liveContracts, contract, startDate, endDate);
 			} catch (Exception contractError) {
 				if (contract.inferred) {
 					continue;
@@ -2480,6 +2486,7 @@ public class FuturesConnectionManager {
 			contract.tickSize = parseDouble(extractJsonNumber(object, "tickSize"));
 			contract.tickValue = parseDouble(extractJsonNumber(object, "tickValue"));
 			if (!isBlank(contract.id) && targetSymbolId.equals(contract.symbolId)) {
+				applyQuarterlyContractWindow(contract);
 				contracts.add(contract);
 			}
 		}
@@ -2559,6 +2566,8 @@ public class FuturesConnectionManager {
 			copy.inferred = source.inferred;
 			copy.tickSize = source.tickSize;
 			copy.tickValue = source.tickValue;
+			copy.usableStart = source.usableStart;
+			copy.usableEnd = source.usableEnd;
 			copies.add(copy);
 		}
 		return copies;
@@ -2600,9 +2609,44 @@ public class FuturesConnectionManager {
 				contract.active = false;
 				contract.inferred = true;
 				contract.tickSize = tickSizeForSymbol(normalized);
+				contract.usableStart = usableStart;
+				contract.usableEnd = usableEnd;
 				contracts.add(contract);
 			}
 		}
+	}
+
+	private static void applyQuarterlyContractWindow(TopstepContract contract) {
+		if (contract == null || isBlank(contract.id)) {
+			return;
+		}
+		String[] parts = contract.id.split("\\.");
+		if (parts.length == 0) {
+			return;
+		}
+		String code = parts[parts.length - 1].trim().toUpperCase(Locale.US);
+		if (code.length() < 3) {
+			return;
+		}
+		int month = quarterlyMonth(code.charAt(0));
+		if (month <= 0) {
+			return;
+		}
+		try {
+			int year = 2000 + Integer.parseInt(code.substring(1, 3));
+			LocalDate contractMonth = LocalDate.of(year, month, 1);
+			contract.usableStart = contractMonth.minusMonths(3).withDayOfMonth(1);
+			contract.usableEnd = contractMonth.plusMonths(1).withDayOfMonth(1);
+		} catch (Exception ignored) {
+		}
+	}
+
+	private static int quarterlyMonth(char monthCode) {
+		if (monthCode == 'H') return 3;
+		if (monthCode == 'M') return 6;
+		if (monthCode == 'U') return 9;
+		if (monthCode == 'Z') return 12;
+		return -1;
 	}
 
 	private static boolean hasContractId(List<TopstepContract> contracts, String contractId) {
@@ -2618,16 +2662,22 @@ public class FuturesConnectionManager {
 		String baseUrl,
 		String token,
 		boolean liveContracts,
-		String contractId,
+		TopstepContract contract,
 		LocalDate startDate,
 		LocalDate endDate
 	) throws Exception {
 		List<InternalBar> bars = new ArrayList<InternalBar>();
-		LocalDate cursor = startDate;
-		while (!cursor.isAfter(endDate)) {
+		String contractId = contract == null ? "" : contract.id;
+		LocalDate queryStart = contract == null || contract.usableStart == null || contract.usableStart.isBefore(startDate) ? startDate : contract.usableStart;
+		LocalDate queryEnd = contract == null || contract.usableEnd == null || contract.usableEnd.isAfter(endDate) ? endDate : contract.usableEnd;
+		if (queryEnd.isBefore(queryStart)) {
+			return bars;
+		}
+		LocalDate cursor = queryStart;
+		while (!cursor.isAfter(queryEnd)) {
 			LocalDate chunkEnd = cursor.plusDays(9);
-			if (chunkEnd.isAfter(endDate)) {
-				chunkEnd = endDate;
+			if (chunkEnd.isAfter(queryEnd)) {
+				chunkEnd = queryEnd;
 			}
 			String startTime = cursor.toString() + "T00:00:00Z";
 			String endTime = chunkEnd.plusDays(1).toString() + "T00:00:00Z";

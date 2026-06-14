@@ -97,10 +97,11 @@ final class FuturesConnectionRoutes {
                 return;
             }
             String symbols = ApiRequestUtils.valueOrDefault(ctx.queryParam("symbols"), defaultPortfolioSymbols + ",GC");
-            String startDate = ApiRequestUtils.valueOrDefault(ctx.queryParam("startDate"), LocalDate.now().minusYears(1).toString());
+            String startDate = ApiRequestUtils.valueOrDefault(ctx.queryParam("startDate"), "2024-05-01");
             String endDate = ApiRequestUtils.valueOrDefault(ctx.queryParam("endDate"), LocalDate.now().toString());
             String schema = ApiRequestUtils.valueOrDefault(ctx.queryParam("schema"), "ohlcv-1m");
-            String result = FuturesConnectionManager.updateBacktestData(symbols, startDate, endDate, schema);
+            int maxContractsPerSymbol = ApiRequestUtils.parseIntOrDefault(ctx.queryParam("maxContractsPerSymbol"), 12);
+            String result = FuturesConnectionManager.updateBacktestData(symbols, startDate, endDate, schema, maxContractsPerSymbol);
             if (result.contains("\"success\":false")) {
                 ctx.status(updateBacktestDataErrorStatus.apply(result));
             }
@@ -114,9 +115,9 @@ final class FuturesConnectionRoutes {
                 return;
             }
             String symbols = ApiRequestUtils.valueOrDefault(ctx.queryParam("symbols"), defaultPortfolioSymbols + ",GC");
-            String startDate = ApiRequestUtils.valueOrDefault(ctx.queryParam("startDate"), LocalDate.now().minusYears(1).toString());
+            String startDate = ApiRequestUtils.valueOrDefault(ctx.queryParam("startDate"), "2024-05-01");
             String endDate = ApiRequestUtils.valueOrDefault(ctx.queryParam("endDate"), LocalDate.now().toString());
-            int maxContractsPerSymbol = ApiRequestUtils.parseIntOrDefault(ctx.queryParam("maxContractsPerSymbol"), 1);
+            int maxContractsPerSymbol = ApiRequestUtils.parseIntOrDefault(ctx.queryParam("maxContractsPerSymbol"), 12);
             ctx.contentType("application/json").result(FuturesConnectionManager.importTopstepxBars(symbols, startDate, endDate, maxContractsPerSymbol));
         });
 

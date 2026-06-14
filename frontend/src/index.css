@@ -3154,9 +3154,9 @@ textarea {
 
 .futures-symbol-tracker-sidebar {
   display: grid;
-  gap: 10px;
-  padding-bottom: 14px;
-  margin-bottom: 14px;
+  gap: 12px;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
@@ -3170,19 +3170,19 @@ textarea {
 
 .futures-symbol-tracker-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
 }
 
 .futures-symbol-tracker-card {
   min-width: 0;
   display: grid;
-  gap: 6px;
+  gap: 10px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(11, 15, 22, 0.72);
   color: var(--app-link);
-  padding: 9px;
+  padding: 12px;
 }
 
 .futures-symbol-tracker-card.active {
@@ -3190,18 +3190,23 @@ textarea {
   background: rgba(100, 180, 255, 0.1);
 }
 
+.futures-symbol-tracker-card.focused {
+  min-height: 184px;
+  align-content: start;
+}
+
 .futures-symbol-tracker-topline {
   min-width: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: 10px;
 }
 
 .futures-symbol-tracker-topline span {
   min-width: 0;
   color: var(--app-muted);
-  font-size: 0.72rem;
+  font-size: 0.82rem;
   font-weight: 900;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3209,21 +3214,37 @@ textarea {
 
 .futures-symbol-tracker-topline strong {
   color: var(--app-link);
-  font-size: 0.86rem;
-  line-height: 1rem;
+  font-size: 1.28rem;
+  line-height: 1.35rem;
   font-variant-numeric: tabular-nums;
 }
 
-.futures-symbol-tracker-card > em {
+.futures-symbol-tracker-pnl {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.futures-symbol-tracker-pnl em {
   font-style: normal;
-  font-size: 0.86rem;
+  font-size: 1.12rem;
+  line-height: 1.35rem;
   font-weight: 900;
+}
+
+.futures-symbol-tracker-pnl small {
+  min-width: 0;
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .futures-symbol-tracker-meta {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
+  gap: 6px;
 }
 
 .futures-symbol-tracker-meta span {
@@ -3231,8 +3252,8 @@ textarea {
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.045);
   color: var(--app-muted);
-  padding: 5px 4px;
-  font-size: 0.62rem;
+  padding: 8px 6px;
+  font-size: 0.7rem;
   font-weight: 850;
   text-align: center;
   white-space: nowrap;
@@ -3242,6 +3263,38 @@ textarea {
 
 .futures-symbol-tracker-meta b {
   color: var(--app-link);
+}
+
+.futures-symbol-tracker-flow,
+.futures-symbol-tracker-health .futures-health-pill {
+  min-width: 0;
+  border-radius: 7px;
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.futures-symbol-tracker-flow {
+  overflow: hidden;
+  padding: 9px 10px;
+  background: rgba(77, 124, 254, 0.12);
+  color: #c7d2fe;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.futures-symbol-tracker-health .futures-health-pill {
+  width: 100%;
+  min-height: 32px;
+  justify-content: center;
+}
+
+.futures-symbol-tracker-detail {
+  margin: 0;
+  color: rgba(226, 232, 240, 0.66);
+  font-size: 0.74rem;
+  line-height: 1.16rem;
+  overflow-wrap: anywhere;
 }
 
 .futures-symbol-tracker-sidebar .futures-bot-tracker-card {

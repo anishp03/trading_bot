@@ -29,6 +29,7 @@ public class FourWeekComparisonRunner {
 		String endDate = args.length > 3 && !args[3].trim().isEmpty() ? args[3].trim() : "2026-06-04";
 		String label = args.length > 4 && !args[4].trim().isEmpty() ? args[4].trim() : "four-week-comparison";
 		boolean refreshData = args.length > 5 && Boolean.parseBoolean(args[5]);
+		int sourcePortfolioBacktestId = args.length > 6 && !args[6].trim().isEmpty() ? Integer.parseInt(args[6].trim()) : 0;
 
 		Path outputDir = backendDir.resolve("target/four-week-comparison");
 		Files.createDirectories(outputDir);
@@ -46,6 +47,7 @@ public class FourWeekComparisonRunner {
 		System.out.println("SYMBOLS=" + SYMBOLS);
 		System.out.println("PRESET=" + PRESET);
 		System.out.println("PROFILE=" + PROFILE);
+		System.out.println("SOURCE_PORTFOLIO_BACKTEST_ID=" + sourcePortfolioBacktestId);
 
 		if (refreshData) {
 			System.out.println("REFRESH_REQUESTED=true");
@@ -72,7 +74,7 @@ public class FourWeekComparisonRunner {
 			0.0,
 			PROFILE,
 			PRESET,
-			0,
+			sourcePortfolioBacktestId,
 			true,
 			true,
 			true

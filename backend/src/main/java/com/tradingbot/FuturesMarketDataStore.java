@@ -79,7 +79,7 @@ final class FuturesMarketDataStore {
 		String cleanSymbols = cleanSymbols(symbols);
 		String startedAt = displayTime();
 		String stopFlush = flushCapturedLevel1ToNativeHistory(cleanSymbols);
-		String cleanStartDate = isBlank(startDate) ? "2025-05-01" : clean(startDate);
+		String cleanStartDate = isBlank(startDate) ? "2024-05-01" : clean(startDate);
 		String cleanEndDate = isBlank(endDate) ? LocalDate.now(NEW_YORK_ZONE).toString() : clean(endDate);
 		String topstep = FuturesConnectionManager.importTopstepxBars(cleanSymbols, cleanStartDate, cleanEndDate, maxContractsPerSymbol);
 		String level2 = fillLevel2Gaps(cleanSymbols, cleanStartDate, cleanEndDate);
@@ -181,21 +181,26 @@ final class FuturesMarketDataStore {
 			Set<String> existingLevel2Timestamps = level2Timestamps(normalized);
 			int created = 0;
 			int rthBars = 0;
-			for (FuturesConnectionManager.InternalBar bar : bars) {
-				if (!barInsideDateRange(bar, start, end)) {
-					continue;
+			try (Connection conn = DatabaseManager.getConnection();
+				 PreparedStatement pstmt = conn.prepareStatement(level2UpsertSql())) {
+				conn.setAutoCommit(false);
+				for (FuturesConnectionManager.InternalBar bar : bars) {
+					if (!barInsideDateRange(bar, start, end)) {
+						continue;
+					}
+					if (!isRthInstant(bar.timestamp)) {
+						continue;
+					}
+					rthBars++;
+					String timestamp = normalizedTimestamp(bar.timestampText);
+					if (timestamp.length() == 0 || existingLevel2Timestamps.contains(timestamp)) {
+						continue;
+					}
+					upsertDerivedLevel2(pstmt, normalized, timestamp, bar);
+					existingLevel2Timestamps.add(timestamp);
+					created++;
 				}
-				if (!isRthInstant(bar.timestamp)) {
-					continue;
-				}
-				rthBars++;
-				String timestamp = normalizedTimestamp(bar.timestampText);
-				if (timestamp.length() == 0 || existingLevel2Timestamps.contains(timestamp)) {
-					continue;
-				}
-				upsertDerivedLevel2(normalized, timestamp, bar);
-				existingLevel2Timestamps.add(timestamp);
-				created++;
+				conn.commit();
 			}
 			int finalRows = countLevel2Rows(normalized, null);
 			return "{"
@@ -522,6 +527,15 @@ final class FuturesMarketDataStore {
 	}
 
 	private static void upsertDerivedLevel2(String symbol, String timestamp, FuturesConnectionManager.InternalBar bar) {
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement pstmt = conn.prepareStatement(level2UpsertSql())) {
+			upsertDerivedLevel2(pstmt, symbol, timestamp, bar);
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+	}
+
+	private static void upsertDerivedLevel2(PreparedStatement pstmt, String symbol, String timestamp, FuturesConnectionManager.InternalBar bar) throws SQLException {
 		double tick = tickSizeForSymbol(symbol);
 		double safeTick = Math.max(0.000001, tick);
 		double range = Math.max(safeTick, bar.high - bar.low);
@@ -540,6 +554,7 @@ final class FuturesMarketDataStore {
 		double signedVolume = direction == 0.0 ? closeBias * bar.volume * 0.20 : direction * bar.volume * (0.20 + (bodyStrength * 0.35));
 		double wallDistance = Math.max(1.0, Math.min(12.0, Math.max(1.0, (bar.high - bar.low) / safeTick) / 6.0));
 		upsertLevel2Snapshot(
+			pstmt,
 			symbol,
 			timestamp,
 			bestBid,
@@ -595,7 +610,91 @@ final class FuturesMarketDataStore {
 		if (SOURCE_DERIVED_GAP_FILL.equals(source) && hasLiveCapturedLevel2Row(symbol, timestamp)) {
 			return;
 		}
-		String sql = "INSERT INTO FuturesHistoricalLevel2Snapshots "
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement pstmt = conn.prepareStatement(level2UpsertSql())) {
+			upsertLevel2Snapshot(
+				pstmt,
+				symbol,
+				timestamp,
+				bestBid,
+				bestAsk,
+				spreadTicks,
+				depthImbalance3,
+				depthImbalance5,
+				depthImbalance10,
+				topBookImbalance,
+				tapeDelta,
+				cvd,
+				bidWallDistanceTicks,
+				askWallDistanceTicks,
+				bidStacking,
+				askStacking,
+				absorption,
+				liquidityVacuum,
+				bookFlip,
+				flowState,
+				source,
+				sourceConfidence,
+				sourceDetail
+			);
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+	}
+
+	private static void upsertLevel2Snapshot(
+		PreparedStatement pstmt,
+		String symbol,
+		String timestamp,
+		double bestBid,
+		double bestAsk,
+		double spreadTicks,
+		double depthImbalance3,
+		double depthImbalance5,
+		double depthImbalance10,
+		double topBookImbalance,
+		double tapeDelta,
+		double cvd,
+		double bidWallDistanceTicks,
+		double askWallDistanceTicks,
+		double bidStacking,
+		double askStacking,
+		String absorption,
+		boolean liquidityVacuum,
+		String bookFlip,
+		String flowState,
+		String source,
+		double sourceConfidence,
+		String sourceDetail
+	) throws SQLException {
+		pstmt.setString(1, normalizeSymbol(symbol));
+		pstmt.setString(2, timestamp);
+		pstmt.setDouble(3, bestBid);
+		pstmt.setDouble(4, bestAsk);
+		pstmt.setDouble(5, spreadTicks);
+		pstmt.setDouble(6, depthImbalance3);
+		pstmt.setDouble(7, depthImbalance5);
+		pstmt.setDouble(8, depthImbalance10);
+		pstmt.setDouble(9, topBookImbalance);
+		pstmt.setDouble(10, tapeDelta);
+		pstmt.setDouble(11, cvd);
+		pstmt.setDouble(12, bidWallDistanceTicks);
+		pstmt.setDouble(13, askWallDistanceTicks);
+		pstmt.setDouble(14, bidStacking);
+		pstmt.setDouble(15, askStacking);
+		pstmt.setString(16, cleanOrDefault(absorption, "NONE"));
+		pstmt.setInt(17, liquidityVacuum ? 1 : 0);
+		pstmt.setString(18, cleanOrDefault(bookFlip, ""));
+		pstmt.setString(19, cleanOrDefault(flowState, "BALANCED"));
+		pstmt.setString(20, cleanOrDefault(source, SOURCE_DERIVED_GAP_FILL));
+		pstmt.setDouble(21, sourceConfidence);
+		pstmt.setString(22, cleanOrDefault(sourceDetail, ""));
+		pstmt.setString(23, displayTime());
+		pstmt.executeUpdate();
+	}
+
+	private static String level2UpsertSql() {
+		return "INSERT INTO FuturesHistoricalLevel2Snapshots "
 			+ "(symbol, timestamp, bestBid, bestAsk, spreadTicks, depthImbalance3, depthImbalance5, depthImbalance10, topBookImbalance, tapeDelta, cvd, "
 			+ "bidWallDistanceTicks, askWallDistanceTicks, bidStacking, askStacking, absorption, liquidityVacuum, bookFlip, flowState, source, sourceConfidence, sourceDetail, updatedAt) "
 			+ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
@@ -606,35 +705,6 @@ final class FuturesMarketDataStore {
 			+ "bidStacking = excluded.bidStacking, askStacking = excluded.askStacking, absorption = excluded.absorption, liquidityVacuum = excluded.liquidityVacuum, "
 			+ "bookFlip = excluded.bookFlip, flowState = excluded.flowState, source = excluded.source, sourceConfidence = excluded.sourceConfidence, "
 			+ "sourceDetail = excluded.sourceDetail, updatedAt = excluded.updatedAt";
-		try (Connection conn = DatabaseManager.getConnection();
-			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
-			pstmt.setString(1, normalizeSymbol(symbol));
-			pstmt.setString(2, timestamp);
-			pstmt.setDouble(3, bestBid);
-			pstmt.setDouble(4, bestAsk);
-			pstmt.setDouble(5, spreadTicks);
-			pstmt.setDouble(6, depthImbalance3);
-			pstmt.setDouble(7, depthImbalance5);
-			pstmt.setDouble(8, depthImbalance10);
-			pstmt.setDouble(9, topBookImbalance);
-			pstmt.setDouble(10, tapeDelta);
-			pstmt.setDouble(11, cvd);
-			pstmt.setDouble(12, bidWallDistanceTicks);
-			pstmt.setDouble(13, askWallDistanceTicks);
-			pstmt.setDouble(14, bidStacking);
-			pstmt.setDouble(15, askStacking);
-			pstmt.setString(16, cleanOrDefault(absorption, "NONE"));
-			pstmt.setInt(17, liquidityVacuum ? 1 : 0);
-			pstmt.setString(18, cleanOrDefault(bookFlip, ""));
-			pstmt.setString(19, cleanOrDefault(flowState, "BALANCED"));
-			pstmt.setString(20, cleanOrDefault(source, SOURCE_DERIVED_GAP_FILL));
-			pstmt.setDouble(21, sourceConfidence);
-			pstmt.setString(22, cleanOrDefault(sourceDetail, ""));
-			pstmt.setString(23, displayTime());
-			pstmt.executeUpdate();
-		} catch (SQLException e) {
-			e.printStackTrace();
-		}
 	}
 
 	private static Set<String> level2Timestamps(String symbol) {

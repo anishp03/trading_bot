@@ -74,7 +74,7 @@ const DEFAULT_CONFIG = {
   strategyPreset: DEFAULT_STRATEGY_PRESET,
   referenceSymbol: "MNQ",
   fundedProfile: DEFAULT_RISK_PROFILE,
-  startDate: "2025-05-01",
+  startDate: "2024-05-01",
   endDate: defaultEndDate(),
   accountSize: "50000",
   maxTrailingDrawdown: "2000",
@@ -91,6 +91,7 @@ const DEFAULT_CONFIG = {
   continueAfterRuleViolation: "true",
   qualitativeRiskEnabled: "true",
   dtmEnabled: "true",
+  riskSizingMode: "STATIC_WITHDRAW_DAILY",
 };
 
 export default function FuturesBacktest() {
@@ -135,7 +136,6 @@ export default function FuturesBacktest() {
   const selectedPresetLabel = presetOptions.find((preset) => preset.name === config.strategyPreset)?.label || config.strategyPreset || DEFAULT_STRATEGY_PRESET;
   const riskProfileOptions = useMemo(() => buildRiskProfileOptions(fundedProfiles), [fundedProfiles]);
   const riskConfigLocked = config.fundedProfile !== "CUSTOM";
-  const sizingSourceLabel = riskConfigLocked ? "Risk Config envelope" : "Manual custom risk";
   const ruleModeLabel = config.continueAfterRuleViolation === "true" ? "Full trail" : "Stop on breach";
 
   function loadInstruments() {
@@ -250,6 +250,7 @@ export default function FuturesBacktest() {
       continueAfterRuleViolation: String(payload?.continueAfterRuleViolation ?? DEFAULT_CONFIG.continueAfterRuleViolation),
       qualitativeRiskEnabled: DEFAULT_CONFIG.qualitativeRiskEnabled,
       dtmEnabled: String(payload?.dtmEnabled ?? DEFAULT_CONFIG.dtmEnabled),
+      riskSizingMode: DEFAULT_CONFIG.riskSizingMode,
     };
     setConfig(nextConfig);
     setBatchSymbols(nextSymbols);
@@ -307,6 +308,7 @@ export default function FuturesBacktest() {
       continueAfterRuleViolation: config.continueAfterRuleViolation === "true" ? "true" : "false",
       qualitativeRiskEnabled: "true",
       dtmEnabled: config.dtmEnabled === "true" ? "true" : "false",
+      riskSizingMode: config.riskSizingMode || DEFAULT_CONFIG.riskSizingMode,
     });
 
     try {
@@ -523,7 +525,14 @@ export default function FuturesBacktest() {
           </Field>
 
           <Field label="Risk Sizing" className="col-12 col-md-4 col-xl-3">
-            <input type="text" value={sizingSourceLabel} className="form-control app-input" readOnly />
+            <select
+              value={config.riskSizingMode || DEFAULT_CONFIG.riskSizingMode}
+              onChange={(event) => updateConfig("riskSizingMode", event.target.value)}
+              className="form-select app-input"
+            >
+              <option value="STATIC_WITHDRAW_DAILY">Static baseline</option>
+              <option value="DYNAMIC_COMPOUND_MLL">Dynamic DLL/MLL</option>
+            </select>
           </Field>
 
           <div className="col-12 col-md-4 col-xl-3">

@@ -12,7 +12,7 @@ import java.util.List;
 public class MicroContractExpansionRunner {
 	private static final String BASE_SYMBOLS = "MES,MNQ,NQ,MGC,ES,M2K";
 	private static final String EXPANDED_SYMBOLS = "MES,MNQ,NQ,MGC,ES,M2K,MYM,MCL";
-	private static final String START_DATE = "2025-05-01";
+	private static final String START_DATE = "2024-05-01";
 	private static final String PROFILE = "TOPSTEP_50K_RESEARCH";
 	private static final String WIP = "wip";
 	private static final String MICRO_BASELINE = "mcl_mym_baseline_20260526";
@@ -94,7 +94,8 @@ public class MicroContractExpansionRunner {
 		String endDate = args.length > 1 ? args[1].trim() : LocalDate.now().toString();
 		if ("update-data".equals(command)) {
 			String symbols = args.length > 2 ? args[2].trim() : EXPANDED_SYMBOLS;
-			System.out.println(FuturesConnectionManager.updateBacktestData(symbols, START_DATE, endDate, "ohlcv-1m"));
+			int maxContractsPerSymbol = args.length > 3 ? Integer.parseInt(args[3].trim()) : 12;
+			System.out.println(FuturesConnectionManager.updateBacktestData(symbols, START_DATE, endDate, "ohlcv-1m", maxContractsPerSymbol));
 			return;
 		}
 		if ("seed".equals(command)) {

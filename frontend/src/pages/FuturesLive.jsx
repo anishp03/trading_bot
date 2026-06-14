@@ -40,6 +40,15 @@ const LIVE_ALL_TRADES_PAGE_SIZE = 500;
 const DEFAULT_PROFILE = "TOPSTEP_50K";
 const DEFAULT_ACCOUNT_PROFILE = "";
 const DEFAULT_STRATEGY_PRESET = "bestbiasfree";
+const LIVE_RISK_SIZING_MODE = "DYNAMIC_COMPOUND_MLL";
+const LIVE_RISK_POLICY = {
+  stopRiskBufferMultiplier: 1.2,
+  dailyRoomUsagePct: 0.55,
+  mllRoomUsagePct: 0.3,
+  maxRiskMultiplier: 3,
+  dllReserveDollars: 200,
+  mllReserveDollars: 0,
+};
 const CONTROL_STRATEGY_PRESET = "backtestbias92k";
 const BIAS_FREE_STRATEGY_PRESET = "biasfree92k";
 const BEST_BIAS_FREE_STRATEGY_PRESET = "bestbiasfree";
@@ -456,12 +465,16 @@ export default function FuturesLive() {
     () => botTrackers.map((tracker) => [
       tracker.symbol,
       tracker.lastPrice,
+      tracker.changePct,
       tracker.pnl,
       tracker.totalTrades,
       tracker.liveTrades,
       tracker.signal,
+      tracker.signalTone,
+      tracker.healthTone,
       tracker.healthStatusText,
       tracker.orderFlowLabel,
+      tracker.detail,
     ].join(":")).join("|"),
     [botTrackers]
   );
@@ -1486,10 +1499,13 @@ function LiveRiskHeartbeatCard({ heartbeat }) {
         <RiskHeartbeatMetric label="Day Start" value={formatAccountCurrency(safe.dayStartBalance)} />
         <RiskHeartbeatMetric label="Daily PnL" value={formatCurrency(safe.dailyPnl)} accent={safe.dailyPnl} />
         <RiskHeartbeatMetric label="DLL Room" value={formatAccountCurrency(safe.dailyRiskRoom)} accent={safe.dailyRiskRoom > safe.configuredMaxRisk ? 1 : safe.dailyRiskRoom <= 0 ? -1 : 0} />
-        <RiskHeartbeatMetric label="Trail Cushion" value={formatAccountCurrency(safe.trailingCushion)} accent={safe.trailingCushion > 0 ? 1 : -1} />
+        <RiskHeartbeatMetric label="MLL Room" value={formatAccountCurrency(safe.trailingCushion)} accent={safe.trailingCushion > 0 ? 1 : -1} />
+        <RiskHeartbeatMetric label="Dynamic Cap" value={formatAccountCurrency(safe.dynamicMaxRisk)} />
         <RiskHeartbeatMetric label="Max Risk Now" value={formatAccountCurrency(safe.effectiveMaxRisk)} />
       </div>
       <div className="futures-risk-heartbeat-foot">
+        <span>Risk <b>Dynamic DLL/MLL</b></span>
+        <span>DLL Reserve <b>{formatAccountCurrency(safe.riskPolicy?.dllReserveDollars || 0)}</b></span>
         <span>Account <b>{safe.accountId || "Not selected"}</b></span>
         <span>Source <b>{safe.source}</b></span>
         <span>Cost <b>{formatCurrencyNoSign(safe.commissionPerContract)} / {formatNumber(safe.slippageTicks, 2)}t</b></span>
@@ -1510,30 +1526,35 @@ function RiskHeartbeatMetric({ label, value, accent = 0 }) {
 }
 
 function SymbolTrackerSidebar({ trackers, selectedSymbol }) {
+  const normalizedSelectedSymbol = String(selectedSymbol || "").toUpperCase();
+  const tracker = (Array.isArray(trackers) ? trackers : []).find(
+    (candidate) => String(candidate?.symbol || "").toUpperCase() === normalizedSelectedSymbol
+  ) || (Array.isArray(trackers) ? trackers[0] : null);
+
+  if (!tracker) return null;
+
   return (
     <div className="futures-symbol-tracker-sidebar">
       <div className="futures-symbol-tracker-heading">Symbol Tracker</div>
-      <div className="futures-symbol-tracker-grid">
-        {trackers.map((tracker) => (
-          <div
-            key={tracker.symbol}
-            className={[
-              "futures-symbol-tracker-card",
-              selectedSymbol === tracker.symbol ? "active" : "",
-            ].filter(Boolean).join(" ")}
-          >
-            <div className="futures-symbol-tracker-topline">
-              <span>{tracker.symbol}</span>
-              <strong>{formatPrice(tracker.lastPrice)}</strong>
-            </div>
-            <em className={tracker.pnl > 0 ? "app-pnl-pos" : tracker.pnl < 0 ? "app-pnl-neg" : "app-muted"}>{formatCurrency(tracker.pnl)}</em>
-            <div className="futures-symbol-tracker-meta">
-              <span><b>{tracker.totalTrades}</b> trades</span>
-              <span><b>{tracker.liveTrades}</b> live</span>
-              <span className={`futures-bot-signal ${tracker.signalTone}`}>{tracker.signal}</span>
-            </div>
-          </div>
-        ))}
+      <div className="futures-symbol-tracker-card active focused">
+        <div className="futures-symbol-tracker-topline">
+          <span>{tracker.symbol}</span>
+          <strong>{formatPrice(tracker.lastPrice)}</strong>
+        </div>
+        <div className="futures-symbol-tracker-pnl">
+          <em className={tracker.pnl > 0 ? "app-pnl-pos" : tracker.pnl < 0 ? "app-pnl-neg" : "app-muted"}>{formatCurrency(tracker.pnl)}</em>
+          <small className={tracker.changePct > 0 ? "app-pnl-pos" : tracker.changePct < 0 ? "app-pnl-neg" : "app-muted"}>{formatPct(tracker.changePct)}</small>
+        </div>
+        <div className="futures-symbol-tracker-meta">
+          <span><b>{tracker.totalTrades}</b> trades</span>
+          <span><b>{tracker.liveTrades}</b> live</span>
+          <span className={`futures-bot-signal ${tracker.signalTone}`}>{tracker.signal}</span>
+        </div>
+        <div className="futures-symbol-tracker-flow">{tracker.orderFlowLabel}</div>
+        <div className="futures-symbol-tracker-health">
+          <span className={`futures-health-pill ${tracker.healthTone}`}>Health: {tracker.healthStatusText}</span>
+        </div>
+        {tracker.detail && <p className="futures-symbol-tracker-detail">{tracker.detail}</p>}
       </div>
     </div>
   );
@@ -5905,22 +5926,22 @@ function buildLiveRiskHeartbeat({
   const dayStartBalance = riskCurrentBalance > 0 ? Math.max(0, riskCurrentBalance - sameDayClosedPnl) : accountSize;
   const dailyPnl = riskCurrentBalance - dayStartBalance;
   const dailyRiskRoom = Math.max(0, dailyLossLimit + dailyPnl);
+  const trailingFloor = riskCurrentBalance > 0 && trailingLimit > 0
+    ? Math.max(accountSize - trailingLimit, Math.min(accountSize, riskCurrentBalance - trailingLimit))
+    : 0;
   const trailingCushion = firstFiniteNumber(
     metrics?.drawdownCushion,
     broker.drawdownCushion,
     riskCurrentBalance > 0 && trailingLimit > 0
-      ? Math.max(0, riskCurrentBalance - Math.max(accountSize - trailingLimit, Math.min(accountSize, riskCurrentBalance - trailingLimit)))
+      ? Math.max(0, riskCurrentBalance - trailingFloor)
       : trailingLimit,
     0
   );
-  const sizingRatio = trailingLimit > 0
-    ? boundedNumber(trailingCushion / trailingLimit, 0.25, Math.max(1, dailyLossLimit / Math.max(1, configuredMaxRisk)))
-    : 1;
-  const effectiveMaxRisk = Math.min(
-    Math.max(1, dailyLossLimit * 0.70),
-    Math.max(1, configuredMaxRisk * sizingRatio),
-    Math.max(0, dailyRiskRoom)
-  );
+  const riskMultiplier = trailingLimit > 0 ? boundedNumber(trailingCushion / trailingLimit, 0, LIVE_RISK_POLICY.maxRiskMultiplier) : 1;
+  const dynamicMaxRisk = Math.max(0, configuredMaxRisk * riskMultiplier);
+  const dllRiskBudget = Math.max(0, dailyRiskRoom - LIVE_RISK_POLICY.dllReserveDollars) * LIVE_RISK_POLICY.dailyRoomUsagePct;
+  const mllRiskBudget = Math.max(0, trailingCushion - LIVE_RISK_POLICY.mllReserveDollars) * LIVE_RISK_POLICY.mllRoomUsagePct;
+  const effectiveMaxRisk = Math.min(dynamicMaxRisk, dllRiskBudget, mllRiskBudget);
   const brokerReady = metrics?.brokerMetricsReady !== false && (metrics?.dataSource === BROKER_SOURCE_TOPSTEPX || isAuthoritativeTopstepBrokerSnapshot(broker, metrics));
   const selectedAccountId = String(accountId || metrics?.accountId || broker.accountId || liveStatus?.practiceAccountId || "").trim();
   const commissionPerContract = firstFiniteNumber(liveStatus?.commissionPerContract, 1.24);
@@ -5957,7 +5978,12 @@ function buildLiveRiskHeartbeat({
     dailyRiskRoom,
     trailingCushion,
     configuredMaxRisk,
+    dynamicMaxRisk,
+    dllRiskBudget,
+    mllRiskBudget,
     effectiveMaxRisk,
+    riskSizingMode: LIVE_RISK_SIZING_MODE,
+    riskPolicy: LIVE_RISK_POLICY,
     commissionPerContract,
     slippageTicks,
     profitTarget,

@@ -13,7 +13,7 @@ import java.time.format.DateTimeFormatter;
 
 public class SprintBacktestRunner {
 	private static final String SYMBOLS = "MES,MNQ,NQ,MGC,ES,M2K,MYM,MCL";
-	private static final String START_DATE = "2025-05-01";
+	private static final String START_DATE = "2024-05-01";
 	private static final String END_DATE = "2026-05-22";
 	private static final String DEFAULT_PRESET = "biasfree92k";
 	private static final String DEFAULT_PROFILE = "TOPSTEP_50K_RESEARCH";
