@@ -169,6 +169,18 @@ public class FuturesBacktestLiveParityIntegrityTest {
 	}
 
 	@Test
+	public void portfolioBacktestDynamicModeEnablesDynamicMllEngine() throws Exception {
+		Object config = buildPortfolioBacktestConfig("MES,MNQ,NQ,MGC,ES,M2K,MYM,MCL", false);
+
+		applyPortfolioRiskSizingMode(config, "DYNAMIC_COMPOUND_MLL");
+
+		assertEquals("DYNAMIC_COMPOUND_MLL", stringField(config, "riskSizingMode"));
+		assertTrue(booleanField(config, "dynamicMllRiskEnabled"));
+		assertEquals(3.0, doubleField(config, "dynamicMllRiskMaxMultiplier"), 0.0001);
+		assertFalse(booleanField(config, "dynamicMllAggregateMiniUnits"));
+	}
+
+	@Test
 	public void portfolioBacktestIntratradeDailyLossGuardKeepsHundredDollarMaeBuffer() throws Exception {
 		assertEquals(100.0, staticDoubleField("PORTFOLIO_BACKTEST_MAE_RULE_BUFFER"), 0.0001);
 	}
@@ -595,6 +607,16 @@ public class FuturesBacktestLiveParityIntegrityTest {
 			Double.valueOf(0.0),
 			"TOPSTEP_50K"
 		);
+	}
+
+	private static void applyPortfolioRiskSizingMode(Object config, String riskSizingMode) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod(
+			"applyPortfolioRiskSizingMode",
+			config.getClass(),
+			String.class
+		);
+		method.setAccessible(true);
+		method.invoke(null, config, riskSizingMode);
 	}
 
 	private static boolean liveSourceSnapshotMatchesPreset(

@@ -92,6 +92,7 @@ const DEFAULT_CONFIG = {
   qualitativeRiskEnabled: "true",
   dtmEnabled: "true",
   riskSizingMode: "STATIC_WITHDRAW_DAILY",
+  sourcePortfolioBacktestId: "0",
 };
 
 export default function FuturesBacktest() {
@@ -251,6 +252,7 @@ export default function FuturesBacktest() {
       qualitativeRiskEnabled: DEFAULT_CONFIG.qualitativeRiskEnabled,
       dtmEnabled: String(payload?.dtmEnabled ?? DEFAULT_CONFIG.dtmEnabled),
       riskSizingMode: DEFAULT_CONFIG.riskSizingMode,
+      sourcePortfolioBacktestId: String(payload?.sourcePortfolioBacktestId ?? DEFAULT_CONFIG.sourcePortfolioBacktestId),
     };
     setConfig(nextConfig);
     setBatchSymbols(nextSymbols);
@@ -309,6 +311,7 @@ export default function FuturesBacktest() {
       qualitativeRiskEnabled: "true",
       dtmEnabled: config.dtmEnabled === "true" ? "true" : "false",
       riskSizingMode: config.riskSizingMode || DEFAULT_CONFIG.riskSizingMode,
+      sourcePortfolioBacktestId: config.sourcePortfolioBacktestId || DEFAULT_CONFIG.sourcePortfolioBacktestId,
     });
 
     try {

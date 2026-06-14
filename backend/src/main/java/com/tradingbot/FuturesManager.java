@@ -2453,13 +2453,249 @@ public class FuturesManager {
 		config.continueAfterRuleViolation = continueAfterRuleViolation;
 		config.qualitativeRiskEnabled = qualitativeRiskEnabled;
 		config.dtmEnabled = dtmEnabled;
-		config.dynamicRiskPolicy = dynamicRiskPolicyForMode(riskSizingMode);
-		config.riskSizingMode = config.dynamicRiskPolicy.mode;
-		PortfolioBacktestResult result = runPortfolioBacktest(config);
+		applyPortfolioRiskSizingMode(config, riskSizingMode);
+		PortfolioBacktestResult result = RISK_SIZING_DYNAMIC_COMPOUND_MLL.equals(config.riskSizingMode)
+			? runDynamicRiskReplayPortfolioBacktest(config)
+			: runPortfolioBacktest(config);
 		if (result == null) {
 			return -1;
 		}
 		return savePortfolioBacktest(result, config);
+	}
+
+	private static void applyPortfolioRiskSizingMode(PortfolioBacktestConfig config, String riskSizingMode) {
+		if (config == null) {
+			return;
+		}
+		DynamicRiskPolicy policy = dynamicRiskPolicyForMode(riskSizingMode);
+		config.dynamicRiskPolicy = policy;
+		config.riskSizingMode = policy.mode;
+		boolean dynamicMllMode = RISK_SIZING_DYNAMIC_COMPOUND_MLL.equals(policy.mode);
+		config.dynamicMllRiskEnabled = dynamicMllMode;
+		config.dynamicMllRiskMaxMultiplier = dynamicMllMode ? clamp(policy.maxRiskMultiplier, 0.25, 5.0) : 1.0;
+		config.dynamicMllAggregateMiniUnits = false;
+	}
+
+	private static PortfolioBacktestResult runDynamicRiskReplayPortfolioBacktest(PortfolioBacktestConfig config) {
+		if (config == null) {
+			return null;
+		}
+		int sourcePortfolioBacktestId = config.sourcePortfolioBacktestId > 0
+			? config.sourcePortfolioBacktestId
+			: recommendedPortfolioBacktestConfigSourceId();
+		if (sourcePortfolioBacktestId <= 0) {
+			return runPortfolioBacktest(config);
+		}
+		List<FuturesTrade> sourceTrades = loadPortfolioBacktestTradesForReplay(sourcePortfolioBacktestId);
+		if (sourceTrades.isEmpty()) {
+			return runPortfolioBacktest(config);
+		}
+		config.sourcePortfolioBacktestId = sourcePortfolioBacktestId;
+		DynamicRiskPolicy policy = config.dynamicRiskPolicy == null
+			? dynamicRiskPolicyForMode(config.riskSizingMode)
+			: config.dynamicRiskPolicy;
+		PortfolioBacktestResult result = new PortfolioBacktestResult();
+		result.fundedProfile = config.fundedProfile;
+		result.symbols = config.symbols == null ? "" : String.join(",", config.symbols);
+		result.startDate = sourceTrades.get(0).openedAt == null || sourceTrades.get(0).openedAt.length() < 10
+			? config.startDate.toString()
+			: sourceTrades.get(0).openedAt.substring(0, 10);
+		FuturesTrade lastSourceTrade = sourceTrades.get(sourceTrades.size() - 1);
+		result.endDate = lastSourceTrade.openedAt == null || lastSourceTrade.openedAt.length() < 10
+			? config.endDate.toString()
+			: lastSourceTrade.openedAt.substring(0, 10);
+		result.startingBalance = round(config.accountSize);
+		result.dataSource = "native futures csv portfolio 1min dynamic_risk_replay sourcePortfolioBacktestID=" + sourcePortfolioBacktestId
+			+ " risk_sizing_mode=" + policy.mode
+			+ " dllUsage=" + round(policy.dailyRoomUsagePct)
+			+ " mllUsage=" + round(policy.mllRoomUsagePct)
+			+ " maxRiskMultiplier=" + round(policy.maxRiskMultiplier)
+			+ " dllReserve=" + round(policy.dllReserveDollars)
+			+ " stopRiskBuffer=" + round(policy.stopRiskBufferMultiplier);
+
+		double balance = config.accountSize;
+		double peakBalance = balance;
+		double trailingThreshold = config.accountSize - config.maxTrailingDrawdown;
+		double grossProfit = 0.0;
+		double grossLoss = 0.0;
+		int winners = 0;
+		String currentDay = "";
+		double dayStartBalance = balance;
+		String dailyBreachDay = "";
+		String trailingBreachDay = "";
+		for (int index = 0; index < sourceTrades.size(); index++) {
+			FuturesTrade source = sourceTrades.get(index);
+			if (source == null || source.openedAt == null || source.openedAt.length() < 10) {
+				result.riskRejections++;
+				continue;
+			}
+			String tradeDay = source.openedAt.substring(0, 10);
+			if (!tradeDay.equals(currentDay)) {
+				currentDay = tradeDay;
+				dayStartBalance = balance;
+			}
+			InstrumentSpec spec = instrumentFor(source.symbol);
+			double riskPerContract = sourceTradeRiskPerContract(source, spec, config.commissionPerContract);
+			double dailyRiskBudget = Math.abs(config.dailyLossLimit) + (balance - dayStartBalance);
+			double trailingRiskBudget = balance - trailingThreshold;
+			DynamicRiskBudget budget = dynamicRiskBudget(
+				policy,
+				config.maxRiskPerTrade,
+				dailyRiskBudget,
+				trailingRiskBudget,
+				config.maxTrailingDrawdown
+			);
+			int aggregateRoom = Math.min(Math.max(0, config.maxContracts), Math.max(0, config.maxAggregateContracts));
+			if (config.maxAggregateMiniUnits > 0.0) {
+				aggregateRoom = Math.min(aggregateRoom, contractsAllowedByMiniUnitRoom(source.symbol, config.maxAggregateMiniUnits));
+			}
+			int contracts = Math.min(
+				aggregateRoom,
+				(int) Math.floor(budget.availableRiskBudget / Math.max(1.0, riskPerContract * Math.max(1.0, policy.stopRiskBufferMultiplier)))
+			);
+			if (contracts < 1) {
+				result.riskRejections++;
+				continue;
+			}
+			FuturesTrade replay = scaledReplayTrade(source, contracts);
+			result.tradeRecords.add(replay);
+			result.trades++;
+			result.maxConcurrentPositions = Math.max(result.maxConcurrentPositions, 1);
+			result.maxConcurrentContracts = Math.max(result.maxConcurrentContracts, contracts);
+			result.maxConcurrentMiniUnits = Math.max(result.maxConcurrentMiniUnits, round(fundedMiniUnitsPerContract(source.symbol) * contracts));
+			result.maxNotionalExposure = Math.max(result.maxNotionalExposure, round(Math.abs(replay.entryPrice * spec.pointValue * contracts)));
+			double worstIntraday = (balance + replay.mae) - dayStartBalance;
+			result.maxIntradayLoss = round(Math.min(result.maxIntradayLoss, worstIntraday));
+			result.maxAggregateMae = round(Math.min(result.maxAggregateMae, replay.mae));
+			if (worstIntraday <= -Math.abs(config.dailyLossLimit) && !tradeDay.equals(dailyBreachDay)) {
+				result.dailyLossBreaches++;
+				result.maeBreaches++;
+				dailyBreachDay = tradeDay;
+			}
+			if (balance + replay.mae <= trailingThreshold && !tradeDay.equals(trailingBreachDay)) {
+				result.trailingDrawdownBreaches++;
+				result.maeBreaches++;
+				trailingBreachDay = tradeDay;
+			}
+			balance = round(balance + replay.pnl);
+			if (replay.pnl >= 0.0) {
+				winners++;
+				grossProfit = round(grossProfit + replay.pnl);
+			} else {
+				grossLoss = round(grossLoss + Math.abs(replay.pnl));
+			}
+			peakBalance = Math.max(peakBalance, balance);
+			if (peakBalance > 0.0) {
+				result.maxDrawdownPct = round(Math.max(result.maxDrawdownPct, ((peakBalance - balance) / peakBalance) * 100.0));
+			}
+		}
+		result.endingBalance = round(balance);
+		result.totalProfit = round(balance - config.accountSize);
+		result.returnPct = config.accountSize == 0.0 ? 0.0 : round((result.totalProfit / config.accountSize) * 100.0);
+		result.winRate = result.trades == 0 ? 0.0 : round((winners * 100.0) / result.trades);
+		result.profitFactor = grossLoss == 0.0 ? grossProfit : round(grossProfit / grossLoss);
+		result.trailingThreshold = round(trailingThreshold);
+		result.ruleViolation = result.dailyLossBreaches > 0 || result.trailingDrawdownBreaches > 0;
+		result.ruleMessage = result.ruleViolation
+			? "Dynamic risk replay recorded DLL/MLL breach counts; inspect dailyLossBreaches and trailingDrawdownBreaches."
+			: "";
+		return result;
+	}
+
+	private static double sourceTradeRiskPerContract(FuturesTrade trade, InstrumentSpec spec, double commissionPerContract) {
+		if (trade == null || spec == null || spec.tickSize <= 0.0) {
+			return 1.0;
+		}
+		double priceRisk = Math.abs(trade.entryPrice - trade.stopPrice);
+		double tickRisk = priceRisk / spec.tickSize;
+		return Math.max(1.0, (tickRisk * spec.tickValue) + (Math.max(0.0, commissionPerContract) * 2.0));
+	}
+
+	private static FuturesTrade scaledReplayTrade(FuturesTrade source, int contracts) {
+		FuturesTrade replay = new FuturesTrade();
+		int sourceContracts = Math.max(1, source.contracts);
+		double scale = contracts / (double) sourceContracts;
+		replay.symbol = source.symbol;
+		replay.strategyCode = source.strategyCode;
+		replay.strategyName = source.strategyName;
+		replay.sourceStrategyCode = source.sourceStrategyCode;
+		replay.sourceStrategyName = source.sourceStrategyName;
+		replay.side = source.side;
+		replay.contracts = contracts;
+		replay.originalContracts = contracts;
+		replay.entryPrice = source.entryPrice;
+		replay.exitPrice = source.exitPrice;
+		replay.stopPrice = source.stopPrice;
+		replay.targetPrice = source.targetPrice;
+		replay.openedAt = source.openedAt;
+		replay.closedAt = source.closedAt;
+		replay.pnl = round(source.pnl * scale);
+		replay.finalLegPnl = round(source.finalLegPnl * scale);
+		replay.dtmRealizedPnl = round(source.dtmRealizedPnl * scale);
+		replay.dtmPartialContractsClosed = Math.max(0, (int) Math.round(source.dtmPartialContractsClosed * scale));
+		replay.mfe = round(source.mfe * scale);
+		replay.mae = round(source.mae * scale);
+		replay.exitReason = source.exitReason;
+		replay.notes = appendReplayNote(source.notes, source.contracts, contracts, scale);
+		return replay;
+	}
+
+	private static String appendReplayNote(String sourceNotes, int sourceContracts, int replayContracts, double scale) {
+		String base = cleanOrDefault(sourceNotes, "");
+		String replayNote = "\"dynamicRiskReplay\":{\"sourceContracts\":" + sourceContracts
+			+ ",\"replayContracts\":" + replayContracts
+			+ ",\"scale\":" + round(scale) + "}";
+		if (base.length() == 0 || !base.trim().startsWith("{")) {
+			return "{" + replayNote + "}";
+		}
+		String trimmed = base.trim();
+		if (trimmed.endsWith("}")) {
+			return trimmed.substring(0, trimmed.length() - 1) + "," + replayNote + "}";
+		}
+		return base;
+	}
+
+	private static List<FuturesTrade> loadPortfolioBacktestTradesForReplay(int portfolioBacktestId) {
+		List<FuturesTrade> trades = new ArrayList<FuturesTrade>();
+		if (portfolioBacktestId <= 0) {
+			return trades;
+		}
+		String sql = "SELECT * FROM FuturesPortfolioTrades WHERE portfolioBacktestID = ? ORDER BY openedAt ASC, portfolioTradeID ASC";
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
+			pstmt.setInt(1, portfolioBacktestId);
+			try (ResultSet rs = pstmt.executeQuery()) {
+				while (rs.next()) {
+					FuturesTrade trade = new FuturesTrade();
+					trade.symbol = normalizeSymbol(rs.getString("symbol"));
+					trade.strategyCode = cleanOrDefault(rs.getString("strategyCode"), "");
+					trade.strategyName = cleanOrDefault(rs.getString("strategyName"), "");
+					trade.sourceStrategyCode = cleanOrDefault(rs.getString("sourceStrategyCode"), "");
+					trade.sourceStrategyName = cleanOrDefault(rs.getString("sourceStrategyName"), "");
+					trade.side = cleanOrDefault(rs.getString("side"), "");
+					trade.contracts = Math.max(0, rs.getInt("contracts"));
+					trade.originalContracts = Math.max(0, rs.getInt("originalContracts"));
+					trade.entryPrice = rs.getDouble("entryPrice");
+					trade.exitPrice = rs.getDouble("exitPrice");
+					trade.stopPrice = rs.getDouble("stopPrice");
+					trade.targetPrice = rs.getDouble("targetPrice");
+					trade.openedAt = cleanOrDefault(rs.getString("openedAt"), "");
+					trade.closedAt = cleanOrDefault(rs.getString("closedAt"), "");
+					trade.pnl = rs.getDouble("pnl");
+					trade.finalLegPnl = rs.getDouble("finalLegPnl");
+					trade.dtmRealizedPnl = rs.getDouble("dtmRealizedPnl");
+					trade.dtmPartialContractsClosed = Math.max(0, rs.getInt("dtmPartialContractsClosed"));
+					trade.mfe = rs.getDouble("mfe");
+					trade.mae = rs.getDouble("mae");
+					trade.exitReason = cleanOrDefault(rs.getString("exitReason"), "");
+					trade.notes = cleanOrDefault(rs.getString("tradeNotes"), "");
+					trades.add(trade);
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return trades;
 	}
 
 	static int generateDynamicMllRiskPortfolioBacktest(
