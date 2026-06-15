@@ -151,6 +151,26 @@ export default function Settings({ accountEmail }) {
     }
   }
 
+  async function refreshTopstepAccounts() {
+    setBusyProvider("TOPSTEPX_ACCOUNT_REFRESH");
+    setFuturesFeedback("");
+
+    try {
+      const response = await apiFetch("/api/futures/topstepx/accounts/refresh", { method: "POST" });
+      const payload = await readApiResponse(response);
+      if (!response.ok || payload.json?.success === false) {
+        throw new Error(payload.json?.message || payload.text || "Failed to refresh Topstep accounts.");
+      }
+      setFuturesFeedback(payload.json?.message || "Topstep accounts refreshed.");
+      loadFuturesConnections();
+    } catch (error) {
+      console.error("Error refreshing Topstep accounts:", error);
+      setFuturesFeedback(error.message || "Failed to refresh Topstep accounts.");
+    } finally {
+      setBusyProvider("");
+    }
+  }
+
   async function activateTopstepAccount(accountId) {
     setBusyProvider(`TOPSTEPX_ACCOUNT_${accountId}`);
     setFuturesFeedback("");
@@ -217,6 +237,7 @@ export default function Settings({ accountEmail }) {
           topstepAccountDraft={topstepAccountDraft}
           onTopstepDraftChange={updateTopstepAccountDraft}
           onSaveTopstepAccount={saveTopstepAccount}
+          onRefreshTopstepAccounts={refreshTopstepAccounts}
           onActivateTopstepAccount={activateTopstepAccount}
           onDeleteTopstepAccount={deleteTopstepAccount}
         />
@@ -236,6 +257,7 @@ function ConnectionPanel({
   topstepAccountDraft,
   onTopstepDraftChange,
   onSaveTopstepAccount,
+  onRefreshTopstepAccounts,
   onActivateTopstepAccount,
   onDeleteTopstepAccount,
 }) {
@@ -385,6 +407,7 @@ function ConnectionPanel({
             busyProvider={busyProvider}
             onDraftChange={onTopstepDraftChange}
             onSave={onSaveTopstepAccount}
+            onRefresh={onRefreshTopstepAccounts}
             onActivate={onActivateTopstepAccount}
             onDelete={onDeleteTopstepAccount}
           />
@@ -408,13 +431,17 @@ function ConnectionPanel({
   );
 }
 
-function TopstepAccountsPanel({ accounts, activeAccountId, draft, saving, busyProvider, onDraftChange, onSave, onActivate, onDelete }) {
+function TopstepAccountsPanel({ accounts, activeAccountId, draft, saving, busyProvider, onDraftChange, onSave, onRefresh, onActivate, onDelete }) {
   const cleanActiveAccountId = String(activeAccountId || "").trim();
+  const refreshing = busyProvider === "TOPSTEPX_ACCOUNT_REFRESH";
 
   return (
     <div className="col-12 topstep-accounts-section">
       <div className="topstep-accounts-head">
         <div className="fw-bold app-kicker">Topstep Accounts</div>
+        <button type="button" className="app-btn app-btn-small px-3" onClick={onRefresh} disabled={refreshing}>
+          {refreshing ? "Refreshing..." : "Refresh Topstep Accounts"}
+        </button>
       </div>
 
       <div className="row g-3 align-items-end">
@@ -452,7 +479,6 @@ function TopstepAccountsPanel({ accounts, activeAccountId, draft, saving, busyPr
             <div className="topstep-account-row" key={accountId || account.name}>
               <div>
                 <div className="topstep-account-name">{account.name || "Topstep Account"}</div>
-                <div className="app-muted app-kicker">{accountId || "No account ID"}</div>
               </div>
               <div className="d-flex gap-2 align-items-center flex-wrap justify-content-end">
                 {active && <span className="app-badge app-positive-badge">active</span>}

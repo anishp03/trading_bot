@@ -6169,6 +6169,9 @@ public class FuturesManager {
 		if ("newest".equals(cleanSort)) {
 			return "openedAt DESC, portfolioTradeID DESC";
 		}
+		if ("oldest".equals(cleanSort)) {
+			return "openedAt ASC, portfolioTradeID ASC";
+		}
 		return "portfolioTradeID ASC";
 	}
 

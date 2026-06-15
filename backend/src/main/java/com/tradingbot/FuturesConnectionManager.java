@@ -253,6 +253,44 @@ public class FuturesConnectionManager {
 		return topstepAccountsJson(loadTopstepAccounts());
 	}
 
+	public static String refreshTopstepAccounts() {
+		initializeStore();
+		ConnectionConfig config = loadConnection(TOPSTEPX);
+		if (!config.enabled) {
+			return "{\"success\":false,\"message\":\"TopstepX connection is disabled.\"}";
+		}
+		if (isBlank(config.username) || isBlank(config.apiKey)) {
+			return "{\"success\":false,\"message\":\"TopstepX username/API key are missing.\"}";
+		}
+
+		String baseUrl = cleanOrDefault(config.baseUrl, "https://api.topstepx.com/api");
+		try {
+			String token = topstepxSessionToken(config);
+			HttpResult validate = postJson(baseUrl + "/Auth/validate", "{}", token);
+			String refreshedToken = extractJsonString(validate.body, "newToken");
+			String activeToken = isBlank(refreshedToken) ? token : refreshedToken;
+			HttpResult accounts = postJson(baseUrl + "/Account/search", "{\"onlyActiveAccounts\":true}", activeToken);
+			if (accounts.statusCode < 200 || accounts.statusCode >= 300) {
+				return "{\"success\":false,\"message\":" + jsonString("TopstepX account search failed: " + topstepxErrorSummary(accounts.body)) + "}";
+			}
+
+			List<String> accountObjects = extractJsonArrayObjects(accounts.body, "accounts");
+			if (accountObjects.isEmpty()) {
+				return "{\"success\":false,\"message\":\"TopstepX did not return any active accounts.\"}";
+			}
+
+			String activeAccountId = refreshSavedTopstepAccounts(accountObjects, config.accountId);
+			return "{"
+				+ "\"success\":true,"
+				+ "\"message\":\"Topstep accounts refreshed from TopstepX.\","
+				+ "\"accountId\":" + jsonString(activeAccountId) + ","
+				+ "\"accounts\":" + getTopstepAccountsJson()
+				+ "}";
+		} catch (Exception e) {
+			return "{\"success\":false,\"message\":" + jsonString("Topstep account refresh failed: " + safeMessage(e.getMessage())) + "}";
+		}
+	}
+
 	public static String saveTopstepAccount(String name, String accountId, boolean activate) {
 		initializeStore();
 		String cleanAccountId = cleanTopstepAccountId(accountId);
@@ -3568,6 +3606,107 @@ public class FuturesConnectionManager {
 			e.printStackTrace();
 		}
 		return accounts;
+	}
+
+	static String refreshSavedTopstepAccounts(List<String> accountObjects, String connectedAccountId) throws SQLException {
+		String cleanConnectedAccountId = cleanTopstepAccountId(connectedAccountId);
+		Set<String> discoveredIds = new HashSet<String>();
+		Map<String, String> brokerNamesById = new HashMap<String, String>();
+		String activeAccountId = "";
+		String firstDiscoveredAccountId = "";
+
+		for (String object : accountObjects) {
+			String id = cleanTopstepAccountId(firstNonBlank(extractJsonNumber(object, "id"), extractJsonString(object, "id"), extractJsonNumber(object, "accountId"), extractJsonString(object, "accountId")));
+			if (isBlank(id)) {
+				continue;
+			}
+			String brokerName = cleanOrDefault(extractJsonString(object, "name"), "Topstep " + id);
+			discoveredIds.add(id);
+			brokerNamesById.put(id, brokerName);
+			if (isBlank(firstDiscoveredAccountId)) {
+				firstDiscoveredAccountId = id;
+			}
+			if (isBlank(activeAccountId) && id.equals(cleanConnectedAccountId)) {
+				activeAccountId = id;
+			}
+		}
+
+		if (isBlank(activeAccountId) && !isBlank(cleanConnectedAccountId)) {
+			for (Map.Entry<String, String> entry : brokerNamesById.entrySet()) {
+				if (entry.getValue().contains(cleanConnectedAccountId)) {
+					activeAccountId = entry.getKey();
+					break;
+				}
+			}
+		}
+		List<TopstepAccount> savedAccounts = loadTopstepAccounts();
+		if (isBlank(activeAccountId)) {
+			for (TopstepAccount saved : savedAccounts) {
+				if (saved.active && discoveredIds.contains(saved.accountId)) {
+					activeAccountId = saved.accountId;
+					break;
+				}
+			}
+		}
+		if (isBlank(activeAccountId) && !discoveredIds.isEmpty()) {
+			activeAccountId = firstDiscoveredAccountId;
+		}
+
+		String now = Instant.now().toString();
+		Connection conn = null;
+		try {
+			conn = DatabaseManager.getConnection();
+			conn.setAutoCommit(false);
+			for (TopstepAccount saved : savedAccounts) {
+				if (!discoveredIds.contains(saved.accountId)) {
+					try (PreparedStatement delete = conn.prepareStatement("DELETE FROM TopstepAccounts WHERE accountId = ?")) {
+						delete.setString(1, saved.accountId);
+						delete.executeUpdate();
+					}
+				}
+			}
+			String upsertSql = "INSERT INTO TopstepAccounts (accountId, name, active, createdAt, updatedAt) "
+				+ "VALUES (?, ?, ?, ?, ?) "
+				+ "ON CONFLICT(accountId) DO UPDATE SET name = excluded.name, active = excluded.active, updatedAt = excluded.updatedAt";
+			for (Map.Entry<String, String> entry : brokerNamesById.entrySet()) {
+				try (PreparedStatement upsert = conn.prepareStatement(upsertSql)) {
+					upsert.setString(1, entry.getKey());
+					upsert.setString(2, entry.getValue());
+					upsert.setInt(3, entry.getKey().equals(activeAccountId) ? 1 : 0);
+					upsert.setString(4, now);
+					upsert.setString(5, now);
+					upsert.executeUpdate();
+				}
+			}
+			if (!isBlank(activeAccountId)) {
+				try (PreparedStatement updateConnection = conn.prepareStatement("UPDATE FuturesConnections SET accountId = ?, updatedAt = ? WHERE provider = ?")) {
+					updateConnection.setString(1, activeAccountId);
+					updateConnection.setString(2, now);
+					updateConnection.setString(3, TOPSTEPX);
+					updateConnection.executeUpdate();
+				}
+			}
+			conn.commit();
+		} catch (SQLException e) {
+			if (conn != null) {
+				try {
+					conn.rollback();
+				} catch (SQLException rollbackError) {
+					rollbackError.printStackTrace();
+				}
+			}
+			throw e;
+		} finally {
+			if (conn != null) {
+				try {
+					conn.setAutoCommit(true);
+					conn.close();
+				} catch (SQLException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+		return activeAccountId;
 	}
 
 	private static TopstepAccount findTopstepAccount(String accountId) {

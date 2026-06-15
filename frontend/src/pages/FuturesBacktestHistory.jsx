@@ -116,7 +116,7 @@ export default function FuturesBacktestHistory() {
     symbol = "all",
     side = "all",
     strategy = "all",
-    sort = "largestWin",
+    sort = "newest",
     startDate = "",
     endDate = "",
   } = {}) => {
@@ -282,8 +282,9 @@ export default function FuturesBacktestHistory() {
       {selectedRun && previewRun && (
         <>
           <div className="app-panel">
-            <div className="fw-bold app-kicker">Contribution / Monthly Quality Check</div>
-            <AnalyticsSummary summary={selectedSegments.summary} />
+            <div className="fw-bold app-kicker">Profit Metrics</div>
+            <AnalyticsSummary summary={selectedSegments.summary} run={previewRun} />
+            <ProfitVisuals symbols={selectedSymbols} monthly={selectedSegments.monthly} />
             <div className="row g-3 mt-1">
               <SymbolTable symbols={selectedSymbols} />
               <SegmentTable title="Daily" segments={selectedSegments.daily} />
@@ -350,6 +351,7 @@ function toPreviewTrade(trade) {
     ...trade,
     time: trade.openedAt,
     qty: trade.contracts,
+    fees: trade.fees ?? trade.totalFees ?? trade.commission,
     tradeNotes: [
       trade.exitReason,
       trade.tradeNotes,
@@ -428,13 +430,16 @@ function SymbolTable({ symbols }) {
   );
 }
 
-function AnalyticsSummary({ summary }) {
+function AnalyticsSummary({ summary, run }) {
   if (!summary) return null;
   return (
     <div className="futures-analytics-grid mt-3">
       <AnalyticsTile label="Avg Daily P/L" value={formatCurrency(summary.daily?.avgPnl)} accent={summary.daily?.avgPnl} />
       <AnalyticsTile label="Avg Weekly P/L" value={formatCurrency(summary.weekly?.avgPnl)} accent={summary.weekly?.avgPnl} />
       <AnalyticsTile label="Avg Monthly P/L" value={formatCurrency(summary.monthly?.avgPnl)} accent={summary.monthly?.avgPnl} />
+      <AnalyticsTile label="Avg Win" value={formatCurrency(run?.avgWin)} accent={run?.avgWin} />
+      <AnalyticsTile label="Avg Loss" value={formatCurrency(run?.avgLoss)} accent={run?.avgLoss} />
+      <AnalyticsTile label="Payoff" value={formatNumber(run?.payoffRatio, 2)} />
       <AnalyticsTile label="Best Day" value={formatPeriodPnl(summary.daily?.best)} accent={summary.daily?.best?.pnl} />
       <AnalyticsTile label="Worst Day" value={formatPeriodPnl(summary.daily?.worst)} accent={summary.daily?.worst?.pnl} />
       <AnalyticsTile label="Best Week" value={formatPeriodPnl(summary.weekly?.best)} accent={summary.weekly?.best?.pnl} />
@@ -444,6 +449,74 @@ function AnalyticsSummary({ summary }) {
       <AnalyticsTile label="Positive Days" value={formatPercent(summary.daily?.positivePct)} />
       <AnalyticsTile label="Expectancy" value={formatCurrency(summary.expectancy)} accent={summary.expectancy} />
       <AnalyticsTile label="Avg R/R" value={formatNumber(summary.averageRiskReward, 2)} />
+    </div>
+  );
+}
+
+function ProfitVisuals({ symbols, monthly }) {
+  const monthlyRows = Array.isArray(monthly) ? monthly.slice(-12) : [];
+  const symbolRows = Array.isArray(symbols)
+    ? [...symbols].sort((first, second) => Math.abs(Number(second.pnl || 0)) - Math.abs(Number(first.pnl || 0))).slice(0, 8)
+    : [];
+  if (monthlyRows.length === 0 && symbolRows.length === 0) return null;
+
+  return (
+    <div className="row g-3 mt-1 futures-profit-visuals">
+      <BarPanel
+        title="Monthly P/L"
+        rows={monthlyRows.map((segment) => ({
+          key: segment.segment,
+          label: formatSegmentPeriod(segment.segment),
+          value: Number(segment.pnl || 0),
+          meta: `${formatNumber(segment.trades, 0)} trades`,
+        }))}
+      />
+      <BarPanel
+        title="Contract Contribution"
+        rows={symbolRows.map((symbol) => ({
+          key: symbol.symbol,
+          label: symbol.symbol,
+          sublabel: symbol.contractName,
+          value: Number(symbol.pnl || 0),
+          meta: `${formatNumber(symbol.trades, 0)} trades · ${formatPercent(symbol.winRate)}`,
+        }))}
+      />
+    </div>
+  );
+}
+
+function BarPanel({ title, rows }) {
+  const maxAbs = Math.max(1, ...rows.map((row) => Math.abs(row.value)));
+  return (
+    <div className="col-12 col-xl-6">
+      <div className="app-card h-100 futures-profit-chart">
+        <div className="fw-bold app-kicker mb-2">{title}</div>
+        <div className="futures-profit-bar-list">
+          {rows.map((row) => {
+            const percent = Math.max(2, Math.round((Math.abs(row.value) / maxAbs) * 100));
+            const positive = row.value >= 0;
+            return (
+              <div className="futures-profit-bar-row" key={row.key}>
+                <div className="futures-profit-bar-label">
+                  <strong>{row.label}</strong>
+                  {row.sublabel && <span>{row.sublabel}</span>}
+                </div>
+                <div className="futures-profit-bar-track" aria-hidden="true">
+                  <div
+                    className={positive ? "futures-profit-bar positive" : "futures-profit-bar negative"}
+                    style={{ width: `${percent}%` }}
+                  />
+                </div>
+                <div className="futures-profit-bar-value">
+                  <strong className={positive ? "app-pnl-pos" : "app-pnl-neg"}>{formatCurrency(row.value)}</strong>
+                  <span>{row.meta}</span>
+                </div>
+              </div>
+            );
+          })}
+          {rows.length === 0 && <div className="app-empty">No visual data yet.</div>}
+        </div>
+      </div>
     </div>
   );
 }

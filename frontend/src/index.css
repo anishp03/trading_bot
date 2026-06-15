@@ -817,13 +817,13 @@ textarea {
 }
 
 .trades-grid {
-  grid-template-columns: minmax(118px, 0.95fr) minmax(58px, 0.44fr) minmax(72px, 0.58fr) minmax(104px, 0.78fr) minmax(52px, 0.36fr) minmax(44px, 0.32fr) minmax(70px, 0.52fr) minmax(70px, 0.52fr) minmax(82px, 0.58fr) minmax(180px, 1.35fr);
-  min-width: min(1120px, 100%);
+  grid-template-columns: minmax(120px, 1fr) minmax(58px, 0.42fr) minmax(68px, 0.5fr) minmax(132px, 0.95fr) minmax(58px, 0.38fr) minmax(40px, 0.28fr) minmax(76px, 0.54fr) minmax(76px, 0.54fr) minmax(86px, 0.6fr) minmax(58px, 0.34fr);
+  min-width: min(960px, 100%);
 }
 
 .trades-grid.has-action {
-  grid-template-columns: minmax(118px, 0.95fr) minmax(58px, 0.44fr) minmax(72px, 0.58fr) minmax(104px, 0.78fr) minmax(52px, 0.36fr) minmax(44px, 0.32fr) minmax(70px, 0.52fr) minmax(70px, 0.52fr) minmax(82px, 0.58fr) minmax(180px, 1.35fr) minmax(58px, 0.42fr);
-  min-width: min(1180px, 100%);
+  grid-template-columns: minmax(120px, 1fr) minmax(58px, 0.42fr) minmax(68px, 0.5fr) minmax(132px, 0.95fr) minmax(58px, 0.38fr) minmax(40px, 0.28fr) minmax(76px, 0.54fr) minmax(76px, 0.54fr) minmax(86px, 0.6fr) minmax(58px, 0.34fr) minmax(72px, 0.48fr);
+  min-width: min(1040px, 100%);
 }
 
 .app-grid-head.trades-grid,
@@ -839,6 +839,11 @@ textarea {
   min-width: 50px;
   padding: 2px 7px;
   font-size: 0.64rem;
+}
+
+.trades-grid .app-trade-fees,
+.app-grid-head.trades-grid > div:nth-child(10) {
+  text-align: right;
 }
 
 .desktop-trade-table .app-grid-head {
@@ -880,6 +885,74 @@ textarea {
   background: rgba(255, 255, 255, 0.02);
   padding: 0.7rem 0.75rem;
   min-height: 76px;
+}
+
+.futures-profit-visuals {
+  margin-bottom: 0.35rem;
+}
+
+.futures-profit-chart {
+  display: flex;
+  flex-direction: column;
+  min-height: 280px;
+}
+
+.futures-profit-bar-list {
+  display: grid;
+  gap: 0.62rem;
+}
+
+.futures-profit-bar-row {
+  display: grid;
+  grid-template-columns: minmax(86px, 0.58fr) minmax(120px, 1fr) minmax(110px, 0.7fr);
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.futures-profit-bar-label {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.futures-profit-bar-label strong,
+.futures-profit-bar-label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.futures-profit-bar-label span,
+.futures-profit-bar-value span {
+  color: var(--app-muted);
+  font-size: 0.72rem;
+}
+
+.futures-profit-bar-track {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.futures-profit-bar {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.futures-profit-bar.positive {
+  background: linear-gradient(90deg, rgba(74, 222, 128, 0.45), rgba(134, 239, 172, 0.95));
+}
+
+.futures-profit-bar.negative {
+  background: linear-gradient(90deg, rgba(248, 113, 113, 0.45), rgba(252, 165, 165, 0.95));
+}
+
+.futures-profit-bar-value {
+  display: grid;
+  justify-items: end;
+  gap: 1px;
+  min-width: 0;
 }
 
 .strategy-grid {
@@ -5229,13 +5302,13 @@ textarea {
   }
 
   .trades-grid {
-    grid-template-columns: 1.12fr 0.6fr 0.98fr 0.98fr 0.46fr 0.44fr 0.68fr 0.68fr 0.7fr 1.5fr;
-    min-width: 1160px;
+    grid-template-columns: 1.12fr 0.6fr 0.72fr 1.08fr 0.5fr 0.44fr 0.68fr 0.68fr 0.72fr 0.52fr;
+    min-width: 980px;
   }
 
   .trades-grid.has-action {
-    grid-template-columns: 1.12fr 0.6fr 0.98fr 0.98fr 0.46fr 0.44fr 0.68fr 0.68fr 0.7fr 1.5fr 0.66fr;
-    min-width: 1240px;
+    grid-template-columns: 1.12fr 0.6fr 0.72fr 1.08fr 0.5fr 0.44fr 0.68fr 0.68fr 0.72fr 0.52fr 0.66fr;
+    min-width: 1080px;
   }
 
   .futures-analytics-grid {
@@ -5318,6 +5391,11 @@ textarea {
 @media (max-width: 920px) {
   .futures-analytics-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .futures-profit-bar-row {
+    grid-template-columns: minmax(72px, 0.62fr) minmax(90px, 1fr) minmax(96px, 0.76fr);
+    gap: 0.55rem;
   }
 
   .app-shell {

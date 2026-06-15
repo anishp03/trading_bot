@@ -116,6 +116,51 @@ public class FuturesConnectionManagerTest {
 	}
 
 	@Test
+	public void topstepAccountRefreshUsesBrokerNamesAndReplacesStaleDisplayId() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		FuturesConnectionManager.saveConnection(
+			"TOPSTEPX",
+			true,
+			"https://api.topstepx.com/api",
+			"PRACTICE_COMBINE",
+			"test-user",
+			"test-api-key",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"24740658",
+			"",
+			"",
+			"",
+			"",
+			"",
+			""
+		);
+		FuturesConnectionManager.saveTopstepAccount("50k Eval", "24740658", true);
+		FuturesConnectionManager.saveTopstepAccount("150k Practice", "24154520", false);
+		List<String> brokerAccounts = List.of(
+			"{\"id\":24097033,\"name\":\"EXPRESS-V2-CT-DLL-592396-36395858\",\"balance\":-2007.62,\"canTrade\":true}",
+			"{\"id\":24175826,\"name\":\"50KTC-V2-DLL-592396-24740658\",\"balance\":50000.0,\"canTrade\":true}",
+			"{\"id\":24205194,\"name\":\"PRAC-V2-592396-62027599\",\"balance\":150000.0,\"canTrade\":true}"
+		);
+
+		String activeAccountId = FuturesConnectionManager.refreshSavedTopstepAccounts(brokerAccounts, "24740658");
+		String accounts = FuturesConnectionManager.getTopstepAccountsJson();
+		String connections = FuturesConnectionManager.getConnectionsJson();
+
+		assertEquals("24175826", activeAccountId);
+		assertTrue(accounts.contains("\"name\":\"50KTC-V2-DLL-592396-24740658\""), accounts);
+		assertTrue(accounts.contains("\"name\":\"EXPRESS-V2-CT-DLL-592396-36395858\""), accounts);
+		assertTrue(accounts.contains("\"name\":\"PRAC-V2-592396-62027599\""), accounts);
+		assertTrue(accounts.contains("\"accountId\":\"24175826\""), accounts);
+		assertFalse(accounts.contains("\"accountId\":\"24740658\""), accounts);
+		assertFalse(accounts.contains("\"accountId\":\"24154520\""), accounts);
+		assertTrue(connections.contains("\"accountId\":\"24175826\""), connections);
+	}
+
+	@Test
 	public void deletingActiveTopstepAccountClearsConnectedAccountId() {
 		TestDatabaseSupport.useTempDatabase(tempDir);
 		FuturesConnectionManager.saveConnection(

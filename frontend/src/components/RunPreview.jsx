@@ -16,7 +16,7 @@ export default function RunPreview({
   const [symbolFilter, setSymbolFilter] = useState("all");
   const [sideFilter, setSideFilter] = useState("all");
   const [strategyFilter, setStrategyFilter] = useState("all");
-  const [tradeSort, setTradeSort] = useState("largestWin");
+  const [tradeSort, setTradeSort] = useState("newest");
   const [startDateFilter, setStartDateFilter] = useState("");
   const [endDateFilter, setEndDateFilter] = useState("");
   const [tradePage, setTradePage] = useState(1);
@@ -44,7 +44,7 @@ export default function RunPreview({
     setSymbolFilter("all");
     setSideFilter("all");
     setStrategyFilter("all");
-    setTradeSort("largestWin");
+    setTradeSort("newest");
     setStartDateFilter("");
     setEndDateFilter("");
     setTradePage(1);
@@ -139,7 +139,12 @@ export default function RunPreview({
       const secondPnl = Number(secondTrade?.pnl ?? 0);
 
       if (tradeSort === "largestLoss") return firstPnl - secondPnl;
-      return secondPnl - firstPnl;
+      if (tradeSort === "largestWin") return secondPnl - firstPnl;
+
+      const firstTime = parseTradeTimestamp(firstTrade?.time || firstTrade?.openedAt || firstTrade?.closedAt) || 0;
+      const secondTime = parseTradeTimestamp(secondTrade?.time || secondTrade?.openedAt || secondTrade?.closedAt) || 0;
+      if (tradeSort === "oldest") return firstTime - secondTime;
+      return secondTime - firstTime;
     });
 
     return nextTrades;
@@ -166,7 +171,7 @@ export default function RunPreview({
       </div>
 
       <div className="app-subpanel mt-3">
-        <div className="fw-bold app-kicker">Profit & Metrics</div>
+        <div className="fw-bold app-kicker">Run Summary</div>
 
         <div className="row g-2 mt-1">
           {showCapitalCards && (
@@ -187,14 +192,6 @@ export default function RunPreview({
           <MetricCard title="Trades" value={run?.trades ?? "--"} />
           <MetricCard title="Profit Factor" value={run?.profitFactor ?? "--"} />
           <MetricCard title="Drawdown" value={run?.drawdown == null ? "--" : `${formatNumber(run.drawdown)}%`} />
-          {run?.expectancy != null && <MetricCard title="Expectancy" value={formatSignedMoney(run.expectancy)} accent={run.expectancy} />}
-          {run?.averageRiskReward != null && <MetricCard title="Avg R/R" value={formatNumber(run.averageRiskReward)} />}
-          {run?.avgWin != null && <MetricCard title="Avg Win" value={formatSignedMoney(run.avgWin)} accent={run.avgWin} />}
-          {run?.avgLoss != null && <MetricCard title="Avg Loss" value={formatSignedMoney(run.avgLoss)} accent={run.avgLoss} />}
-          {run?.payoffRatio != null && <MetricCard title="Payoff" value={formatNumber(run.payoffRatio)} />}
-          {run?.avgDailyPnl != null && <MetricCard title="Avg Day" value={formatSignedMoney(run.avgDailyPnl)} accent={run.avgDailyPnl} />}
-          {run?.avgWeeklyPnl != null && <MetricCard title="Avg Week" value={formatSignedMoney(run.avgWeeklyPnl)} accent={run.avgWeeklyPnl} />}
-          {run?.avgMonthlyPnl != null && <MetricCard title="Avg Month" value={formatSignedMoney(run.avgMonthlyPnl)} accent={run.avgMonthlyPnl} />}
         </div>
       </div>
 
@@ -202,7 +199,7 @@ export default function RunPreview({
         <div className="app-subpanel mt-3">
           <div className="d-flex justify-content-between align-items-start gap-2 flex-wrap">
             <div>
-              <div className="fw-bold app-kicker">Trades / Logs</div>
+              <div className="fw-bold app-kicker">All Trades</div>
               <div className="app-muted app-kicker">
                 {Array.isArray(trades)
                   ? serverTradeMode ? pagedTradeLogSummary({
@@ -279,6 +276,8 @@ export default function RunPreview({
                 <label className="d-grid gap-1">
                   <span className="app-label">Sort</span>
                   <select className="form-select app-input" value={tradeSort} onChange={(event) => setTradeSort(event.target.value)}>
+                    <option value="newest">Most Recent</option>
+                    <option value="oldest">Earliest First</option>
                     <option value="largestWin">Largest Win</option>
                     <option value="largestLoss">Largest Loss</option>
                   </select>
@@ -307,12 +306,14 @@ export default function RunPreview({
                 </label>
               </div>
 
-              <div className="row g-2 mt-1">
-                <MetricCard title="Filtered P/L" value={formatSignedMoney(filteredPnl)} accent={filteredPnl} />
-                <MetricCard title="Filtered Trades" value={filteredCount} />
-                <MetricCard title="Filtered Win Rate" value={`${formatNumber(filteredWinRate)}%`} />
-                <MetricCard title="Filtered Total Return" value={`${formatNumber(filteredTotalReturn)}%`} accent={filteredTotalReturn} />
-              </div>
+              {activeFilterCount > 0 && (
+                <div className="row g-2 mt-1">
+                  <MetricCard title="Filtered P/L" value={formatSignedMoney(filteredPnl)} accent={filteredPnl} />
+                  <MetricCard title="Filtered Trades" value={filteredCount} />
+                  <MetricCard title="Filtered Win Rate" value={`${formatNumber(filteredWinRate)}%`} />
+                  <MetricCard title="Filtered Total Return" value={`${formatNumber(filteredTotalReturn)}%`} accent={filteredTotalReturn} />
+                </div>
+              )}
               {serverTradeMode && (
                 <div className="d-flex align-items-center justify-content-between gap-2 mt-3 flex-wrap">
                   <button type="button" className="app-btn px-3" disabled={boundedTradePage <= 1 || isLoadingTrades} onClick={() => setTradePage((current) => Math.max(1, current - 1))}>
@@ -380,6 +381,10 @@ export default function RunPreview({
                         <b>Exit</b>
                         <em>{trade.exit == null ? "--" : formatMoney(trade.exit)}</em>
                       </span>
+                      <span>
+                        <b>Fees</b>
+                        <em>{formatTradeFees(trade)}</em>
+                      </span>
                     </div>
 
                     <details className="mobile-trade-details">
@@ -409,14 +414,14 @@ export default function RunPreview({
             <div className={onOpenTrade ? "app-grid-head trades-grid has-action" : "app-grid-head trades-grid"}>
               <div>Time</div>
               <div>Duration</div>
-              <div>Contract</div>
+              <div>Symbol</div>
               <div>Strategy</div>
               <div>Side</div>
               <div>Qty</div>
               <div>Entry</div>
               <div>Exit</div>
-              <div>P/L</div>
-              <div>Trade Notes</div>
+              <div>PnL</div>
+              <div>Fees</div>
               {onOpenTrade && <div>Action</div>}
             </div>
 
@@ -443,8 +448,8 @@ export default function RunPreview({
                     </div>
                     <div>{formatTradeDuration(trade)}</div>
                     <div>
-                      <strong>{trade.contractName || trade.symbol || "--"}</strong>
-                      {trade.contractName && trade.symbol && <span className="app-muted d-block">{trade.symbol}</span>}
+                      <strong>{trade.symbol || "--"}</strong>
+                      {trade.contractName && <span className="app-muted d-block">{trade.contractName}</span>}
                     </div>
                     <div>{trade.strategyName || trade.strategyCode || "--"}</div>
                     <div>
@@ -458,7 +463,7 @@ export default function RunPreview({
                     <div className={trade?.pnl == null ? "app-muted" : trade?.pnl >= 0 ? "app-pnl-pos" : "app-pnl-neg"}>
                       {trade?.pnl == null ? "--" : formatSignedMoney(trade.pnl)}
                     </div>
-                    <div className="app-trade-notes">{trade?.tradeNotes?.trim() ? trade.tradeNotes : "--"}</div>
+                    <div className="app-trade-fees">{formatTradeFees(trade)}</div>
                     {onOpenTrade && (
                       <div>
                         <button type="button" className="app-btn app-btn-small px-3" onClick={(event) => {
@@ -628,6 +633,14 @@ function formatMoney(value) {
 function formatSignedMoney(value) {
   const amount = Number(value || 0);
   return `${amount > 0 ? "+" : ""}${formatMoney(amount)}`;
+}
+
+function formatTradeFees(trade) {
+  const raw = trade?.fees ?? trade?.totalFees ?? trade?.commission;
+  if (raw == null || raw === "") return "--";
+  const amount = Number(raw);
+  if (!Number.isFinite(amount)) return "--";
+  return formatMoney(Math.abs(amount));
 }
 
 function pad2(value) {

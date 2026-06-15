@@ -63,6 +63,14 @@ final class FuturesConnectionRoutes {
             ctx.contentType("application/json").result(FuturesConnectionManager.getTopstepAccountsJson());
         });
 
+        app.post("/api/futures/topstepx/accounts/refresh", ctx -> {
+            String result = FuturesConnectionManager.refreshTopstepAccounts();
+            if (result.contains("\"success\":false")) {
+                ctx.status(400);
+            }
+            ctx.contentType("application/json").result(result);
+        });
+
         app.post("/api/futures/topstepx/accounts", ctx -> {
             String name = ApiRequestUtils.requestParam(ctx, "name");
             String accountId = ApiRequestUtils.requestParam(ctx, "accountId");
