@@ -172,7 +172,7 @@ final class FuturesLiveRoutes {
             int maxOpenPositions = ApiRequestUtils.parseIntOrDefault(ctx.queryParam("maxOpenPositions"), 1);
             int maxAggregateContracts = ApiRequestUtils.parseIntOrDefault(ctx.queryParam("maxAggregateContracts"), maxContracts);
             double maxAggregateMiniUnits = ApiRequestUtils.parseDoubleOrDefault(ctx.queryParam("maxAggregateMiniUnits"), 5.0);
-            String riskSizingMode = ApiRequestUtils.valueOrDefault(ctx.queryParam("riskSizingMode"), "STATIC_WITHDRAW_DAILY");
+            String riskSizingMode = ApiRequestUtils.valueOrDefault(ctx.queryParam("riskSizingMode"), "DYNAMIC_COMPOUND_MLL");
             boolean dtmEnabled = ApiRequestUtils.parseBooleanOrDefault(ctx.queryParam("dtmEnabled"), true);
 
             ctx.contentType("application/json").result(FuturesManager.startLive(
