@@ -43,9 +43,12 @@ final class BackendUpdateService {
             logDir.mkdirs();
         }
 
-        String command = "nohup /bin/bash " + shellQuote(script.getAbsolutePath())
+        String runUpdate = "exec /bin/bash " + shellQuote(script.getAbsolutePath())
             + " --from-ui >> " + shellQuote(logFile.getAbsolutePath())
-            + " 2>&1 < /dev/null &";
+            + " 2>&1 < /dev/null";
+        String command = "if command -v launchctl >/dev/null 2>&1; then "
+            + "launchctl submit -l com.tradingbot.backend.update -- /bin/bash -lc " + shellQuote(runUpdate)
+            + "; else nohup /bin/bash -lc " + shellQuote(runUpdate) + " & fi";
 
         try {
             new ProcessBuilder("/bin/bash", "-lc", command).start();
