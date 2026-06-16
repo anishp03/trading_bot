@@ -46,8 +46,9 @@ final class BackendUpdateService {
         String runUpdate = "exec /bin/bash " + shellQuote(script.getAbsolutePath())
             + " --from-ui >> " + shellQuote(logFile.getAbsolutePath())
             + " 2>&1 < /dev/null";
-        String command = "if command -v launchctl >/dev/null 2>&1; then "
-            + "launchctl submit -l com.tradingbot.backend.update -- /bin/bash -lc " + shellQuote(runUpdate)
+        String command = "if command -v screen >/dev/null 2>&1; then "
+            + "screen -S tradingbot-backend-update -X quit >/dev/null 2>&1 || true; "
+            + "screen -dmS tradingbot-backend-update /bin/bash -lc " + shellQuote(runUpdate)
             + "; else nohup /bin/bash -lc " + shellQuote(runUpdate) + " & fi";
 
         try {
