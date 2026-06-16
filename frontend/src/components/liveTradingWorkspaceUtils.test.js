@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  chartSourceStatus,
   chartSeriesSyncPlan,
   formatChartTickMark,
   formatChartTimeLabel,
@@ -18,6 +19,26 @@ test("rangeBarsForTimeframe scales visible ranges by candle timeframe", () => {
   assert.equal(rangeBarsForTimeframe("1D", "30m"), 13);
   assert.equal(rangeBarsForTimeframe("1D", "1h"), 7);
   assert.equal(rangeBarsForTimeframe("5D", "5m"), 390);
+});
+
+test("chartSourceStatus reports live-only warmup gaps as source pending", () => {
+  assert.deepEqual(chartSourceStatus("PROJECTX_SIGNALR_LIVE_ONLY", 0), {
+    label: "Source pending",
+    detail: "Chart source pending",
+    tone: "is-waiting",
+  });
+
+  assert.deepEqual(chartSourceStatus("PROJECTX_SIGNALR_WAITING", 0), {
+    label: "Waiting",
+    detail: "Waiting for live candles",
+    tone: "is-waiting",
+  });
+
+  assert.deepEqual(chartSourceStatus("LIVE_CAPTURED_BARS", 12), {
+    label: "Captured bars",
+    detail: "12 captured candles",
+    tone: "is-live",
+  });
 });
 
 test("shouldApplyProgrammaticRange only moves the viewport for intentional chart/range changes", () => {

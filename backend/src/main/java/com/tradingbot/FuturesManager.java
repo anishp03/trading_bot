@@ -11211,7 +11211,7 @@ public class FuturesManager {
 			: warmupFromBars(bars, "LOCAL_INPUT_BARS");
 		List<RealtimeCandle> warmupCandles = realtimeCandlesFromBars(warmup.bars, warmup.dataSource);
 		List<Bar> capturedBars = bars == null || bars.isEmpty()
-			? liveCapturedBarsForSymbol(symbol, timeframe, limit)
+			? liveCapturedBarsForMonitorSymbol(symbol, timeframe, limit)
 			: new ArrayList<Bar>();
 		List<RealtimeCandle> capturedCandles = realtimeCandlesFromBars(capturedBars, "LIVE_CAPTURED_BARS");
 		List<RealtimeCandle> realtimeCandles = new ArrayList<RealtimeCandle>();
@@ -18307,17 +18307,28 @@ public class FuturesManager {
 	}
 
 	private static List<Bar> liveCapturedBarsForSymbol(String symbol, String timeframe, int limit) {
+		return liveCapturedBarsForSymbol(symbol, timeframe, limit, true, true);
+	}
+
+	private static List<Bar> liveCapturedBarsForMonitorSymbol(String symbol, String timeframe, int limit) {
+		return liveCapturedBarsForSymbol(symbol, timeframe, limit, false, false);
+	}
+
+	private static List<Bar> liveCapturedBarsForSymbol(String symbol, String timeframe, int limit, boolean rthOnly, boolean activeMarketDateOnly) {
 		List<Bar> bars = new ArrayList<Bar>();
 		String normalizedTimeframe = normalizeLiveMonitorTimeframe(timeframe);
 		int minutesPerCandle = liveMonitorTimeframeMinutes(normalizedTimeframe);
 		int sourceLimit = Math.min(5000, Math.max(Math.max(1, limit), (Math.max(1, limit) * Math.max(1, minutesPerCandle)) + 120));
 		InstrumentSpec spec = instrumentFor(symbol);
-		LocalDate activeMarketDate = liveMarketFeedActive() ? currentLiveMarketDataDate() : null;
+		LocalDate activeMarketDate = activeMarketDateOnly && liveMarketFeedActive() ? currentLiveMarketDataDate() : null;
 		try {
 			List<FuturesConnectionManager.InternalBar> captured = FuturesMarketDataStore.readRecentCapturedBars(spec.symbol, sourceLimit);
 			for (int index = 0; index < captured.size(); index++) {
 				Bar bar = barFromInternalCapturedBar(captured.get(index));
-				if (bar == null || bar.marketTime == null || bar.marketTime.isBefore(RTH_START) || !bar.marketTime.isBefore(RTH_END)) {
+				if (bar == null || bar.marketTime == null) {
+					continue;
+				}
+				if (rthOnly && (bar.marketTime.isBefore(RTH_START) || !bar.marketTime.isBefore(RTH_END))) {
 					continue;
 				}
 				if (activeMarketDate != null && !activeMarketDate.equals(bar.marketDate)) {

@@ -10,6 +10,7 @@ import {
 } from "lightweight-charts";
 import { EASTERN_TIME_LABEL, formatEstTime } from "../utils/time.js";
 import {
+  chartSourceStatus,
   chartSeriesSyncPlan,
   formatChartTickMark,
   formatChartTimeLabel,
@@ -626,37 +627,6 @@ function feedHealthLabel(feedStaleSeconds, lastRealtimeEventAt, serverTime) {
   return `Feed syncing · Last ${formatEstTime(lastRealtimeEventAt || serverTime)}`;
 }
 
-function chartSourceStatus(dataSource, capturedBars) {
-  const source = String(dataSource || "").trim().toUpperCase();
-  const capturedCount = Number(capturedBars || 0);
-  if (source.includes("LIVE_CAPTURED_BARS") || capturedCount > 0) {
-    return {
-      label: "Captured bars",
-      detail: capturedCount > 0 ? `${formatInteger(capturedCount)} captured candles` : "Captured minute bars",
-      tone: "is-live",
-    };
-  }
-  if (source.includes("SIGNALR")) {
-    return {
-      label: source.includes("WAITING") ? "Waiting" : "Live stream",
-      detail: source.includes("WAITING") ? "Waiting for live candles" : "Realtime aggregate fallback",
-      tone: source.includes("WAITING") ? "is-waiting" : "is-fallback",
-    };
-  }
-  if (source.includes("WARMUP") || source.includes("HISTORY")) {
-    return {
-      label: "Warmup",
-      detail: "History warmup candles",
-      tone: "is-waiting",
-    };
-  }
-  return {
-    label: "Source pending",
-    detail: "Chart source pending",
-    tone: "is-waiting",
-  };
-}
-
 function timeframeLabel(value) {
   if (value === "5m") return "5 minute";
   if (value === "30m") return "30 minute";
@@ -679,11 +649,6 @@ function formatCurrency(value) {
   const numeric = Number(value || 0);
   const sign = numeric > 0 ? "+" : numeric < 0 ? "-" : "";
   return `${sign}$${Math.abs(numeric).toFixed(2)}`;
-}
-
-function formatInteger(value) {
-  const numeric = Number(value || 0);
-  return Number.isFinite(numeric) ? Math.round(numeric).toLocaleString("en-US") : "0";
 }
 
 function formatDuration(seconds) {

@@ -126,6 +126,44 @@ export function liveWorkspaceRenderSignature(props) {
   ].join("|");
 }
 
+export function chartSourceStatus(dataSource, capturedBars) {
+  const source = String(dataSource || "").trim().toUpperCase();
+  const capturedCount = Number(capturedBars || 0);
+  if (source.includes("LIVE_CAPTURED_BARS") || capturedCount > 0) {
+    return {
+      label: "Captured bars",
+      detail: capturedCount > 0 ? `${formatInteger(capturedCount)} captured candles` : "Captured minute bars",
+      tone: "is-live",
+    };
+  }
+  if (source.includes("LIVE_ONLY")) {
+    return {
+      label: "Source pending",
+      detail: "Chart source pending",
+      tone: "is-waiting",
+    };
+  }
+  if (source.includes("SIGNALR")) {
+    return {
+      label: source.includes("WAITING") ? "Waiting" : "Live stream",
+      detail: source.includes("WAITING") ? "Waiting for live candles" : "Realtime aggregate fallback",
+      tone: source.includes("WAITING") ? "is-waiting" : "is-fallback",
+    };
+  }
+  if (source.includes("WARMUP") || source.includes("HISTORY")) {
+    return {
+      label: "Warmup",
+      detail: "History warmup candles",
+      tone: "is-waiting",
+    };
+  }
+  return {
+    label: "Source pending",
+    detail: "Chart source pending",
+    tone: "is-waiting",
+  };
+}
+
 export function chartSeriesSyncPlan({
   chartKey,
   previousChartKey,
@@ -233,6 +271,10 @@ function chartTimeToDate(time) {
     return new Date(time.year, time.month - 1, time.day);
   }
   return null;
+}
+
+function formatInteger(value) {
+  return Number(value || 0).toLocaleString("en-US", { maximumFractionDigits: 0 });
 }
 
 function symbolsSignature(symbols) {
