@@ -16616,20 +16616,27 @@ public class FuturesManager {
 					extendRunner ? runnerStop : (state.lastStopPrice > 0.0 ? state.lastStopPrice : position.activeStopPrice),
 					extendRunner ? runnerTarget : position.targetPrice,
 					remaining
-				);
-				decision.detailsJson = mergeSimpleJson(decision.detailsJson, "\"brokerModify\":" + jsonObjectOrDefault(modifyJson, "{}"));
-				if (extendRunner && jsonBoolean(modifyJson, "success")) {
-					position.activeStopPrice = runnerStop;
-					position.targetPrice = runnerTarget;
-					state.lastStopPrice = runnerStop;
-					state.lastTargetPrice = runnerTarget;
-					state.targetExtended = true;
+					);
+					decision.detailsJson = mergeSimpleJson(decision.detailsJson, "\"brokerModify\":" + jsonObjectOrDefault(modifyJson, "{}"));
+					boolean brokerModifyConfirmed = jsonBoolean(modifyJson, "success");
+					if (extendRunner && brokerModifyConfirmed) {
+						position.activeStopPrice = runnerStop;
+						position.targetPrice = runnerTarget;
+						state.lastStopPrice = runnerStop;
+						state.lastTargetPrice = runnerTarget;
+						state.targetExtended = true;
 					state.runnerDecision = experimentalHalfRunner
 						? "Runner target extended with profit lock immediately after the single half-partial."
-						: "Runner target extended with profit lock after partial because continuation evidence stayed aligned.";
-					position.dtmRunnerDecision = state.runnerDecision;
-				}
-			} else {
+							: "Runner target extended with profit lock after partial because continuation evidence stayed aligned.";
+						position.dtmRunnerDecision = state.runnerDecision;
+					} else if (isTopstepxLiveSession(session) && !brokerModifyConfirmed) {
+						state.brokerManagementBlocked = true;
+						decision.actionCode = "DTM_PARTIAL_PROTECTION_BLOCKED";
+						decision.normalizedAction = "PARTIAL_CONFIRMED_PROTECTION_BLOCKED";
+						state.runnerDecision = "Partial close was confirmed, but TopstepX did not confirm the runner protective-order resize/extension.";
+						position.dtmRunnerDecision = state.runnerDecision;
+					}
+				} else {
 				state.partialCloseBlocked = true;
 				if (isTopstepxLiveSession(session)) {
 					state.brokerManagementBlocked = true;
@@ -17308,6 +17315,7 @@ public class FuturesManager {
 		if ("DTM_PARTIAL_TARGET".equals(code)) return "DTM partially sold the position.";
 		if ("DTM_PARTIAL_HALF_RUNNER_EXTENDED".equals(code)) return "DTM partially sold half and extended the runner.";
 		if ("DTM_PARTIAL_BLOCKED".equals(code)) return "DTM partial close was blocked.";
+		if ("DTM_PARTIAL_PROTECTION_BLOCKED".equals(code)) return "DTM partial protection update was blocked.";
 		if ("DTM_ACTION_BLOCKED".equals(code)) return "DTM broker action was blocked.";
 		if ("DTM_EXTEND_TARGET_CONTINUATION".equals(code)) return "DTM extended the runner target.";
 		if ("DTM_EXTEND_ONE_CONTRACT_RUNNER".equals(code)) return "DTM extended a one-contract runner.";

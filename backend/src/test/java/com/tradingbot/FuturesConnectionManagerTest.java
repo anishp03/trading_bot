@@ -4,10 +4,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.net.InetSocketAddress;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -247,6 +254,120 @@ public class FuturesConnectionManagerTest {
 	}
 
 	@Test
+	public void topstepxPartialCloseUsesRefreshedTokenAndConfirmsRunnerSize() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		try (FakeProjectXServer server = new FakeProjectXServer()) {
+			saveTopstepConnection(server.baseUrl());
+			server.on("/Auth/loginKey", exchange -> json(exchange, 200, "{\"success\":true,\"token\":\"stale-token\"}"));
+			server.on("/Auth/validate", exchange -> json(exchange, 200, "{\"success\":true,\"newToken\":\"fresh-token\"}"));
+			server.on("/Account/search", exchange -> requireFresh(exchange, "{\"success\":true,\"accounts\":[{\"id\":24175826,\"canTrade\":true}]}"));
+			server.on("/Contract/search", exchange -> requireFresh(exchange, "{\"success\":true,\"contracts\":[{\"id\":\"CON.F.US.MNQ.M26\",\"name\":\"MNQM6\",\"symbolId\":\"F.US.MNQ\",\"activeContract\":true,\"tickSize\":0.25,\"tickValue\":0.5}]}"));
+			AtomicInteger positionSearches = new AtomicInteger();
+			server.on("/Position/searchOpen", exchange -> {
+				requireFresh(exchange, positionSearches.incrementAndGet() == 1
+					? "{\"success\":true,\"positions\":[{\"contractId\":\"CON.F.US.MNQ.M26\",\"size\":6,\"symbol\":\"MNQ\"}]}"
+					: "{\"success\":true,\"positions\":[{\"contractId\":\"CON.F.US.MNQ.M26\",\"size\":3,\"symbol\":\"MNQ\"}]}");
+			});
+			server.on("/Position/partialCloseContract", exchange -> requireFresh(exchange, "{\"success\":true,\"orderId\":7001}"));
+
+			String result = FuturesConnectionManager.partialCloseTopstepxPracticeSymbolPosition("24175826", "MNQ", 3);
+
+			assertTrue(result.contains("\"success\":true"), result);
+			assertTrue(result.contains("\"brokerVerified\":true"), result);
+			assertTrue(result.contains("\"remainingSize\":3"), result);
+			assertEquals("Bearer fresh-token", server.lastAuthorization("/Contract/search"));
+			assertEquals(2, positionSearches.get());
+		}
+	}
+
+	@Test
+	public void topstepxSubmitFailsWhenBrokerStateDoesNotConfirmOrderOrPosition() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		try (FakeProjectXServer server = new FakeProjectXServer()) {
+			saveTopstepConnection(server.baseUrl());
+			server.on("/Auth/loginKey", exchange -> json(exchange, 200, "{\"success\":true,\"token\":\"fresh-token\"}"));
+			server.on("/Auth/validate", exchange -> json(exchange, 200, "{\"success\":true,\"newToken\":\"fresh-token\"}"));
+			server.on("/Account/search", exchange -> requireFresh(exchange, "{\"success\":true,\"accounts\":[{\"id\":24175826,\"canTrade\":true}]}"));
+			server.on("/Contract/search", exchange -> requireFresh(exchange, "{\"success\":true,\"contracts\":[{\"id\":\"CON.F.US.MNQ.M26\",\"name\":\"MNQM6\",\"symbolId\":\"F.US.MNQ\",\"activeContract\":true,\"tickSize\":0.25,\"tickValue\":0.5}]}"));
+			server.on("/Order/place", exchange -> requireFresh(exchange, "{\"success\":true,\"orderId\":8001}"));
+			server.on("/Position/searchOpen", exchange -> requireFresh(exchange, "{\"success\":true,\"positions\":[]}"));
+			server.on("/Order/searchOpen", exchange -> requireFresh(exchange, "{\"success\":true,\"orders\":[]}"));
+
+			String result = FuturesConnectionManager.submitTopstepxPracticeOrder("24175826", "MNQ", "SHORT", 2, 30724.50, 30752.75, 30694.75, "live-MNQ-OMOM-test");
+
+			assertTrue(result.contains("\"success\":false"), result);
+			assertTrue(result.contains("\"brokerVerified\":false"), result);
+			assertTrue(result.contains("not confirmed"), result);
+		}
+	}
+
+	@Test
+	public void topstepxProtectiveModifyRetriesTransientBrokerFailureAndVerifiesOrders() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		try (FakeProjectXServer server = new FakeProjectXServer()) {
+			saveTopstepConnection(server.baseUrl());
+			server.on("/Auth/loginKey", exchange -> json(exchange, 200, "{\"success\":true,\"token\":\"fresh-token\"}"));
+			server.on("/Auth/validate", exchange -> json(exchange, 200, "{\"success\":true,\"newToken\":\"fresh-token\"}"));
+			server.on("/Account/search", exchange -> requireFresh(exchange, "{\"success\":true,\"accounts\":[{\"id\":24175826,\"canTrade\":true}]}"));
+			server.on("/Contract/search", exchange -> requireFresh(exchange, "{\"success\":true,\"contracts\":[{\"id\":\"CON.F.US.MNQ.M26\",\"name\":\"MNQM6\",\"symbolId\":\"F.US.MNQ\",\"activeContract\":true,\"tickSize\":0.25,\"tickValue\":0.5}]}"));
+			AtomicInteger orderSearches = new AtomicInteger();
+			server.on("/Order/searchOpen", exchange -> {
+				int call = orderSearches.incrementAndGet();
+				String orders = call == 1
+					? "[{\"id\":9101,\"contractId\":\"CON.F.US.MNQ.M26\",\"type\":4,\"stopPrice\":30752.75,\"size\":6},{\"id\":9102,\"contractId\":\"CON.F.US.MNQ.M26\",\"type\":1,\"limitPrice\":30694.75,\"size\":6}]"
+					: "[{\"id\":9101,\"contractId\":\"CON.F.US.MNQ.M26\",\"type\":4,\"stopPrice\":30720.25,\"size\":3},{\"id\":9102,\"contractId\":\"CON.F.US.MNQ.M26\",\"type\":1,\"limitPrice\":30640.25,\"size\":3}]";
+				requireFresh(exchange, "{\"success\":true,\"orders\":" + orders + "}");
+			});
+			AtomicInteger modifyCalls = new AtomicInteger();
+			server.on("/Order/modify", exchange -> {
+				if (modifyCalls.incrementAndGet() == 1) {
+					json(exchange, 429, "");
+					return;
+				}
+				requireFresh(exchange, "{\"success\":true}");
+			});
+
+			String result = FuturesConnectionManager.modifyTopstepxPracticeProtectiveOrders("24175826", "MNQ", 30720.25, 30640.25, 3);
+
+			assertTrue(result.contains("\"success\":true"), result);
+			assertTrue(result.contains("\"brokerVerified\":true"), result);
+			assertTrue(result.contains("\"verifiedOrders\":2"), result);
+			assertTrue(modifyCalls.get() >= 3, result);
+			assertEquals(2, orderSearches.get());
+		}
+	}
+
+	@Test
+	public void topstepxCloseRetriesTransientBrokerFailureAndCancelsProtection() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		try (FakeProjectXServer server = new FakeProjectXServer()) {
+			saveTopstepConnection(server.baseUrl());
+			server.on("/Auth/loginKey", exchange -> json(exchange, 200, "{\"success\":true,\"token\":\"fresh-token\"}"));
+			server.on("/Auth/validate", exchange -> json(exchange, 200, "{\"success\":true,\"newToken\":\"fresh-token\"}"));
+			server.on("/Account/search", exchange -> requireFresh(exchange, "{\"success\":true,\"accounts\":[{\"id\":24175826,\"canTrade\":true}]}"));
+			server.on("/Contract/search", exchange -> requireFresh(exchange, "{\"success\":true,\"contracts\":[{\"id\":\"CON.F.US.MNQ.M26\",\"name\":\"MNQM6\",\"symbolId\":\"F.US.MNQ\",\"activeContract\":true,\"tickSize\":0.25,\"tickValue\":0.5}]}"));
+			server.on("/Position/searchOpen", exchange -> requireFresh(exchange, "{\"success\":true,\"positions\":[{\"contractId\":\"CON.F.US.MNQ.M26\",\"size\":2,\"symbol\":\"MNQ\"}]}"));
+			AtomicInteger closeCalls = new AtomicInteger();
+			server.on("/Position/closeContract", exchange -> {
+				if (closeCalls.incrementAndGet() == 1) {
+					json(exchange, 429, "");
+					return;
+				}
+				requireFresh(exchange, "{\"success\":true}");
+			});
+			server.on("/Order/searchOpen", exchange -> requireFresh(exchange, "{\"success\":true,\"orders\":[{\"id\":9201,\"contractId\":\"CON.F.US.MNQ.M26\",\"type\":4,\"stopPrice\":30752.75,\"size\":2},{\"id\":9202,\"contractId\":\"CON.F.US.MNQ.M26\",\"type\":1,\"limitPrice\":30694.75,\"size\":2}]}"));
+			server.on("/Order/cancel", exchange -> requireFresh(exchange, "{\"success\":true}"));
+
+			String result = FuturesConnectionManager.closeTopstepxPracticeSymbolPosition("24175826", "MNQ");
+
+			assertTrue(result.contains("\"success\":true"), result);
+			assertTrue(result.contains("\"positionsClosed\":1"), result);
+			assertTrue(result.contains("\"ordersCanceled\":2"), result);
+			assertEquals(2, closeCalls.get());
+		}
+	}
+
+	@Test
 	public void rebuildDerivedDataCreatesCandleConsistentSyntheticLevel2() throws Exception {
 		Path futuresDir = tempDir.resolve("futures");
 		Path oneMinuteDir = futuresDir.resolve("1min");
@@ -271,5 +392,101 @@ public class FuturesConnectionManagerTest {
 		assertTrue(generated.contains("2026-05-01T13:30:00Z"), generated);
 		assertTrue(generated.contains("19003.00000000,1000.00000000"), generated);
 		assertEquals(3, generated.split("\\R").length);
+	}
+
+	private static void saveTopstepConnection(String baseUrl) {
+		FuturesConnectionManager.saveConnection(
+			"TOPSTEPX",
+			true,
+			baseUrl,
+			"PRACTICE_COMBINE",
+			"test-user",
+			"test-api-key",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"24175826",
+			"",
+			"",
+			"",
+			"",
+			"",
+			""
+		);
+	}
+
+	private static void requireFresh(HttpExchange exchange, String responseJson) throws Exception {
+		String authorization = exchange.getRequestHeaders().getFirst("Authorization");
+		if (!"Bearer fresh-token".equals(authorization)) {
+			json(exchange, 401, "{\"success\":false,\"errorMessage\":\"stale token\"}");
+			return;
+		}
+		json(exchange, 200, responseJson);
+	}
+
+	private static void json(HttpExchange exchange, int status, String responseJson) throws Exception {
+		byte[] bytes = responseJson.getBytes(StandardCharsets.UTF_8);
+		exchange.getResponseHeaders().set("Content-Type", "application/json");
+		exchange.sendResponseHeaders(status, bytes.length);
+		exchange.getResponseBody().write(bytes);
+		exchange.close();
+	}
+
+	private interface ExchangeHandler {
+		void handle(HttpExchange exchange) throws Exception;
+	}
+
+	private static class FakeProjectXServer implements AutoCloseable {
+		private final HttpServer server;
+		private final Map<String, ExchangeHandler> handlers = new HashMap<String, ExchangeHandler>();
+		private final Map<String, List<String>> authorizationsByPath = new HashMap<String, List<String>>();
+
+		private FakeProjectXServer() throws Exception {
+			server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+			server.createContext("/", this::handle);
+			server.start();
+		}
+
+		private String baseUrl() {
+			return "http://127.0.0.1:" + server.getAddress().getPort();
+		}
+
+		private void on(String path, ExchangeHandler handler) {
+			handlers.put(path, handler);
+		}
+
+		private String lastAuthorization(String path) {
+			List<String> values = authorizationsByPath.get(path);
+			return values == null || values.isEmpty() ? "" : values.get(values.size() - 1);
+		}
+
+		private void handle(HttpExchange exchange) {
+			try {
+				String path = exchange.getRequestURI().getPath();
+				authorizationsByPath.computeIfAbsent(path, ignored -> new ArrayList<String>()).add(clean(exchange.getRequestHeaders().getFirst("Authorization")));
+				ExchangeHandler handler = handlers.get(path);
+				if (handler == null) {
+					json(exchange, 404, "{\"success\":false,\"message\":\"missing handler for " + path + "\"}");
+					return;
+				}
+				handler.handle(exchange);
+			} catch (Exception e) {
+				try {
+					json(exchange, 500, "{\"success\":false,\"message\":\"" + clean(e.getMessage()) + "\"}");
+				} catch (Exception ignored) {
+				}
+			}
+		}
+
+		@Override
+		public void close() {
+			server.stop(0);
+		}
+
+		private static String clean(String value) {
+			return value == null ? "" : value.replace("\"", "'");
+		}
 	}
 }

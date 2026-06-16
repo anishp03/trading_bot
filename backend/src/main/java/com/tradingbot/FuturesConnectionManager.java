@@ -44,6 +44,10 @@ public class FuturesConnectionManager {
 	private static final int TOPSTEPX_CONTRACT_SEARCH_MAX_ATTEMPTS = 3;
 	private static final long TOPSTEPX_CONTRACT_SEARCH_RETRY_BASE_MS = 350L;
 	private static final long TOPSTEPX_CONTRACT_CACHE_TTL_MS = 15L * 60L * 1000L;
+	private static final int TOPSTEPX_BROKER_ACTION_MAX_ATTEMPTS = 3;
+	private static final long TOPSTEPX_BROKER_ACTION_RETRY_BASE_MS = 350L;
+	private static final int TOPSTEPX_BROKER_VERIFY_ATTEMPTS = 3;
+	private static final long TOPSTEPX_BROKER_VERIFY_RETRY_MS = 250L;
 	private static final String ENRICHED_BAR_HEADER = "timestamp,open,high,low,close,volume,vwap,ema9,ema20,ema50,atr14,rsi14,volume_sma20,range_ticks,body_pct\n";
 	private static final String SYNTHETIC_LEVEL2_FOLDER = "level2-synthetic";
 	private static final String SYNTHETIC_LEVEL2_HEADER = "timestamp,best_bid,best_ask,spread_ticks,depth_imbalance5,tape_delta,cvd,bid_wall_distance_ticks,ask_wall_distance_ticks,bid_stacking,ask_stacking,absorption,liquidity_vacuum,flow_state,source_open,source_high,source_low,source_close,source_volume,source_range_ticks,source_body_pct,source\n";
@@ -96,6 +100,20 @@ public class FuturesConnectionManager {
 		private String responseJson = "{}";
 		private String responseBody = "";
 		private boolean bracketsSubmitted;
+	}
+
+	private static class BrokerActionVerification {
+		private boolean verified;
+		private String source = "";
+		private int remainingSize;
+		private int verifiedOrders;
+		private String detailsJson = "{}";
+
+		private static BrokerActionVerification notAttempted() {
+			BrokerActionVerification verification = new BrokerActionVerification();
+			verification.detailsJson = "{\"attempted\":false}";
+			return verification;
+		}
 	}
 
 	static class InternalBar {
@@ -965,7 +983,7 @@ public class FuturesConnectionManager {
 				}
 			}
 
-			HttpResult openPositions = postJson(realtimeConfig.baseUrl + "/Position/searchOpen", "{\"accountId\":" + accountId + "}", activeToken);
+				HttpResult openPositions = postTopstepxJson(realtimeConfig, "/Position/searchOpen", "{\"accountId\":" + accountId + "}");
 			if (openPositions.statusCode < 200 || openPositions.statusCode >= 300) {
 				return "{\"success\":false,\"message\":" + jsonString("TopstepX open-position search failed: " + topstepxErrorSummary(openPositions.body)) + ",\"source\":\"TOPSTEPX\",\"statusCode\":" + openPositions.statusCode + "}";
 			}
@@ -1282,11 +1300,12 @@ public class FuturesConnectionManager {
 			if (!accountId.equals(realtimeConfig.accountId)) {
 				return "{\"success\":false,\"message\":" + jsonString("ProjectX authenticated account is not " + accountId + ".") + "}";
 			}
-			String token = realtimeConfig.token;
-			HttpResult validate = postJson(realtimeConfig.baseUrl + "/Auth/validate", "{}", token);
-			String refreshedToken = extractJsonString(validate.body, "newToken");
-			String activeToken = isBlank(refreshedToken) ? token : refreshedToken;
-			assertTopstepxAccountCanTrade(realtimeConfig.baseUrl, activeToken, accountId);
+				String token = realtimeConfig.token;
+				HttpResult validate = postJson(realtimeConfig.baseUrl + "/Auth/validate", "{}", token);
+				String refreshedToken = extractJsonString(validate.body, "newToken");
+				String activeToken = isBlank(refreshedToken) ? token : refreshedToken;
+				realtimeConfig.token = activeToken;
+				assertTopstepxAccountCanTrade(realtimeConfig.baseUrl, activeToken, accountId);
 
 			Map<String, String> symbolByContractId = new HashMap<String, String>();
 			List<TopstepxContractInfo> contracts = resolveTopstepxRealtimeContracts(realtimeConfig, symbols);
@@ -1297,7 +1316,7 @@ public class FuturesConnectionManager {
 				}
 			}
 
-			HttpResult openPositions = postJson(realtimeConfig.baseUrl + "/Position/searchOpen", "{\"accountId\":" + accountId + "}", activeToken);
+				HttpResult openPositions = postTopstepxJson(realtimeConfig, "/Position/searchOpen", "{\"accountId\":" + accountId + "}");
 			if (openPositions.statusCode < 200 || openPositions.statusCode >= 300) {
 				return "{\"success\":false,\"message\":" + jsonString("TopstepX open-position exposure check failed: " + topstepxErrorSummary(openPositions.body)) + ",\"statusCode\":" + openPositions.statusCode + "}";
 			}
@@ -1380,21 +1399,21 @@ public class FuturesConnectionManager {
 			if (!accountId.equals(realtimeConfig.accountId)) {
 				return "{\"success\":false,\"message\":" + jsonString("ProjectX authenticated account is not " + accountId + ".") + "}";
 			}
-			String token = realtimeConfig.token;
-			HttpResult validate = postJson(realtimeConfig.baseUrl + "/Auth/validate", "{}", token);
-			String refreshedToken = extractJsonString(validate.body, "newToken");
-			String activeToken = isBlank(refreshedToken) ? token : refreshedToken;
-			assertTopstepxAccountCanTrade(realtimeConfig.baseUrl, activeToken, accountId);
+				String token = realtimeConfig.token;
+				HttpResult validate = postJson(realtimeConfig.baseUrl + "/Auth/validate", "{}", token);
+				String refreshedToken = extractJsonString(validate.body, "newToken");
+				String activeToken = isBlank(refreshedToken) ? token : refreshedToken;
+				realtimeConfig.token = activeToken;
+				assertTopstepxAccountCanTrade(realtimeConfig.baseUrl, activeToken, accountId);
 
-			List<TopstepxContractInfo> contracts = resolveTopstepxRealtimeContracts(realtimeConfig, normalizedSymbol);
+				List<TopstepxContractInfo> contracts = resolveTopstepxRealtimeContracts(realtimeConfig, normalizedSymbol);
 				if (contracts.isEmpty()) {
 					return "{\"success\":false,\"message\":" + jsonString("No active ProjectX contract resolved for " + normalizedSymbol + ".") + "}";
 				}
 				TopstepxContractInfo contract = contracts.get(0);
 				String tag = cleanOrDefault(customTag, "live-" + normalizedSymbol + "-" + System.currentTimeMillis());
 				TopstepxOrderAttempt attempt = placeTopstepxPracticeOrder(
-					realtimeConfig.baseUrl,
-					activeToken,
+					realtimeConfig,
 					accountId,
 					contract,
 					normalizedSide,
@@ -1405,9 +1424,16 @@ public class FuturesConnectionManager {
 					tag,
 					true
 				);
+				BrokerActionVerification verification = attempt.success
+					? verifyTopstepxSubmittedOrder(realtimeConfig, accountId, normalizedSymbol, contract.contractId, tag, attempt.orderId, safeSize)
+					: BrokerActionVerification.notAttempted();
+				boolean success = attempt.success && verification.verified;
 				return "{"
-					+ "\"success\":" + attempt.success + ","
-					+ "\"message\":" + jsonString(topstepxOrderSubmitMessage(attempt)) + ","
+					+ "\"success\":" + success + ","
+					+ "\"brokerSubmitAccepted\":" + attempt.success + ","
+					+ "\"brokerVerified\":" + verification.verified + ","
+					+ "\"verificationSource\":" + jsonString(verification.source) + ","
+					+ "\"message\":" + jsonString(success ? topstepxOrderSubmitMessage(attempt) : topstepxOrderSubmitMessage(attempt) + (attempt.success ? " Broker state was not confirmed; local DTM management will not assume an open position." : "")) + ","
 					+ "\"statusCode\":" + attempt.statusCode + ","
 					+ "\"orderId\":" + (isBlank(attempt.orderId) ? "0" : attempt.orderId) + ","
 					+ "\"brokerOrderId\":" + jsonString(isBlank(attempt.orderId) ? "" : attempt.orderId) + ","
@@ -1420,13 +1446,14 @@ public class FuturesConnectionManager {
 					+ "\"bracketFallback\":false,"
 					+ "\"fallbackReason\":\"\","
 					+ "\"requiresAutoOcoBrackets\":" + (!attempt.success && topstepxBracketModeError(attempt.responseBody)) + ","
+					+ "\"verification\":" + verification.detailsJson + ","
 					+ "\"request\":" + attempt.requestJson + ","
 					+ "\"response\":" + attempt.responseJson
 					+ "}";
 			} catch (Exception e) {
-			return "{\"success\":false,\"message\":" + jsonString("ProjectX order submit failed: " + safeMessage(e.getMessage())) + "}";
+				return "{\"success\":false,\"message\":" + jsonString("ProjectX order submit failed: " + safeMessage(e.getMessage())) + "}";
+			}
 		}
-	}
 
 	public static String closeTopstepxPracticeSymbolPosition(String requiredAccountId, String symbol) {
 		initializeStore();
@@ -1451,11 +1478,12 @@ public class FuturesConnectionManager {
 			if (!accountId.equals(realtimeConfig.accountId)) {
 				return "{\"success\":false,\"message\":" + jsonString("ProjectX authenticated account is not " + accountId + ".") + "}";
 			}
-			String token = realtimeConfig.token;
-			HttpResult validate = postJson(realtimeConfig.baseUrl + "/Auth/validate", "{}", token);
-			String refreshedToken = extractJsonString(validate.body, "newToken");
-			String activeToken = isBlank(refreshedToken) ? token : refreshedToken;
-			assertTopstepxAccountCanTrade(realtimeConfig.baseUrl, activeToken, accountId);
+				String token = realtimeConfig.token;
+				HttpResult validate = postJson(realtimeConfig.baseUrl + "/Auth/validate", "{}", token);
+				String refreshedToken = extractJsonString(validate.body, "newToken");
+				String activeToken = isBlank(refreshedToken) ? token : refreshedToken;
+				realtimeConfig.token = activeToken;
+				assertTopstepxAccountCanTrade(realtimeConfig.baseUrl, activeToken, accountId);
 
 			Map<String, String> symbolByContractId = new HashMap<String, String>();
 			Set<String> contractIds = new HashSet<String>();
@@ -1498,7 +1526,7 @@ public class FuturesConnectionManager {
 					continue;
 				}
 				String body = "{\"accountId\":" + accountId + ",\"contractId\":" + jsonString(contractId) + "}";
-				HttpResult close = postJson(realtimeConfig.baseUrl + "/Position/closeContract", body, activeToken);
+					HttpResult close = postTopstepxJson(realtimeConfig, "/Position/closeContract", body);
 				boolean ok = close.statusCode >= 200 && close.statusCode < 300 && jsonBoolean(close.body, "success");
 				if (ok) {
 					closeSuccesses++;
@@ -1514,7 +1542,7 @@ public class FuturesConnectionManager {
 			}
 			positionResults.append("]");
 
-			HttpResult openOrders = postJson(realtimeConfig.baseUrl + "/Order/searchOpen", "{\"accountId\":" + accountId + "}", activeToken);
+				HttpResult openOrders = postTopstepxJson(realtimeConfig, "/Order/searchOpen", "{\"accountId\":" + accountId + "}");
 			if (openOrders.statusCode < 200 || openOrders.statusCode >= 300) {
 				return "{\"success\":false,\"message\":" + jsonString("TopstepX open-order search failed: " + topstepxErrorSummary(openOrders.body)) + ",\"statusCode\":" + openOrders.statusCode + ",\"positionResults\":" + positionResults + ",\"response\":" + syncResponseJson(openOrders, "orders") + "}";
 			}
@@ -1555,7 +1583,7 @@ public class FuturesConnectionManager {
 					continue;
 				}
 				String body = "{\"accountId\":" + accountId + ",\"orderId\":" + orderId + "}";
-				HttpResult cancel = postJson(realtimeConfig.baseUrl + "/Order/cancel", body, activeToken);
+					HttpResult cancel = postTopstepxJson(realtimeConfig, "/Order/cancel", body);
 				boolean ok = cancel.statusCode >= 200 && cancel.statusCode < 300 && jsonBoolean(cancel.body, "success");
 				if (ok) {
 					cancelSuccesses++;
@@ -1614,10 +1642,11 @@ public class FuturesConnectionManager {
 		try {
 			TopstepxRealtimeConfig realtimeConfig = createTopstepxRealtimeConfig();
 			String token = realtimeConfig.token;
-			HttpResult validate = postJson(realtimeConfig.baseUrl + "/Auth/validate", "{}", token);
-			String refreshedToken = extractJsonString(validate.body, "newToken");
-			String activeToken = isBlank(refreshedToken) ? token : refreshedToken;
-			assertTopstepxAccountCanTrade(realtimeConfig.baseUrl, activeToken, accountId);
+				HttpResult validate = postJson(realtimeConfig.baseUrl + "/Auth/validate", "{}", token);
+				String refreshedToken = extractJsonString(validate.body, "newToken");
+				String activeToken = isBlank(refreshedToken) ? token : refreshedToken;
+				realtimeConfig.token = activeToken;
+				assertTopstepxAccountCanTrade(realtimeConfig.baseUrl, activeToken, accountId);
 			Map<String, String> symbolByContractId = new HashMap<String, String>();
 			Set<String> contractIds = new HashSet<String>();
 			List<TopstepxContractInfo> contracts = resolveTopstepxRealtimeContracts(realtimeConfig, normalizedSymbol);
@@ -1628,24 +1657,26 @@ public class FuturesConnectionManager {
 					symbolByContractId.put(contract.contractId, normalizeFuturesSymbol(contract.symbol));
 				}
 			}
-			HttpResult openPositions = postJson(realtimeConfig.baseUrl + "/Position/searchOpen", "{\"accountId\":" + accountId + "}", activeToken);
+				HttpResult openPositions = postTopstepxJson(realtimeConfig, "/Position/searchOpen", "{\"accountId\":" + accountId + "}");
 			if (openPositions.statusCode < 200 || openPositions.statusCode >= 300) {
 				return "{\"success\":false,\"message\":" + jsonString("TopstepX open-position search failed: " + topstepxErrorSummary(openPositions.body)) + ",\"statusCode\":" + openPositions.statusCode + ",\"response\":" + syncResponseJson(openPositions, "positions") + "}";
 			}
 			List<String> positions = extractJsonArrayObjects(openPositions.body, "positions");
-			StringBuilder results = new StringBuilder("[");
-			int matchingPositions = 0;
-			int closeSuccesses = 0;
-			int closeFailures = 0;
-			for (int index = 0; index < positions.size(); index++) {
+				StringBuilder results = new StringBuilder("[");
+				int matchingPositions = 0;
+				int closeSuccesses = 0;
+				int closeFailures = 0;
+				int expectedRemainingSize = -1;
+				for (int index = 0; index < positions.size(); index++) {
 				String position = positions.get(index);
 				String contractId = firstNonBlank(extractJsonString(position, "contractId"), extractJsonString(position, "contractID"), extractJsonString(position, "contract"));
 				String positionSymbol = exposureSymbolFromJson(position, symbolByContractId);
 				if (!normalizedSymbol.equals(positionSymbol) && !contractIds.contains(contractId)) {
 					continue;
 				}
-				int openSize = Math.max(0, exposureSizeFromJson(position));
-				int closeSize = Math.min(safeSize, Math.max(0, openSize - 1));
+					int openSize = Math.max(0, exposureSizeFromJson(position));
+					int closeSize = Math.min(safeSize, Math.max(0, openSize - 1));
+					expectedRemainingSize = Math.max(1, openSize - closeSize);
 				if (matchingPositions > 0) results.append(",");
 				matchingPositions++;
 				if (isBlank(contractId) || closeSize <= 0) {
@@ -1654,7 +1685,7 @@ public class FuturesConnectionManager {
 					continue;
 				}
 				String body = "{\"accountId\":" + accountId + ",\"contractId\":" + jsonString(contractId) + ",\"size\":" + closeSize + "}";
-				HttpResult close = postJson(realtimeConfig.baseUrl + "/Position/partialCloseContract", body, activeToken);
+					HttpResult close = postTopstepxJson(realtimeConfig, "/Position/partialCloseContract", body);
 				boolean ok = close.statusCode >= 200 && close.statusCode < 300 && jsonBoolean(close.body, "success");
 				if (ok) closeSuccesses++; else closeFailures++;
 				results.append("{")
@@ -1667,18 +1698,24 @@ public class FuturesConnectionManager {
 				break;
 			}
 			results.append("]");
-			boolean success = matchingPositions > 0 && closeSuccesses > 0 && closeFailures == 0;
-			return "{"
-				+ "\"success\":" + success + ","
-				+ "\"message\":" + jsonString(success ? "TopstepX partial close submitted for " + normalizedSymbol + "." : (matchingPositions <= 0 ? "No open TopstepX position found for " + normalizedSymbol + "." : "TopstepX partial close needs attention.")) + ","
-				+ "\"accountId\":" + jsonString(accountId) + ","
-				+ "\"symbol\":" + jsonString(normalizedSymbol) + ","
-				+ "\"requestedSize\":" + safeSize + ","
-				+ "\"matchingPositions\":" + matchingPositions + ","
-				+ "\"partialsClosed\":" + closeSuccesses + ","
-				+ "\"partialCloseFailures\":" + closeFailures + ","
-				+ "\"positionResults\":" + results
-				+ "}";
+				BrokerActionVerification verification = closeSuccesses > 0 && closeFailures == 0
+					? verifyTopstepxPartialClose(realtimeConfig, accountId, normalizedSymbol, symbolByContractId, contractIds, expectedRemainingSize)
+					: BrokerActionVerification.notAttempted();
+				boolean success = matchingPositions > 0 && closeSuccesses > 0 && closeFailures == 0 && verification.verified;
+				return "{"
+					+ "\"success\":" + success + ","
+					+ "\"brokerVerified\":" + verification.verified + ","
+					+ "\"message\":" + jsonString(success ? "TopstepX partial close confirmed for " + normalizedSymbol + "." : (matchingPositions <= 0 ? "No open TopstepX position found for " + normalizedSymbol + "." : "TopstepX partial close needs attention.")) + ","
+					+ "\"accountId\":" + jsonString(accountId) + ","
+					+ "\"symbol\":" + jsonString(normalizedSymbol) + ","
+					+ "\"requestedSize\":" + safeSize + ","
+					+ "\"remainingSize\":" + verification.remainingSize + ","
+					+ "\"matchingPositions\":" + matchingPositions + ","
+					+ "\"partialsClosed\":" + closeSuccesses + ","
+					+ "\"partialCloseFailures\":" + closeFailures + ","
+					+ "\"verification\":" + verification.detailsJson + ","
+					+ "\"positionResults\":" + results
+					+ "}";
 		} catch (Exception e) {
 			return "{\"success\":false,\"message\":" + jsonString("TopstepX partial close failed: " + safeMessage(e.getMessage())) + "}";
 		}
@@ -1702,10 +1739,11 @@ public class FuturesConnectionManager {
 		try {
 			TopstepxRealtimeConfig realtimeConfig = createTopstepxRealtimeConfig();
 			String token = realtimeConfig.token;
-			HttpResult validate = postJson(realtimeConfig.baseUrl + "/Auth/validate", "{}", token);
-			String refreshedToken = extractJsonString(validate.body, "newToken");
-			String activeToken = isBlank(refreshedToken) ? token : refreshedToken;
-			assertTopstepxAccountCanTrade(realtimeConfig.baseUrl, activeToken, accountId);
+				HttpResult validate = postJson(realtimeConfig.baseUrl + "/Auth/validate", "{}", token);
+				String refreshedToken = extractJsonString(validate.body, "newToken");
+				String activeToken = isBlank(refreshedToken) ? token : refreshedToken;
+				realtimeConfig.token = activeToken;
+				assertTopstepxAccountCanTrade(realtimeConfig.baseUrl, activeToken, accountId);
 			Map<String, String> symbolByContractId = new HashMap<String, String>();
 			Set<String> contractIds = new HashSet<String>();
 			List<TopstepxContractInfo> contracts = resolveTopstepxRealtimeContracts(realtimeConfig, normalizedSymbol);
@@ -1716,7 +1754,7 @@ public class FuturesConnectionManager {
 					symbolByContractId.put(contract.contractId, normalizeFuturesSymbol(contract.symbol));
 				}
 			}
-			HttpResult openOrders = postJson(realtimeConfig.baseUrl + "/Order/searchOpen", "{\"accountId\":" + accountId + "}", activeToken);
+				HttpResult openOrders = postTopstepxJson(realtimeConfig, "/Order/searchOpen", "{\"accountId\":" + accountId + "}");
 			if (openOrders.statusCode < 200 || openOrders.statusCode >= 300) {
 				return "{\"success\":false,\"message\":" + jsonString("TopstepX open-order search failed: " + topstepxErrorSummary(openOrders.body)) + ",\"statusCode\":" + openOrders.statusCode + ",\"response\":" + syncResponseJson(openOrders, "orders") + "}";
 			}
@@ -1753,7 +1791,7 @@ public class FuturesConnectionManager {
 					+ ",\"limitPrice\":" + (targetOrder ? decimal(targetPrice) : "null")
 					+ ",\"stopPrice\":" + (stopOrder ? decimal(stopPrice) : "null")
 					+ ",\"trailPrice\":null}";
-				HttpResult modify = postJson(realtimeConfig.baseUrl + "/Order/modify", body, activeToken);
+					HttpResult modify = postTopstepxJson(realtimeConfig, "/Order/modify", body);
 				boolean ok = modify.statusCode >= 200 && modify.statusCode < 300 && jsonBoolean(modify.body, "success");
 				if (ok) modified++; else failures++;
 				results.append("{")
@@ -1766,17 +1804,23 @@ public class FuturesConnectionManager {
 					.append("}");
 			}
 			results.append("]");
-			boolean success = matched > 0 && modified > 0 && failures == 0;
-			return "{"
-				+ "\"success\":" + success + ","
-				+ "\"message\":" + jsonString(success ? "TopstepX protective order modification submitted for " + normalizedSymbol + "." : "No matching protective order was safely modified for " + normalizedSymbol + ".") + ","
-				+ "\"accountId\":" + jsonString(accountId) + ","
-				+ "\"symbol\":" + jsonString(normalizedSymbol) + ","
-				+ "\"matchedOrders\":" + matched + ","
-				+ "\"modifiedOrders\":" + modified + ","
-				+ "\"modifyFailures\":" + failures + ","
-				+ "\"orderResults\":" + results
-				+ "}";
+				BrokerActionVerification verification = matched > 0 && modified > 0 && failures == 0
+					? verifyTopstepxProtectiveOrders(realtimeConfig, accountId, normalizedSymbol, symbolByContractId, contractIds, stopPrice, targetPrice, safeSize)
+					: BrokerActionVerification.notAttempted();
+				boolean success = matched > 0 && modified > 0 && failures == 0 && verification.verified;
+				return "{"
+					+ "\"success\":" + success + ","
+					+ "\"brokerVerified\":" + verification.verified + ","
+					+ "\"message\":" + jsonString(success ? "TopstepX protective order modification confirmed for " + normalizedSymbol + "." : "No matching protective order was safely modified for " + normalizedSymbol + ".") + ","
+					+ "\"accountId\":" + jsonString(accountId) + ","
+					+ "\"symbol\":" + jsonString(normalizedSymbol) + ","
+					+ "\"matchedOrders\":" + matched + ","
+					+ "\"modifiedOrders\":" + modified + ","
+					+ "\"verifiedOrders\":" + verification.verifiedOrders + ","
+					+ "\"modifyFailures\":" + failures + ","
+					+ "\"verification\":" + verification.detailsJson + ","
+					+ "\"orderResults\":" + results
+					+ "}";
 		} catch (Exception e) {
 			return "{\"success\":false,\"message\":" + jsonString("TopstepX protective order modification failed: " + safeMessage(e.getMessage())) + "}";
 		}
@@ -2169,8 +2213,7 @@ public class FuturesConnectionManager {
 	}
 
 	private static TopstepxOrderAttempt placeTopstepxPracticeOrder(
-		String baseUrl,
-		String token,
+		TopstepxRealtimeConfig realtimeConfig,
 		String accountId,
 		TopstepxContractInfo contract,
 		String normalizedSide,
@@ -2194,11 +2237,11 @@ public class FuturesConnectionManager {
 			.append("\"stopPrice\":null,")
 			.append("\"trailPrice\":null,")
 			.append("\"customTag\":").append(jsonString(tag));
-		if (allowBrackets) {
-			appendBracketObjects(body, contract, entryPrice, stopPrice, targetPrice);
-		}
-		body.append("}");
-		HttpResult order = postJson(baseUrl + "/Order/place", body.toString(), token);
+			if (allowBrackets) {
+				appendBracketObjects(body, contract, entryPrice, stopPrice, targetPrice);
+			}
+			body.append("}");
+			HttpResult order = postTopstepxJson(realtimeConfig, "/Order/place", body.toString());
 		attempt.statusCode = order.statusCode;
 		attempt.responseBody = cleanOrDefault(order.body, "");
 		attempt.responseJson = syncResponseJson(order, "order");
@@ -2224,6 +2267,216 @@ public class FuturesConnectionManager {
 			return "ProjectX rejected bracket attachments because this TopstepX account is still using Position Brackets. Enable Auto OCO Brackets in TopstepX Risk Settings before live strategy orders can submit.";
 		}
 		return "ProjectX order submit failed: " + topstepxErrorSummary(responseBody);
+	}
+
+	private static HttpResult postTopstepxJson(TopstepxRealtimeConfig realtimeConfig, String path, String body) throws Exception {
+		HttpResult result = null;
+		for (int attempt = 1; attempt <= TOPSTEPX_BROKER_ACTION_MAX_ATTEMPTS; attempt++) {
+			result = postJson(realtimeConfig.baseUrl + path, body, realtimeConfig.token);
+			if (!topstepxBrokerActionNeedsRetry(result) || attempt >= TOPSTEPX_BROKER_ACTION_MAX_ATTEMPTS) {
+				return result;
+			}
+			refreshTopstepxToken(realtimeConfig);
+			sleepQuietly(TOPSTEPX_BROKER_ACTION_RETRY_BASE_MS * attempt);
+		}
+		return result;
+	}
+
+	private static boolean topstepxBrokerActionNeedsRetry(HttpResult result) {
+		if (result == null) {
+			return true;
+		}
+		if (result.statusCode == 401 || result.statusCode == 403 || result.statusCode == 429) {
+			return true;
+		}
+		return isBlank(result.body);
+	}
+
+	private static void refreshTopstepxToken(TopstepxRealtimeConfig realtimeConfig) throws Exception {
+		HttpResult validate = postJson(realtimeConfig.baseUrl + "/Auth/validate", "{}", realtimeConfig.token);
+		String refreshedToken = extractJsonString(validate.body, "newToken");
+		if (!isBlank(refreshedToken)) {
+			realtimeConfig.token = refreshedToken;
+		}
+	}
+
+	private static BrokerActionVerification verifyTopstepxSubmittedOrder(
+		TopstepxRealtimeConfig realtimeConfig,
+		String accountId,
+		String normalizedSymbol,
+		String contractId,
+		String customTag,
+		String orderId,
+		int requestedSize
+	) throws Exception {
+		for (int attempt = 1; attempt <= TOPSTEPX_BROKER_VERIFY_ATTEMPTS; attempt++) {
+			Map<String, String> symbolByContractId = new HashMap<String, String>();
+			symbolByContractId.put(contractId, normalizedSymbol);
+			HttpResult positions = postTopstepxJson(realtimeConfig, "/Position/searchOpen", "{\"accountId\":" + accountId + "}");
+			String matchedPosition = matchingBrokerObject(extractJsonArrayObjects(positions.body, "positions"), normalizedSymbol, contractId, symbolByContractId, "", requestedSize, false);
+			if (!isBlank(matchedPosition)) {
+				BrokerActionVerification verification = new BrokerActionVerification();
+				verification.verified = true;
+				verification.source = "OPEN_POSITION";
+				verification.remainingSize = exposureSizeFromJson(matchedPosition);
+				verification.detailsJson = "{\"attempted\":true,\"source\":\"OPEN_POSITION\",\"position\":" + matchedPosition + "}";
+				return verification;
+			}
+			HttpResult orders = postTopstepxJson(realtimeConfig, "/Order/searchOpen", "{\"accountId\":" + accountId + "}");
+			String matchedOrder = matchingBrokerObject(extractJsonArrayObjects(orders.body, "orders"), normalizedSymbol, contractId, symbolByContractId, firstNonBlank(orderId, customTag), requestedSize, true);
+			if (!isBlank(matchedOrder)) {
+				BrokerActionVerification verification = new BrokerActionVerification();
+				verification.verified = true;
+				verification.source = "OPEN_ORDER";
+				verification.remainingSize = exposureSizeFromJson(matchedOrder);
+				verification.detailsJson = "{\"attempted\":true,\"source\":\"OPEN_ORDER\",\"order\":" + matchedOrder + "}";
+				return verification;
+			}
+			sleepQuietly(TOPSTEPX_BROKER_VERIFY_RETRY_MS * attempt);
+		}
+		BrokerActionVerification verification = new BrokerActionVerification();
+		verification.verified = false;
+		verification.source = "UNCONFIRMED";
+		verification.detailsJson = "{\"attempted\":true,\"source\":\"UNCONFIRMED\",\"message\":\"ProjectX accepted the submit response, but no matching broker position or open order was confirmed.\"}";
+		return verification;
+	}
+
+	private static BrokerActionVerification verifyTopstepxPartialClose(
+		TopstepxRealtimeConfig realtimeConfig,
+		String accountId,
+		String normalizedSymbol,
+		Map<String, String> symbolByContractId,
+		Set<String> contractIds,
+		int expectedRemainingSize
+	) throws Exception {
+		for (int attempt = 1; attempt <= TOPSTEPX_BROKER_VERIFY_ATTEMPTS; attempt++) {
+			HttpResult positions = postTopstepxJson(realtimeConfig, "/Position/searchOpen", "{\"accountId\":" + accountId + "}");
+			List<String> objects = extractJsonArrayObjects(positions.body, "positions");
+			for (int index = 0; index < objects.size(); index++) {
+				String position = objects.get(index);
+				String contractId = firstNonBlank(extractJsonString(position, "contractId"), extractJsonString(position, "contractID"), extractJsonString(position, "contract"));
+				String positionSymbol = exposureSymbolFromJson(position, symbolByContractId);
+				if (!normalizedSymbol.equals(positionSymbol) && !contractIds.contains(contractId)) {
+					continue;
+				}
+				int remainingSize = exposureSizeFromJson(position);
+				if (expectedRemainingSize <= 0 || remainingSize == expectedRemainingSize) {
+					BrokerActionVerification verification = new BrokerActionVerification();
+					verification.verified = true;
+					verification.source = "OPEN_POSITION_SIZE";
+					verification.remainingSize = remainingSize;
+					verification.detailsJson = "{\"attempted\":true,\"source\":\"OPEN_POSITION_SIZE\",\"remainingSize\":" + remainingSize + ",\"position\":" + position + "}";
+					return verification;
+				}
+			}
+			sleepQuietly(TOPSTEPX_BROKER_VERIFY_RETRY_MS * attempt);
+		}
+		BrokerActionVerification verification = new BrokerActionVerification();
+		verification.verified = false;
+		verification.source = "UNCONFIRMED";
+		verification.remainingSize = 0;
+		verification.detailsJson = "{\"attempted\":true,\"source\":\"UNCONFIRMED\",\"message\":\"Partial close response was accepted, but the expected runner size was not confirmed.\"}";
+		return verification;
+	}
+
+	private static BrokerActionVerification verifyTopstepxProtectiveOrders(
+		TopstepxRealtimeConfig realtimeConfig,
+		String accountId,
+		String normalizedSymbol,
+		Map<String, String> symbolByContractId,
+		Set<String> contractIds,
+		double stopPrice,
+		double targetPrice,
+		int expectedSize
+	) throws Exception {
+		for (int attempt = 1; attempt <= TOPSTEPX_BROKER_VERIFY_ATTEMPTS; attempt++) {
+			HttpResult openOrders = postTopstepxJson(realtimeConfig, "/Order/searchOpen", "{\"accountId\":" + accountId + "}");
+			List<String> orders = extractJsonArrayObjects(openOrders.body, "orders");
+			boolean stopVerified = stopPrice <= 0.0;
+			boolean targetVerified = targetPrice <= 0.0;
+			int verifiedOrders = 0;
+			for (int index = 0; index < orders.size(); index++) {
+				String order = orders.get(index);
+				String contractId = firstNonBlank(extractJsonString(order, "contractId"), extractJsonString(order, "contractID"), extractJsonString(order, "contract"));
+				String orderSymbol = exposureSymbolFromJson(order, symbolByContractId);
+				if (!normalizedSymbol.equals(orderSymbol) && !contractIds.contains(contractId)) {
+					continue;
+				}
+				double existingStop = firstJsonNumber(order, "stopPrice");
+				double existingLimit = firstJsonNumber(order, "limitPrice", "price");
+				int type = (int) Math.round(firstJsonNumber(order, "type", "orderType"));
+				boolean stopOrder = existingStop > 0.0 || type == 3 || type == 4 || type == 5;
+				boolean targetOrder = !stopOrder && existingLimit > 0.0;
+				boolean sizeOk = expectedSize <= 0 || exposureSizeFromJson(order) == expectedSize;
+				if (stopOrder && stopPrice > 0.0 && priceMatches(existingStop, stopPrice) && sizeOk) {
+					stopVerified = true;
+					verifiedOrders++;
+				}
+				if (targetOrder && targetPrice > 0.0 && priceMatches(existingLimit, targetPrice) && sizeOk) {
+					targetVerified = true;
+					verifiedOrders++;
+				}
+			}
+			if (stopVerified && targetVerified) {
+				BrokerActionVerification verification = new BrokerActionVerification();
+				verification.verified = true;
+				verification.source = "OPEN_PROTECTIVE_ORDERS";
+				verification.verifiedOrders = verifiedOrders;
+				verification.detailsJson = "{\"attempted\":true,\"source\":\"OPEN_PROTECTIVE_ORDERS\",\"verifiedOrders\":" + verifiedOrders + "}";
+				return verification;
+			}
+			sleepQuietly(TOPSTEPX_BROKER_VERIFY_RETRY_MS * attempt);
+		}
+		BrokerActionVerification verification = new BrokerActionVerification();
+		verification.verified = false;
+		verification.source = "UNCONFIRMED";
+		verification.detailsJson = "{\"attempted\":true,\"source\":\"UNCONFIRMED\",\"message\":\"Protective order modify response was accepted, but updated stop/target orders were not confirmed.\"}";
+		return verification;
+	}
+
+	private static String matchingBrokerObject(
+		List<String> objects,
+		String normalizedSymbol,
+		String contractId,
+		Map<String, String> symbolByContractId,
+		String idOrTag,
+		int requestedSize,
+		boolean allowIdOrTag
+	) {
+		for (int index = 0; index < objects.size(); index++) {
+			String object = objects.get(index);
+			String objectContractId = firstNonBlank(extractJsonString(object, "contractId"), extractJsonString(object, "contractID"), extractJsonString(object, "contract"));
+			String objectSymbol = exposureSymbolFromJson(object, symbolByContractId);
+			boolean contractMatches = !isBlank(contractId) && contractId.equals(objectContractId);
+			boolean symbolMatches = normalizedSymbol.equals(objectSymbol);
+			if (!contractMatches && !symbolMatches) {
+				continue;
+			}
+			if (requestedSize > 0 && exposureSizeFromJson(object) < requestedSize) {
+				continue;
+			}
+			if (allowIdOrTag && !isBlank(idOrTag)) {
+				String objectOrderId = firstNonBlank(extractJsonNumber(object, "id"), extractJsonNumber(object, "orderId"), extractJsonString(object, "id"), extractJsonString(object, "orderId"));
+				String objectTag = firstNonBlank(extractJsonString(object, "customTag"), extractJsonString(object, "tag"), extractJsonString(object, "text"));
+				if (!idOrTag.equals(objectOrderId) && !idOrTag.equals(objectTag)) {
+					continue;
+				}
+			}
+			return object;
+		}
+		return "";
+	}
+
+	private static boolean priceMatches(double actual, double expected) {
+		return actual > 0.0 && expected > 0.0 && Math.abs(actual - expected) <= 0.0001;
+	}
+
+	private static void sleepQuietly(long millis) {
+		try {
+			Thread.sleep(Math.max(0L, millis));
+		} catch (InterruptedException interrupted) {
+			Thread.currentThread().interrupt();
+		}
 	}
 
 	private static String findAccountObject(List<String> accountObjects, String accountId) {
@@ -2812,10 +3065,17 @@ public class FuturesConnectionManager {
 			+ "\"apiKey\":" + jsonString(config.apiKey)
 			+ "}";
 
-		HttpResult result = postJson(baseUrl + "/Auth/loginKey", body, "");
-		String token = extractJsonString(result.body, "token");
-		if (result.statusCode >= 200 && result.statusCode < 300 && jsonBoolean(result.body, "success") && !isBlank(token)) {
-			return token;
+		HttpResult result = null;
+		for (int attempt = 1; attempt <= TOPSTEPX_BROKER_ACTION_MAX_ATTEMPTS; attempt++) {
+			result = postJson(baseUrl + "/Auth/loginKey", body, "");
+			String token = extractJsonString(result.body, "token");
+			if (result.statusCode >= 200 && result.statusCode < 300 && jsonBoolean(result.body, "success") && !isBlank(token)) {
+				return token;
+			}
+			if (!topstepxBrokerActionNeedsRetry(result) || attempt >= TOPSTEPX_BROKER_ACTION_MAX_ATTEMPTS) {
+				break;
+			}
+			sleepQuietly(TOPSTEPX_BROKER_ACTION_RETRY_BASE_MS * attempt);
 		}
 		throw new IllegalStateException("TopstepX auth failed (" + result.statusCode + "): " + topstepxErrorSummary(result.body));
 	}
