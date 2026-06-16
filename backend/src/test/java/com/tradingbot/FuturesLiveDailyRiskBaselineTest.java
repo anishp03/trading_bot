@@ -48,6 +48,26 @@ public class FuturesLiveDailyRiskBaselineTest {
 	}
 
 	@Test
+	public void brokerDayStartBalanceIncludesSameDayEntrySideTradeCosts() {
+		String brokerMetricsJson = "{"
+			+ "\"success\":true,"
+			+ "\"currentBalance\":49652.33,"
+			+ "\"trades\":["
+			+ "{\"closed\":true,\"grossPnl\":270.25,\"totalFees\":212.79,\"pnl\":57.46,\"createdAt\":\"2026-06-16T20:09:38.121208+00:00\"},"
+			+ "{\"closed\":false,\"grossPnl\":0.0,\"totalFees\":212.79,\"pnl\":0.0,\"createdAt\":\"2026-06-16T20:09:34.010209+00:00\"},"
+			+ "{\"closed\":true,\"grossPnl\":-162.50,\"totalFees\":14.92,\"pnl\":-177.42,\"createdAt\":\"2026-06-15T20:09:38.121208+00:00\"}"
+			+ "]}";
+
+		double dayStart = FuturesManager.brokerDayStartBalanceForLiveRiskForTest(
+			brokerMetricsJson,
+			49652.33,
+			LocalDate.of(2026, 6, 16)
+		);
+
+		assertEquals(49807.66, dayStart, 0.001);
+	}
+
+	@Test
 	public void fundedPnlModeStartsNewSessionAtRiskEquityAfterPriorDayLoss() {
 		String brokerMetricsJson = "{"
 			+ "\"success\":true,"

@@ -5969,8 +5969,8 @@ function buildLiveRiskHeartbeat({
     fallbackRiskBalance,
     accountSize
   );
-  const sameDayClosedPnl = sameDayClosedPnlFromBrokerTrades(broker.trades, marketDate);
-  const dayStartBalance = riskCurrentBalance > 0 ? Math.max(0, riskCurrentBalance - sameDayClosedPnl) : accountSize;
+  const sameDayAccountPnl = sameDayAccountPnlFromBrokerTrades(broker.trades, marketDate);
+  const dayStartBalance = riskCurrentBalance > 0 ? Math.max(0, riskCurrentBalance - sameDayAccountPnl) : accountSize;
   const dailyPnl = riskCurrentBalance - dayStartBalance;
   const dailyRiskRoom = Math.max(0, dailyLossLimit + dailyPnl);
   const trailingFloor = riskCurrentBalance > 0 && trailingLimit > 0
@@ -6048,16 +6048,22 @@ function buildLiveRiskHeartbeat({
   };
 }
 
-function sameDayClosedPnlFromBrokerTrades(trades, marketDate) {
+function sameDayAccountPnlFromBrokerTrades(trades, marketDate) {
   const targetDate = String(marketDate || "").slice(0, 10);
   if (!targetDate || !Array.isArray(trades)) return 0;
   return trades.reduce((total, trade) => {
-    if (!trade?.closed) return total;
     const timestamp = trade.createdAt || trade.closedAt || "";
     if (!isValidTimestamp(timestamp)) return total;
     const tradeDate = localDateKey(timestamp);
     if (tradeDate !== targetDate) return total;
-    return total + Number(trade.pnl || 0);
+    const cost = tradeCostTotal(trade);
+    const tradeCost = Number.isFinite(Number(cost)) ? Number(cost) : 0;
+    if (!trade?.closed) return total - tradeCost;
+    const explicitGross = finiteNumberOrNull(trade.grossPnl ?? trade.profitAndLoss);
+    const grossPnl = explicitGross != null
+      ? explicitGross
+      : Number(trade.pnl || 0) + tradeCost;
+    return total + grossPnl - tradeCost;
   }, 0);
 }
 

@@ -15027,20 +15027,60 @@ public class FuturesManager {
 		if (currentBalance <= 0.0 || marketDate == null || !jsonBoolean(brokerMetricsJson, "success")) {
 			return currentBalance;
 		}
-		double currentDayClosedPnl = 0.0;
+		double currentDayClosedGrossPnl = 0.0;
+		double currentDayTradeCosts = 0.0;
 		List<String> trades = jsonArrayObjects(brokerMetricsJson, "trades");
 		for (int index = 0; index < trades.size(); index++) {
 			String trade = trades.get(index);
-			if (!jsonBoolean(trade, "closed")) {
-				continue;
-			}
 			ZonedDateTime tradeTime = parseMarketTimestamp(firstNonBlank(jsonText(trade, "createdAt", ""), jsonText(trade, "closedAt", "")));
 			if (tradeTime == null || !marketDate.equals(tradeTime.toLocalDate())) {
 				continue;
 			}
-			currentDayClosedPnl += jsonNumber(trade, "pnl", 0.0);
+			double tradeCost = liveBrokerTradeCost(trade);
+			if (!Double.isNaN(tradeCost)) {
+				currentDayTradeCosts += tradeCost;
+			}
+			if (jsonBoolean(trade, "closed")) {
+				double grossPnl = jsonNumber(trade, "grossPnl", Double.NaN);
+				if (Double.isNaN(grossPnl)) {
+					grossPnl = jsonNumber(trade, "profitAndLoss", Double.NaN);
+				}
+				if (Double.isNaN(grossPnl)) {
+					grossPnl = jsonNumber(trade, "pnl", 0.0) + (Double.isNaN(tradeCost) ? 0.0 : tradeCost);
+				}
+				currentDayClosedGrossPnl += grossPnl;
+			}
 		}
-		return round(currentBalance - currentDayClosedPnl);
+		double currentDayAccountPnl = currentDayClosedGrossPnl - currentDayTradeCosts;
+		return round(currentBalance - currentDayAccountPnl);
+	}
+
+	private static double liveBrokerTradeCost(String tradeJson) {
+		double totalFees = jsonNumber(tradeJson, "totalFees", Double.NaN);
+		if (!Double.isNaN(totalFees)) {
+			return totalFees;
+		}
+		double brokerFees = jsonNumber(tradeJson, "brokerFees", Double.NaN);
+		double fees = jsonNumber(tradeJson, "fees", Double.NaN);
+		double commission = jsonNumber(tradeJson, "commission", Double.NaN);
+		double commissions = jsonNumber(tradeJson, "commissions", Double.NaN);
+		double total = 0.0;
+		boolean hasCost = false;
+		if (!Double.isNaN(fees)) {
+			total += fees;
+			hasCost = true;
+		} else if (!Double.isNaN(brokerFees)) {
+			total += brokerFees;
+			hasCost = true;
+		}
+		if (!Double.isNaN(commission)) {
+			total += commission;
+			hasCost = true;
+		} else if (!Double.isNaN(commissions)) {
+			total += commissions;
+			hasCost = true;
+		}
+		return hasCost ? total : Double.NaN;
 	}
 
 	private static boolean ensureTopstepxRealtimeFeedFresh(FuturesLiveSession session, LiveStrategySnapshotRow snapshot) {
