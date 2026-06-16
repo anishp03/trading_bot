@@ -16462,6 +16462,7 @@ public class FuturesManager {
 		double extensionAcceptanceR = dtmExtensionAcceptanceR(targetR);
 		String dtmState = dtmStateName(position, state, favorableCloseR, adverseCloseR, flowAgainst, trendAgainst, breakevenTriggerR, partialTriggerR);
 		state.stateName = dtmState;
+		boolean brokerManagementSuspended = dtmBrokerManagementSuspended(session, state);
 		boolean thesisInvalidated = dtmThesisInvalidated(position, context, bar, strongFlowAgainst, trendAgainst, adverseCloseR);
 		boolean earlyCutMature = barsHeld >= dtmMinimumBarsBeforeEarlyCut(position);
 		boolean exitEvidence = earlyCutMature
@@ -16496,6 +16497,7 @@ public class FuturesManager {
 			&& position.contracts == 1
 			&& !state.partialTaken
 			&& !state.targetExtended
+			&& !brokerManagementSuspended
 			&& barsHeld >= dtmMinimumBarsBeforeTargetManagement(position)
 			&& favorableCloseR >= extensionAcceptanceR
 			&& continuationAligned) {
@@ -16519,7 +16521,7 @@ public class FuturesManager {
 				return extensionDecision;
 			}
 		}
-		if (barsHeld >= dtmMinimumBarsBeforeProtect(position) && favorableCloseR >= breakevenTriggerR && !state.breakevenMoved) {
+		if (!brokerManagementSuspended && barsHeld >= dtmMinimumBarsBeforeProtect(position) && favorableCloseR >= breakevenTriggerR && !state.breakevenMoved) {
 			double stop = "LONG".equals(position.side)
 				? roundToTick(position.spec, position.entryPrice + position.spec.tickSize)
 				: roundToTick(position.spec, position.entryPrice - position.spec.tickSize);
@@ -16537,6 +16539,11 @@ public class FuturesManager {
 				if (decision.brokerAction) {
 					position.activeStopPrice = stop;
 					state.lastStopPrice = stop;
+				} else if (isTopstepxLiveSession(session)) {
+					state.brokerManagementBlocked = true;
+					decision.actionCode = "DTM_ACTION_BLOCKED";
+					decision.normalizedAction = "HOLD_STATIC";
+					decision.reason = "DTM wanted to move the stop to breakeven, but broker confirmation failed; DTM suspended further protective management for this local position until broker reconciliation refreshes.";
 				}
 				state.breakevenMoved = true;
 				recordDynamicTradeDecision(session, snapshot, position, state, decision, bar, publishLiveEvent);
@@ -16544,7 +16551,7 @@ public class FuturesManager {
 			}
 			state.breakevenMoved = true;
 		}
-		if (position.contracts > 1 && barsHeld >= dtmMinimumBarsBeforeTargetManagement(position) && favorableCloseR >= partialTriggerR && !state.partialTaken && !state.partialCloseBlocked) {
+		if (!brokerManagementSuspended && position.contracts > 1 && barsHeld >= dtmMinimumBarsBeforeTargetManagement(position) && favorableCloseR >= partialTriggerR && !state.partialTaken && !state.partialCloseBlocked) {
 			boolean experimentalHalfRunner = dtmExperimentalHalfRunnerEnabled() && dtmExperimentalHalfRunnerQualified(position, targetR);
 			int closeContracts = Math.max(1, position.contracts / 2);
 			int remaining = Math.max(1, position.contracts - closeContracts);
@@ -16624,6 +16631,9 @@ public class FuturesManager {
 				}
 			} else {
 				state.partialCloseBlocked = true;
+				if (isTopstepxLiveSession(session)) {
+					state.brokerManagementBlocked = true;
+				}
 				state.remainingContracts = Math.max(1, position.contracts);
 				decision.actionCode = "DTM_PARTIAL_BLOCKED";
 				decision.normalizedAction = "HOLD_STATIC";
@@ -16636,6 +16646,7 @@ public class FuturesManager {
 		if (dtmDynamicProtectiveOrdersEnabled()
 			&& state.partialTaken
 			&& !state.targetExtended
+			&& !brokerManagementSuspended
 			&& barsHeld >= dtmMinimumBarsBeforeTargetManagement(position)
 			&& favorableCloseR >= extensionAcceptanceR
 			&& continuationAligned) {
@@ -16659,7 +16670,7 @@ public class FuturesManager {
 				return extensionDecision;
 			}
 		}
-		if (barsHeld >= dtmMinimumBarsBeforeTargetManagement(position) && favorableCloseR >= trailTriggerR) {
+		if (!brokerManagementSuspended && barsHeld >= dtmMinimumBarsBeforeTargetManagement(position) && favorableCloseR >= trailTriggerR) {
 			double trail = updateManagedStop(position.spec, position.side, position.entryPrice, position.activeStopPrice, bar.close, position.initialRisk, position.minTrailDistance);
 			if (stopImprovesRisk(position, trail) && Math.abs(trail - state.lastStopPrice) >= position.spec.tickSize - 0.000001) {
 				DynamicTradeDecision decision = new DynamicTradeDecision();
@@ -16675,6 +16686,11 @@ public class FuturesManager {
 				if (decision.brokerAction) {
 					position.activeStopPrice = trail;
 					state.lastStopPrice = trail;
+				} else if (isTopstepxLiveSession(session)) {
+					state.brokerManagementBlocked = true;
+					decision.actionCode = "DTM_ACTION_BLOCKED";
+					decision.normalizedAction = "HOLD_STATIC";
+					decision.reason = "DTM wanted to trail the protective stop, but broker confirmation failed; DTM suspended further protective management for this local position until broker reconciliation refreshes.";
 				}
 				recordDynamicTradeDecision(session, snapshot, position, state, decision, bar, publishLiveEvent);
 				return decision;
@@ -16718,6 +16734,14 @@ public class FuturesManager {
 		decision.brokerAction = jsonBoolean(brokerJson, "success");
 		decision.detailsJson = mergeSimpleJson(decision.detailsJson, "\"brokerModify\":" + jsonObjectOrDefault(brokerJson, "{}"));
 		if (!decision.brokerAction) {
+			if (isTopstepxLiveSession(session)) {
+				state.brokerManagementBlocked = true;
+				decision.actionCode = "DTM_ACTION_BLOCKED";
+				decision.normalizedAction = "HOLD_STATIC";
+				decision.reason = "DTM wanted to extend the target, but broker confirmation failed; DTM suspended further protective management for this local position until broker reconciliation refreshes.";
+				recordDynamicTradeDecision(session, snapshot, position, state, decision, bar, publishLiveEvent);
+				return decision;
+			}
 			return null;
 		}
 		position.activeStopPrice = stop;
@@ -16784,6 +16808,14 @@ public class FuturesManager {
 			position == null ? "" : position.symbol,
 			closeContracts
 		);
+	}
+
+	private static boolean dtmBrokerManagementSuspended(FuturesLiveSession session, DynamicTradeState state) {
+		return isTopstepxLiveSession(session) && state != null && state.brokerManagementBlocked;
+	}
+
+	private static boolean isTopstepxLiveSession(FuturesLiveSession session) {
+		return session != null && "TOPSTEPX".equals(cleanOrDefault(session.executionMode, ""));
 	}
 
 	private static void recordDynamicTradeDecision(
@@ -17276,6 +17308,7 @@ public class FuturesManager {
 		if ("DTM_PARTIAL_TARGET".equals(code)) return "DTM partially sold the position.";
 		if ("DTM_PARTIAL_HALF_RUNNER_EXTENDED".equals(code)) return "DTM partially sold half and extended the runner.";
 		if ("DTM_PARTIAL_BLOCKED".equals(code)) return "DTM partial close was blocked.";
+		if ("DTM_ACTION_BLOCKED".equals(code)) return "DTM broker action was blocked.";
 		if ("DTM_EXTEND_TARGET_CONTINUATION".equals(code)) return "DTM extended the runner target.";
 		if ("DTM_EXTEND_ONE_CONTRACT_RUNNER".equals(code)) return "DTM extended a one-contract runner.";
 		if ("DTM_CUT_EARLY_THESIS_FAILED".equals(code)) return "DTM cut the trade early.";
@@ -17360,6 +17393,7 @@ public class FuturesManager {
 		private double lastTargetPrice;
 		private boolean targetExtended;
 		private boolean oneContractExtended;
+		private boolean brokerManagementBlocked;
 		private int exitEvidenceCount;
 		private int lastExitEvidenceIndex = -1;
 		private boolean exitRequested;
@@ -18790,7 +18824,7 @@ public class FuturesManager {
 		String exitPredicate = includePendingReconcile
 			? "AND (exit.status LIKE '%EXIT%' OR exit.status LIKE '%CLOSED%' OR exit.status LIKE '%FLAT%') "
 				+ "AND (exit.payloadJson LIKE '%\"authoritative\":true%' OR exit.payloadJson LIKE '%\"source\":\"TOPSTEPX_METRICS_RECONCILE\"%')"
-			: "AND (exit.status LIKE '%EXIT%' OR exit.status LIKE '%CLOSED%' OR exit.status LIKE '%FLAT%')";
+			: "AND (exit.status LIKE '%EXIT%' OR exit.status LIKE '%CLOSED%' OR exit.status LIKE '%FLAT%' OR exit.status = 'PENDING_BROKER_RECONCILE')";
 		String sql = "SELECT entry.symbol, entry.side, entry.contracts, entry.entryPrice, entry.stopPrice, entry.targetPrice, entry.entryTime, entry.signalTime, entry.strategyCode, entry.strategyName, entry.status, entry.payloadJson, "
 			+ "COALESCE(snapshot.practiceAccountId, '') AS accountId, "
 			+ "COALESCE(("
