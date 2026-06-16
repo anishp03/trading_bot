@@ -167,6 +167,7 @@ export default function FuturesBacktestHistory() {
                   <div>
                     <span className="app-label">Run #{run.visibleRunNumber}</span>
                     <strong>{run.symbols}</strong>
+                    {run.replaySemantics && <div className="small app-muted-text">{run.replaySemantics}</div>}
                   </div>
                   <span className={run.trades === 0 ? "app-badge app-neutral-badge" : run.ruleViolation ? "app-badge app-risk-badge" : "app-badge app-positive-badge"}>
                     {run.trades === 0 ? "No Trades" : run.ruleViolation ? (run.continueAfterRuleViolation ? "Violation Trail" : "Violation") : "Pass"}
@@ -232,7 +233,10 @@ export default function FuturesBacktestHistory() {
             const selected = run.id === selectedRunId;
             return (
               <div key={run.id} className={selected ? "app-grid-row futures-portfolio-run-grid selected" : "app-grid-row futures-portfolio-run-grid"}>
-                <div>#{run.visibleRunNumber}</div>
+                <div>
+                  #{run.visibleRunNumber}
+                  {run.replaySemantics && <div className="small app-muted-text">{run.replaySemantics}</div>}
+                </div>
                 <div>{formatStrategyConfig(run)}</div>
                 <div>{formatRiskConfig(run)}</div>
                 <div>{formatPercent(run.winRate)}</div>
@@ -366,7 +370,15 @@ function decorateRuns(runs) {
   return runs.map((run) => ({
     ...run,
     visibleRunNumber: run.id,
+    replaySemantics: formatReplaySemantics(run?.dataSource),
   }));
+}
+
+function formatReplaySemantics(dataSource) {
+  const source = String(dataSource || "").toLowerCase();
+  if (source.includes("live_parity_incremental")) return "Live-parity replay";
+  if (source.includes("dynamic_risk_replay")) return "Dynamic replay";
+  return "";
 }
 
 function SegmentTable({ title, segments }) {

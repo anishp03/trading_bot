@@ -31,6 +31,7 @@ backend/target/
 backend/logs/
 backend/data/
 backend/backups/
+dev_runtime/
 release/**/tradingbot-backend.jar
 
 # Local databases and broker/account state

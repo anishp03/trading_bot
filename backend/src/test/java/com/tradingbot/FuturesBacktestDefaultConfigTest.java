@@ -45,7 +45,7 @@ public class FuturesBacktestDefaultConfigTest {
 		TestDatabaseSupport.useTempDatabase(tempDir);
 		FuturesManager.getPortfolioBacktestDefaultConfigJson();
 		insertRecommendedSourceRun("2025-06-10", 250000.0, 1380, "native futures csv portfolio 1min dynamic_risk_replay sourcePortfolioBacktestID=1");
-		insertRecommendedSourceRun("2025-06-10", 149702.86, 1406, "native futures csv portfolio 1min");
+		insertRecommendedSourceRun("2025-06-10", 149702.86, 1406, "native futures csv portfolio 1min live_parity_incremental");
 
 		String defaults = FuturesManager.getPortfolioBacktestDefaultConfigJson();
 
@@ -66,7 +66,7 @@ public class FuturesBacktestDefaultConfigTest {
 	}
 
 	private static void insertRecommendedSourceRun(String startDate) throws Exception {
-		insertRecommendedSourceRun(startDate, 1000.0, 1406, "test");
+		insertRecommendedSourceRun(startDate, 1000.0, 1406, "native futures csv portfolio 1min live_parity_incremental");
 	}
 
 	private static void insertRecommendedSourceRun(String startDate, double totalProfit, int trades, String dataSource) throws Exception {

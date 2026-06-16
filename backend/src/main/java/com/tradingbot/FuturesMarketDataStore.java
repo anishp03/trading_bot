@@ -38,10 +38,17 @@ final class FuturesMarketDataStore {
 				stmt.execute("PRAGMA busy_timeout=5000");
 				stmt.execute(
 					"CREATE TABLE IF NOT EXISTS FuturesLiveCapturedBars ("
-						+ "symbol TEXT NOT NULL, timestamp TEXT NOT NULL, open REAL, high REAL, low REAL, close REAL, volume REAL, updatedAt TEXT, "
+						+ "symbol TEXT NOT NULL, timestamp TEXT NOT NULL, open REAL, high REAL, low REAL, close REAL, volume REAL, "
+						+ "bestBid REAL, bestAsk REAL, lastPrice REAL, providerVwap REAL, source TEXT, sourceDetail TEXT, updatedAt TEXT, "
 						+ "PRIMARY KEY(symbol, timestamp)"
 						+ ")"
 				);
+				ensureColumn(conn, "FuturesLiveCapturedBars", "bestBid", "REAL");
+				ensureColumn(conn, "FuturesLiveCapturedBars", "bestAsk", "REAL");
+				ensureColumn(conn, "FuturesLiveCapturedBars", "lastPrice", "REAL");
+				ensureColumn(conn, "FuturesLiveCapturedBars", "providerVwap", "REAL");
+				ensureColumn(conn, "FuturesLiveCapturedBars", "source", "TEXT");
+				ensureColumn(conn, "FuturesLiveCapturedBars", "sourceDetail", "TEXT");
 				stmt.execute(
 					"CREATE TABLE IF NOT EXISTS FuturesHistoricalLevel2Snapshots ("
 						+ "symbol TEXT NOT NULL, timestamp TEXT NOT NULL, bestBid REAL, bestAsk REAL, spreadTicks REAL, "
@@ -59,6 +66,20 @@ final class FuturesMarketDataStore {
 			} catch (SQLException e) {
 				e.printStackTrace();
 			}
+		}
+	}
+
+	private static void ensureColumn(Connection conn, String table, String column, String type) throws SQLException {
+		try (Statement stmt = conn.createStatement();
+			 ResultSet rs = stmt.executeQuery("PRAGMA table_info(" + table + ")")) {
+			while (rs.next()) {
+				if (column.equalsIgnoreCase(clean(rs.getString("name")))) {
+					return;
+				}
+			}
+		}
+		try (Statement stmt = conn.createStatement()) {
+			stmt.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + type);
 		}
 	}
 
@@ -309,6 +330,10 @@ final class FuturesMarketDataStore {
 		if (price <= 0.0) {
 			return;
 		}
+		double bestBid = jsonFirstNumber(payloadJson, new String[] {"bestBid", "BestBid", "bid", "Bid", "bidPrice", "bp"}, 0.0);
+		double bestAsk = jsonFirstNumber(payloadJson, new String[] {"bestAsk", "BestAsk", "ask", "Ask", "askPrice", "ap"}, 0.0);
+		double lastPrice = jsonFirstNumber(payloadJson, new String[] {"lastPrice", "LastPrice", "price", "Price", "tradePrice", "close", "c"}, price);
+		double providerVwap = jsonFirstNumber(payloadJson, new String[] {"vwap", "VWAP", "volumeWeightedAveragePrice"}, 0.0);
 		double volume = realtimeVolumeFromPayload(eventType, payloadJson);
 		String timestamp = bucketTimestamp(receivedAt);
 		if (timestamp.length() == 0) {
@@ -317,10 +342,15 @@ final class FuturesMarketDataStore {
 		if (!isRthTimestamp(timestamp)) {
 			return;
 		}
-		String sql = "INSERT INTO FuturesLiveCapturedBars (symbol, timestamp, open, high, low, close, volume, updatedAt) "
-			+ "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+		String sql = "INSERT INTO FuturesLiveCapturedBars (symbol, timestamp, open, high, low, close, volume, bestBid, bestAsk, lastPrice, providerVwap, source, sourceDetail, updatedAt) "
+			+ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
 			+ "ON CONFLICT(symbol, timestamp) DO UPDATE SET "
-			+ "high = MAX(high, excluded.high), low = MIN(low, excluded.low), close = excluded.close, volume = volume + excluded.volume, updatedAt = excluded.updatedAt";
+			+ "high = MAX(high, excluded.high), low = MIN(low, excluded.low), close = excluded.close, volume = volume + excluded.volume, "
+			+ "bestBid = CASE WHEN excluded.bestBid > 0 THEN excluded.bestBid ELSE bestBid END, "
+			+ "bestAsk = CASE WHEN excluded.bestAsk > 0 THEN excluded.bestAsk ELSE bestAsk END, "
+			+ "lastPrice = CASE WHEN excluded.lastPrice > 0 THEN excluded.lastPrice ELSE lastPrice END, "
+			+ "providerVwap = CASE WHEN excluded.providerVwap > 0 THEN excluded.providerVwap ELSE providerVwap END, "
+			+ "source = excluded.source, sourceDetail = excluded.sourceDetail, updatedAt = excluded.updatedAt";
 		try (Connection conn = DatabaseManager.getConnection();
 			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
 			pstmt.setString(1, normalizeSymbol(symbol));
@@ -330,7 +360,13 @@ final class FuturesMarketDataStore {
 			pstmt.setDouble(5, price);
 			pstmt.setDouble(6, price);
 			pstmt.setDouble(7, Math.max(0.0, volume));
-			pstmt.setString(8, displayTime());
+			pstmt.setDouble(8, Math.max(0.0, bestBid));
+			pstmt.setDouble(9, Math.max(0.0, bestAsk));
+			pstmt.setDouble(10, Math.max(0.0, lastPrice));
+			pstmt.setDouble(11, Math.max(0.0, providerVwap));
+			pstmt.setString(12, SOURCE_LIVE_CAPTURED);
+			pstmt.setString(13, "ProjectX " + clean(eventType) + " live capture");
+			pstmt.setString(14, displayTime());
 			pstmt.executeUpdate();
 		} catch (SQLException e) {
 			e.printStackTrace();

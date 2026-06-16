@@ -2483,13 +2483,20 @@ public class FuturesManager {
 		int sourcePortfolioBacktestId = config.sourcePortfolioBacktestId > 0
 			? config.sourcePortfolioBacktestId
 			: recommendedPortfolioBacktestConfigSourceId();
-		List<FuturesTrade> sourceTrades = sourcePortfolioBacktestId > 0
+		String selectedSourceDataSource = sourcePortfolioBacktestId > 0 ? portfolioBacktestDataSource(sourcePortfolioBacktestId) : "";
+		boolean selectedSourceLiveParity = selectedSourceDataSource.contains("live_parity_incremental");
+		List<FuturesTrade> sourceTrades = sourcePortfolioBacktestId > 0 && selectedSourceLiveParity
 			? loadPortfolioBacktestTradesForReplay(sourcePortfolioBacktestId)
 			: new ArrayList<FuturesTrade>();
 		String sourceLabel = sourcePortfolioBacktestId > 0
-			? "sourcePortfolioBacktestID=" + sourcePortfolioBacktestId
+			? (selectedSourceLiveParity
+				? "sourcePortfolioBacktestID=" + sourcePortfolioBacktestId
+				: "ignoredLegacySourcePortfolioBacktestID=" + sourcePortfolioBacktestId)
 			: "generatedStaticBaseline";
 		if (sourceTrades.isEmpty()) {
+			if (sourcePortfolioBacktestId > 0 && !selectedSourceLiveParity) {
+				sourcePortfolioBacktestId = 0;
+			}
 			PortfolioBacktestConfig staticSourceConfig = copyPortfolioBacktestConfig(config);
 			staticSourceConfig.sourcePortfolioBacktestId = 0;
 			staticSourceConfig.riskSizingMode = RISK_SIZING_STATIC_WITHDRAW_DAILY;
@@ -2521,7 +2528,7 @@ public class FuturesManager {
 			? config.endDate.toString()
 			: lastSourceTrade.openedAt.substring(0, 10);
 		result.startingBalance = round(config.accountSize);
-		result.dataSource = "native futures csv portfolio 1min dynamic_risk_replay " + sourceLabel
+		result.dataSource = "native futures csv portfolio 1min live_parity_incremental dynamic_risk_replay " + sourceLabel
 			+ " risk_sizing_mode=" + policy.mode
 			+ " dllUsage=" + round(policy.dailyRoomUsagePct)
 			+ " mllUsage=" + round(policy.mllRoomUsagePct)
@@ -5830,6 +5837,7 @@ public class FuturesManager {
 		String sql = "SELECT portfolioBacktestID FROM FuturesPortfolioBacktests "
 			+ "WHERE ruleViolation = 0 "
 			+ "AND dataSource NOT LIKE '%dynamic_risk_replay%' "
+			+ "AND dataSource LIKE '%live_parity_incremental%' "
 			+ "AND numTrades >= 1000 "
 			+ "AND totalProfit > 0 "
 			+ "AND json_valid(portfolioSettingsJson) = 1 "
@@ -5860,6 +5868,7 @@ public class FuturesManager {
 						&& rs.getInt("numTrades") >= 1000
 						&& rs.getDouble("totalProfit") > 0.0
 						&& !dataSource.contains("dynamic_risk_replay")
+						&& dataSource.contains("live_parity_incremental")
 						&& isVisibleStrategyPresetName(jsonText(rs.getString("portfolioSettingsJson"), "strategyPreset", ""));
 				}
 			}
@@ -5867,6 +5876,25 @@ public class FuturesManager {
 			e.printStackTrace();
 		}
 		return false;
+	}
+
+	private static String portfolioBacktestDataSource(int portfolioBacktestId) {
+		if (portfolioBacktestId <= 0) {
+			return "";
+		}
+		String sql = "SELECT dataSource FROM FuturesPortfolioBacktests WHERE portfolioBacktestID = ? LIMIT 1";
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement stmt = conn.prepareStatement(sql)) {
+			stmt.setInt(1, portfolioBacktestId);
+			try (ResultSet rs = stmt.executeQuery()) {
+				if (rs.next()) {
+					return cleanOrDefault(rs.getString("dataSource"), "");
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return "";
 	}
 
 	private static boolean isVisibleStrategyPresetName(String presetName) {
@@ -8566,6 +8594,7 @@ public class FuturesManager {
 		if (contexts.isEmpty()) {
 			return "{\"success\":false,\"message\":\"No local warmup bars are available for the active live snapshot symbols.\"}";
 		}
+		prepareLiveParityPortfolioSignalEvents(contexts);
 		List<LocalDate> days = portfolioDays(contexts);
 		if (days.isEmpty()) {
 			return "{\"success\":false,\"message\":\"No completed RTH sessions were found for the active live snapshot symbols.\"}";
@@ -9498,6 +9527,12 @@ public class FuturesManager {
 	private static double liveDecisionRealizedPnl(String status, String payloadJson) {
 		if (!liveDecisionExitStatus(status) || !liveDecisionPnlAuthoritative(status, payloadJson)) {
 			return 0.0;
+		}
+		String payload = jsonObjectOrDefault(payloadJson, "{}");
+		double dtmRealizedPnl = jsonNumber(payload, "dtmRealizedPnl", 0.0);
+		int partialContracts = (int) Math.round(jsonNumber(payload, "dtmPartialContractsClosed", 0.0));
+		if ((partialContracts > 0 || Math.abs(dtmRealizedPnl) > 0.0) && payload.contains("\"finalLegPnl\"")) {
+			return round(jsonNumber(payload, "finalLegPnl", 0.0) + dtmRealizedPnl);
 		}
 		return round(jsonNumber(payloadJson, "pnl", 0.0));
 	}
@@ -11874,6 +11909,38 @@ public class FuturesManager {
 		return copy;
 	}
 
+	private static DataBundle liveParitySignalDataBundle(DataBundle source, InstrumentSpec spec) {
+		DataBundle copy = new DataBundle();
+		if (source == null) {
+			copy.source = "live parity derived from empty source";
+			return copy;
+		}
+		copy.source = cleanOrDefault(source.source, "native futures csv") + " + live_parity_derived_strategy_fields";
+		copy.bars = copyBars(source.bars);
+		Map<LocalDate, List<Bar>> barsByDay = groupByDay(copy.bars);
+		List<LocalDate> days = new ArrayList<LocalDate>(barsByDay.keySet());
+		Collections.sort(days);
+		List<Bar> enriched = new ArrayList<Bar>();
+		for (int dayIndex = 0; dayIndex < days.size(); dayIndex++) {
+			List<Bar> dayBars = barsByDay.get(days.get(dayIndex));
+			if (dayBars == null || dayBars.isEmpty()) {
+				continue;
+			}
+			Collections.sort(dayBars, new Comparator<Bar>() {
+				@Override
+				public int compare(Bar first, Bar second) {
+					LocalTime firstTime = first == null || first.marketTime == null ? LocalTime.MIN : first.marketTime;
+					LocalTime secondTime = second == null || second.marketTime == null ? LocalTime.MIN : second.marketTime;
+					return firstTime.compareTo(secondTime);
+				}
+			});
+			enrichLiveBars(dayBars, spec);
+			enriched.addAll(dayBars);
+		}
+		copy.bars = enriched;
+		return copy;
+	}
+
 	private static LiveWarmupBars copyWarmupBars(LiveWarmupBars source) {
 		LiveWarmupBars copy = new LiveWarmupBars();
 		if (source == null) {
@@ -13220,6 +13287,9 @@ public class FuturesManager {
 			|| jsonBoolean(broker, "authoritative");
 		double brokerExitPrice = jsonNumber(broker, "exitPrice", jsonNumber(broker, "fillPrice", 0.0));
 		double brokerPnl = jsonNumber(broker, "pnl", 0.0);
+		boolean brokerPnlPresent = broker.contains("\"pnl\"");
+		double finalLegPnl = brokerAuthoritative && brokerPnlPresent ? brokerPnl : safeTrade.finalLegPnl;
+		double totalRealizedPnl = round(finalLegPnl + safeTrade.dtmRealizedPnl);
 		String priceSource = brokerAuthoritative && brokerExitPrice > 0.0 ? "BROKER_FILL" : "LOCAL_ESTIMATE";
 		return "{"
 			+ "\"priceSource\":" + jsonString(priceSource) + ","
@@ -13230,7 +13300,9 @@ public class FuturesManager {
 			+ "\"estimatedExitPrice\":" + round(safeTrade.exitPrice) + ","
 			+ "\"brokerFillPrice\":" + round(brokerExitPrice > 0.0 ? brokerExitPrice : safeTrade.exitPrice) + ","
 			+ "\"brokerRealizedPnl\":" + round(brokerPnl) + ","
-			+ "\"finalRealizedPnl\":" + round(brokerAuthoritative && Math.abs(brokerPnl) > 0.0 ? brokerPnl : safeTrade.pnl) + ","
+			+ "\"finalLegPnl\":" + round(finalLegPnl) + ","
+			+ "\"dtmRealizedPnl\":" + round(safeTrade.dtmRealizedPnl) + ","
+			+ "\"finalRealizedPnl\":" + round(brokerAuthoritative && brokerPnlPresent ? totalRealizedPnl : safeTrade.pnl) + ","
 			+ "\"brokerClose\":" + broker
 			+ "}";
 	}
@@ -15989,7 +16061,7 @@ public class FuturesManager {
 				+ "\"fillPrice\":" + round(trade.exitPrice) + ","
 				+ "\"fillTime\":" + jsonString(trade.closedAt) + ","
 				+ "\"finalExitReasonCode\":" + jsonString(liveExitReasonCode("FLAT_SYNC_TOPSTEPX", trade.exitReason, "{}")) + ","
-				+ "\"pnl\":" + round(trade.pnl) + ","
+				+ "\"pnl\":" + round(trade.finalLegPnl) + ","
 				+ "\"fees\":" + round(closeFill.fees)
 				+ "}";
 			if (!updateLiveExitDecision(sessionId, snapshotId, trade, "FLAT_SYNC_TOPSTEPX", reason, brokerCloseJson)) {
@@ -16068,8 +16140,9 @@ public class FuturesManager {
 		trade.targetPrice = position.targetPrice;
 		trade.openedAt = cleanOrDefault(position.openedAt, "");
 			trade.closedAt = closeFill != null && closeFill.createdAt.length() > 0 ? closeFill.createdAt : LocalDateTime.now().format(DISPLAY_TIME_FORMAT);
-			trade.pnl = closeFill == null ? 0.0 : closeFill.pnl;
-			trade.finalLegPnl = trade.pnl;
+			trade.finalLegPnl = closeFill == null ? 0.0 : round(closeFill.pnl);
+			trade.dtmRealizedPnl = round(position.dtmRealizedPnl);
+			trade.pnl = round(trade.finalLegPnl + trade.dtmRealizedPnl);
 			trade.mfe = 0.0;
 		trade.mae = 0.0;
 		trade.exitReason = brokerFlatSyncExitReason(position, closeFill, trade.exitPrice);
@@ -16078,7 +16151,6 @@ public class FuturesManager {
 		trade.dtmPartialDecision = position.dtmPartialDecision;
 		trade.dtmRunnerDecision = position.dtmRunnerDecision;
 		trade.dtmPartialContractsClosed = position.dtmPartialContractsClosed;
-		trade.dtmRealizedPnl = position.dtmRealizedPnl;
 		trade.openedMarketTime = position.openedMarketTime;
 		LocalDateTime closedAt = parseDisplayLocalDateTime(trade.closedAt);
 		trade.closedMarketTime = closedAt == null ? null : closedAt.toLocalTime();
@@ -17374,6 +17446,16 @@ public class FuturesManager {
 		List<Bar> fifteenMinuteBars,
 		List<Bar> oneHourBars
 	) {
+		prepareLivePortfolioSignalEvents(context, previousBars, fifteenMinuteBars, oneHourBars, null);
+	}
+
+	private static void prepareLivePortfolioSignalEvents(
+		PortfolioSymbolContext context,
+		List<Bar> previousBars,
+		List<Bar> fifteenMinuteBars,
+		List<Bar> oneHourBars,
+		Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> orderFlowByDayTime
+	) {
 		if (context == null || context.byDay == null || context.byDay.isEmpty()) {
 			return;
 		}
@@ -17398,7 +17480,7 @@ public class FuturesManager {
 				fifteenMinuteByDay.get(day),
 				oneHourByDay.get(day),
 				context.config,
-				liveOrderFlowMapForBars(context.symbol, bars)
+				orderFlowByDayTime == null ? liveOrderFlowMapForBars(context.symbol, bars) : orderFlowByDayTime
 			);
 			List<SignalEvent> events = new ArrayList<SignalEvent>();
 			for (int signalIndex = 0; signalIndex < signals.size(); signalIndex++) {
@@ -19511,12 +19593,7 @@ public class FuturesManager {
 				liveSession.flattenAttempted = true;
 			}
 		}
-		String stoppedSymbols = cleanSymbolsCsv(cleanOrDefault(session.symbols, DEFAULT_LIVE_SYMBOLS));
-		String marketDataReconciliation = FuturesMarketDataStore.reconcileLiveCapturedMarketDataOnStop(stoppedSymbols);
-		boolean marketDataReconciled = jsonBoolean(marketDataReconciliation, "success");
-		stopMessage = stopMessage + (marketDataReconciled
-			? " Market-data stop merge completed."
-			: " Market-data stop merge needs attention: " + jsonStringSummary(marketDataReconciliation));
+		stopMessage = stopMessage + " Captured market data preserved; run Backtest Refresh Data when you want a missing-only merge/gap-fill.";
 		synchronized (FuturesManager.class) {
 			liveSession.lastUpdatedAt = LocalDateTime.now().format(DISPLAY_TIME_FORMAT);
 			liveSession.lastDecision = stopMessage;
@@ -19533,10 +19610,10 @@ public class FuturesManager {
 				"",
 				"Live bot stopped.",
 				stopMessage,
-				"{\"sessionId\":" + sessionId + ",\"marketDataReconciliation\":" + marketDataReconciliation + "}"
+				"{\"sessionId\":" + sessionId + ",\"capturedMarketDataPreserved\":true,\"manualBacktestRefreshRequired\":true}"
 			);
 		}
-		return "{\"success\":true,\"message\":" + jsonString(stopMessage) + ",\"marketDataReconciliation\":" + marketDataReconciliation + ",\"status\":" + getLiveStatusJson() + "}";
+		return "{\"success\":true,\"message\":" + jsonString(stopMessage) + ",\"capturedMarketDataPreserved\":true,\"manualBacktestRefreshRequired\":true,\"status\":" + getLiveStatusJson() + "}";
 	}
 
 	public static String getLiveTradeCacheJson(String accountId) {
@@ -20107,6 +20184,7 @@ public class FuturesManager {
 		if (contexts.isEmpty()) {
 			return null;
 		}
+		prepareLiveParityPortfolioSignalEvents(contexts);
 
 		List<LocalDate> days = portfolioDays(contexts);
 		if (days.isEmpty()) {
@@ -20119,7 +20197,7 @@ public class FuturesManager {
 		result.startDate = days.get(0).toString();
 		result.endDate = days.get(days.size() - 1).toString();
 		result.startingBalance = round(config.accountSize);
-		result.dataSource = "native futures csv portfolio 1min";
+		result.dataSource = "native futures csv portfolio 1min live_parity_incremental";
 		if (RISK_SIZING_DYNAMIC_COMPOUND_MLL.equals(config.riskSizingMode)) {
 			result.dataSource += " risk_sizing_mode=" + config.riskSizingMode
 				+ " dllUsage=" + round(config.dynamicRiskPolicy.dailyRoomUsagePct)
@@ -20524,10 +20602,12 @@ public class FuturesManager {
 			if (bars.bars.isEmpty()) {
 				return new TreeMap<String, PortfolioSymbolContext>();
 			}
+			InstrumentSpec spec = instrumentFor(symbol);
+			bars = liveParitySignalDataBundle(bars, spec);
 
 			PortfolioSymbolContext context = new PortfolioSymbolContext();
 			context.symbol = symbol;
-			context.spec = instrumentFor(symbol);
+			context.spec = spec;
 			context.bars = bars;
 			context.config = buildBacktestConfig(
 				symbol,
@@ -20569,18 +20649,12 @@ public class FuturesManager {
 			context.config.dailyLossLimit = config.dailyLossLimit;
 			context.config.qualitativeRiskEnabled = config.qualitativeRiskEnabled;
 			context.byDay = groupByDay(bars.bars);
-			context.fifteenMinuteByDay = groupByDay(loadNativeFuturesBars(symbol, config.startDate, config.endDate, "15min").bars);
-			context.oneHourByDay = groupByDay(loadNativeFuturesBars(symbol, config.startDate, config.endDate, "1hour").bars);
 			context.indexByDayTime = indexBarsByDayTime(context.byDay);
 			if (config.dtmEnabled || strategyUsesRangeMidpointContinuation(context.config.strategySettings)) {
 				context.orderFlowByDayTime = loadCombinedOrderFlowSnapshots(symbol, config.startDate, config.endDate);
 			}
-			preparePortfolioSignalEvents(context);
 			contexts.put(symbol, context);
 		}
-		addMymBreadthConfirmationSignalEvents(contexts);
-		addMicroShadowSignalEvents(contexts);
-		addMicroEchoSignalEvents(contexts);
 		return contexts;
 	}
 
@@ -20646,6 +20720,163 @@ public class FuturesManager {
 			});
 			context.eventsByDay.put(day, events);
 		}
+	}
+
+	private static void prepareLiveParityPortfolioSignalEvents(Map<String, PortfolioSymbolContext> contexts) {
+		if (contexts == null || contexts.isEmpty()) {
+			return;
+		}
+		for (PortfolioSymbolContext context : contexts.values()) {
+			if (context != null && context.eventsByDay != null) {
+				context.eventsByDay.clear();
+			}
+		}
+		for (PortfolioSymbolContext context : contexts.values()) {
+			prepareLiveParityBaseSignalEvents(context);
+		}
+		addMymBreadthConfirmationSignalEvents(contexts);
+		addMicroShadowSignalEvents(contexts);
+		addMicroEchoSignalEvents(contexts);
+		filterLiveParityPrecomputedEvents(contexts);
+	}
+
+	private static void prepareLiveParityBaseSignalEvents(PortfolioSymbolContext context) {
+		if (context == null || context.byDay == null || context.byDay.isEmpty()) {
+			return;
+		}
+		List<LocalDate> days = new ArrayList<LocalDate>(context.byDay.keySet());
+		Collections.sort(days);
+		for (int dayIndex = 0; dayIndex < days.size(); dayIndex++) {
+			LocalDate day = days.get(dayIndex);
+			List<Bar> bars = context.byDay.get(day);
+			if (bars == null || bars.size() < 40) {
+				continue;
+			}
+			List<Bar> fifteenMinuteBars = liveHigherTimeframeBarsFromMinuteBars(bars, context.spec, "15m", 96);
+			List<Bar> oneHourBars = liveHigherTimeframeBarsFromMinuteBars(bars, context.spec, "1h", 32);
+			List<Signal> signals = buildSignals(
+				context.spec,
+				bars,
+				previousDayBars(context.byDay, days, dayIndex),
+				fifteenMinuteBars,
+				oneHourBars,
+				context.config,
+				context.orderFlowByDayTime
+			);
+			List<SignalEvent> events = new ArrayList<SignalEvent>();
+			for (int signalIndex = 0; signalIndex < signals.size(); signalIndex++) {
+				Signal signal = signals.get(signalIndex);
+				int executionIndex = signal.entryIndex + 1;
+				if (executionIndex >= bars.size()) {
+					continue;
+				}
+				Bar entryBar = bars.get(executionIndex);
+				if (!isLiveEntryWindowTime(entryBar.marketTime)) {
+					continue;
+				}
+				SignalEvent event = new SignalEvent();
+				event.symbol = context.symbol;
+				event.signal = signal;
+				event.day = day;
+				event.entryTime = entryBar.marketTime;
+				event.executionIndex = executionIndex;
+				if (liveParityPrecomputedEventVisible(context, event)) {
+					events.add(event);
+				}
+			}
+			sortSignalEvents(events);
+			context.eventsByDay.put(day, events);
+		}
+	}
+
+	private static void filterLiveParityPrecomputedEvents(Map<String, PortfolioSymbolContext> contexts) {
+		if (contexts == null || contexts.isEmpty()) {
+			return;
+		}
+		for (PortfolioSymbolContext context : contexts.values()) {
+			if (context == null || context.eventsByDay == null || context.eventsByDay.isEmpty()) {
+				continue;
+			}
+			for (Map.Entry<LocalDate, List<SignalEvent>> entry : context.eventsByDay.entrySet()) {
+				List<SignalEvent> events = entry.getValue();
+				if (events == null || events.isEmpty()) {
+					continue;
+				}
+				List<SignalEvent> filtered = new ArrayList<SignalEvent>();
+				for (int eventIndex = 0; eventIndex < events.size(); eventIndex++) {
+					SignalEvent event = events.get(eventIndex);
+					if (liveParityPrecomputedEventVisible(context, event)) {
+						filtered.add(event);
+					}
+				}
+				sortSignalEvents(filtered);
+				entry.setValue(filtered);
+			}
+		}
+	}
+
+	private static boolean liveParityPrecomputedEventVisible(PortfolioSymbolContext context, SignalEvent event) {
+		if (context == null || event == null || event.signal == null || event.day == null || event.entryTime == null) {
+			return false;
+		}
+		List<Bar> bars = context.byDay.get(event.day);
+		if (bars == null || event.executionIndex < 0 || event.executionIndex >= bars.size()) {
+			return false;
+		}
+		if (event.signal.entryIndex < 0 || event.signal.entryIndex >= event.executionIndex) {
+			return false;
+		}
+		int visibleBars = event.executionIndex + 1;
+		if (visibleBars < liveParityMinimumVisibleBars(event.signal)) {
+			return false;
+		}
+		String code = cleanOrDefault(event.signal.strategyCode, "").toUpperCase(Locale.US);
+		if (("IPB".equals(code) || "MIM".equals(code)) && event.entryTime.isBefore(MARKET_INTRADAY_MOMENTUM_LATE_START)) {
+			return false;
+		}
+		return true;
+	}
+
+	private static int liveParityMinimumVisibleBars(Signal signal) {
+		if (signal == null) {
+			return 40;
+		}
+		String code = cleanOrDefault(signal.strategyCode, "").toUpperCase(Locale.US);
+		if ("LIQREC".equals(code)) {
+			String sourceCode = cleanOrDefault(signal.sourceStrategyCode, "").toUpperCase(Locale.US);
+			return Math.max(40, liveParityMinimumVisibleBars(sourceCode));
+		}
+		return liveParityMinimumVisibleBars(code);
+	}
+
+	private static int liveParityMinimumVisibleBars(String strategyCode) {
+		String code = cleanOrDefault(strategyCode, "").toUpperCase(Locale.US);
+		if ("IPB".equals(code) || "MIM".equals(code)) {
+			return 300;
+		}
+		if ("ORBX".equals(code) || "AFT".equals(code) || "CMOM".equals(code)) {
+			return 120;
+		}
+		if ("LORB".equals(code) || "TLAD".equals(code) || "RCB".equals(code)) {
+			return 90;
+		}
+		if ("BOSRT".equals(code)
+			|| "RMC".equals(code)
+			|| "EIA".equals(code)
+			|| "COPEN".equals(code)
+			|| "MCLTC".equals(code)
+			|| "IDXCONF".equals(code)
+			|| "MYMORB2".equals(code)
+			|| "VPB".equals(code)
+			|| "VRCL".equals(code)
+			|| "MSCALP".equals(code)
+			|| "KELT".equals(code)
+			|| "KREV".equals(code)
+			|| "PDB".equals(code)
+			|| "MYMBR".equals(code)) {
+			return 80;
+		}
+		return 40;
 	}
 
 	private static void addMymBreadthConfirmationSignalEvents(Map<String, PortfolioSymbolContext> contexts) {
@@ -21373,6 +21604,117 @@ public class FuturesManager {
 		candidate.signalTime = displayTime(event == null ? null : event.day, signalTime);
 		candidate.entryTime = displayTime(event == null ? null : event.day, event == null ? null : event.entryTime);
 		return candidate;
+	}
+
+	private static List<SignalEvent> liveParitySignalEventsAt(Map<String, PortfolioSymbolContext> contexts, LocalDate day, LocalTime time) {
+		Map<String, PortfolioSymbolContext> tickContexts = liveParityContextsAt(contexts, day, time);
+		if (tickContexts.isEmpty()) {
+			return new ArrayList<SignalEvent>();
+		}
+		addMymBreadthConfirmationSignalEvents(tickContexts);
+		addMicroShadowSignalEvents(tickContexts);
+		addMicroEchoSignalEvents(tickContexts);
+		List<SignalEvent> events = signalEventsAt(tickContexts, day, time);
+		List<SignalEvent> visibleEvents = new ArrayList<SignalEvent>();
+		for (int index = 0; index < events.size(); index++) {
+			SignalEvent event = events.get(index);
+			PortfolioSymbolContext context = tickContexts.get(event.symbol);
+			if (liveParityEventVisibleAt(context, event, day, time)) {
+				visibleEvents.add(event);
+			}
+		}
+		sortSignalEvents(visibleEvents);
+		return visibleEvents;
+	}
+
+	private static Map<String, PortfolioSymbolContext> liveParityContextsAt(Map<String, PortfolioSymbolContext> contexts, LocalDate day, LocalTime time) {
+		Map<String, PortfolioSymbolContext> tickContexts = new TreeMap<String, PortfolioSymbolContext>();
+		if (contexts == null || contexts.isEmpty() || day == null || time == null) {
+			return tickContexts;
+		}
+		for (PortfolioSymbolContext source : contexts.values()) {
+			PortfolioSymbolContext tickContext = liveParityContextAt(source, day, time);
+			if (tickContext != null) {
+				tickContexts.put(tickContext.symbol, tickContext);
+			}
+		}
+		return tickContexts;
+	}
+
+	private static PortfolioSymbolContext liveParityContextAt(PortfolioSymbolContext source, LocalDate day, LocalTime time) {
+		if (source == null || source.byDay == null || source.indexByDayTime == null || day == null || time == null) {
+			return null;
+		}
+		List<Bar> bars = source.byDay.get(day);
+		Map<LocalTime, Integer> byTime = source.indexByDayTime.get(day);
+		if (bars == null || byTime == null) {
+			return null;
+		}
+		Integer currentIndexValue = byTime.get(time);
+		if (currentIndexValue == null || currentIndexValue.intValue() <= 0 || currentIndexValue.intValue() >= bars.size()) {
+			return null;
+		}
+		int currentIndex = currentIndexValue.intValue();
+		List<Bar> prefixBars = new ArrayList<Bar>(bars.subList(0, currentIndex + 1));
+		PortfolioSymbolContext tickContext = livePortfolioContext(source.symbol, source.spec, source.config, prefixBars);
+		tickContext.bars = source.bars;
+		tickContext.orderFlowByDayTime = orderFlowPrefix(source.orderFlowByDayTime, day, time);
+		List<LocalDate> days = new ArrayList<LocalDate>(source.byDay.keySet());
+		Collections.sort(days);
+		int dayIndex = days.indexOf(day);
+		List<Bar> previousBars = dayIndex < 0 ? new ArrayList<Bar>() : previousDayBars(source.byDay, days, dayIndex);
+		List<Bar> fifteenMinuteBars = liveHigherTimeframeBarsFromMinuteBars(prefixBars, source.spec, "15m", 96);
+		List<Bar> oneHourBars = liveHigherTimeframeBarsFromMinuteBars(prefixBars, source.spec, "1h", 32);
+		prepareLivePortfolioSignalEvents(tickContext, previousBars, fifteenMinuteBars, oneHourBars, tickContext.orderFlowByDayTime);
+		return tickContext;
+	}
+
+	private static Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> orderFlowPrefix(
+		Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> source,
+		LocalDate day,
+		LocalTime time
+	) {
+		Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> prefix = new HashMap<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>>();
+		if (source == null || source.isEmpty() || day == null || time == null) {
+			return prefix;
+		}
+		for (Map.Entry<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> dayEntry : source.entrySet()) {
+			if (dayEntry.getKey() == null || dayEntry.getValue() == null) {
+				continue;
+			}
+			if (dayEntry.getKey().isAfter(day)) {
+				continue;
+			}
+			Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot> byTime = new HashMap<LocalTime, LiveRuntimeState.OrderFlowSnapshot>();
+			for (Map.Entry<LocalTime, LiveRuntimeState.OrderFlowSnapshot> timeEntry : dayEntry.getValue().entrySet()) {
+				if (timeEntry.getKey() == null || timeEntry.getValue() == null) {
+					continue;
+				}
+				if (dayEntry.getKey().isBefore(day) || !timeEntry.getKey().isAfter(time)) {
+					byTime.put(timeEntry.getKey(), timeEntry.getValue());
+				}
+			}
+			if (!byTime.isEmpty()) {
+				prefix.put(dayEntry.getKey(), byTime);
+			}
+		}
+		return prefix;
+	}
+
+	private static boolean liveParityEventVisibleAt(PortfolioSymbolContext context, SignalEvent event, LocalDate day, LocalTime time) {
+		if (context == null || event == null || event.signal == null || day == null || time == null) {
+			return false;
+		}
+		if (!day.equals(event.day) || !time.equals(event.entryTime)) {
+			return false;
+		}
+		Integer currentIndex = barIndex(context, day, time);
+		if (currentIndex == null) {
+			return false;
+		}
+		return event.executionIndex == currentIndex.intValue()
+			&& event.signal.entryIndex < currentIndex.intValue()
+			&& event.executionIndex < context.byDay.get(day).size();
 	}
 
 	private static List<SignalEvent> signalEventsAt(Map<String, PortfolioSymbolContext> contexts, LocalDate day, LocalTime time) {
@@ -27719,6 +28061,7 @@ public class FuturesManager {
 
 	private static Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> loadCombinedOrderFlowSnapshots(String symbol, LocalDate startDate, LocalDate endDate) {
 		Map<LocalDate, Map<LocalTime, LiveRuntimeState.OrderFlowSnapshot>> snapshots = loadSyntheticOrderFlowSnapshots(symbol, startDate, endDate);
+		FuturesMarketDataStore.initializeStore();
 		InstrumentSpec spec = instrumentFor(symbol);
 		String sql = "SELECT timestamp, bestBid, bestAsk, spreadTicks, depthImbalance3, depthImbalance5, depthImbalance10, "
 			+ "topBookImbalance, tapeDelta, cvd, bidWallDistanceTicks, askWallDistanceTicks, bidStacking, askStacking, "

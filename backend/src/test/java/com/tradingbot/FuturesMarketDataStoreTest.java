@@ -173,7 +173,7 @@ public class FuturesMarketDataStoreTest {
 	}
 
 	@Test
-	public void stopLiveMergesCapturedMarketDataWithoutTopstepGapFill() throws Exception {
+	public void stopLivePreservesCapturedMarketDataWithoutBacktestRefresh() throws Exception {
 		TestDatabaseSupport.useTempDatabase(tempDir);
 		Path futuresDir = tempDir.resolve("futures");
 		Files.createDirectories(futuresDir.resolve("1min"));
@@ -190,12 +190,34 @@ public class FuturesMarketDataStoreTest {
 		String result = FuturesManager.stopLive();
 
 		assertTrue(result.contains("\"success\":true"), result);
-		assertTrue(result.contains("\"marketDataReconciliation\""), result);
-		assertTrue(result.contains("\"level1CaptureMerge\""), result);
-		assertTrue(result.contains("\"level2GapFill\""), result);
+		assertTrue(!result.contains("\"marketDataReconciliation\""), result);
+		assertTrue(!result.contains("\"level1CaptureMerge\""), result);
+		assertTrue(!result.contains("\"level2GapFill\""), result);
 		assertTrue(!result.contains("\"topstepGapFill\""), result);
-		assertEquals(1, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesMarketDataReconciliations"));
-		assertTrue(Files.readString(futuresDir.resolve("1min").resolve("MGC.csv")).contains("4527.4"), result);
+		assertEquals(1, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesLiveCapturedBars WHERE symbol = 'MGC'"));
+		assertEquals(0, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesMarketDataReconciliations"));
+		assertTrue(!Files.exists(futuresDir.resolve("1min").resolve("MGC.csv")), result);
+	}
+
+	@Test
+	public void liveCaptureStoresProviderMetadataSeparatelyFromDerivedFields() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		FuturesMarketDataStore.initializeStore();
+
+		FuturesMarketDataStore.recordRealtimeEvent(
+			"market",
+			"GatewayQuote",
+			"MES",
+			"{\"lastPrice\":5300.25,\"bestBid\":5300.0,\"bestAsk\":5300.5,\"vwap\":5299.75,\"volume\":12000}",
+			"2026-06-04 09:31:00"
+		);
+
+		assertEquals("LIVE_CAPTURED", queryString("SELECT source FROM FuturesLiveCapturedBars WHERE symbol = 'MES'"));
+		assertTrue(queryString("SELECT sourceDetail FROM FuturesLiveCapturedBars WHERE symbol = 'MES'").contains("GatewayQuote"));
+		assertEquals(5300.0, queryDouble("SELECT bestBid FROM FuturesLiveCapturedBars WHERE symbol = 'MES'"), 0.0001);
+		assertEquals(5300.5, queryDouble("SELECT bestAsk FROM FuturesLiveCapturedBars WHERE symbol = 'MES'"), 0.0001);
+		assertEquals(5300.25, queryDouble("SELECT lastPrice FROM FuturesLiveCapturedBars WHERE symbol = 'MES'"), 0.0001);
+		assertEquals(5299.75, queryDouble("SELECT providerVwap FROM FuturesLiveCapturedBars WHERE symbol = 'MES'"), 0.0001);
 	}
 
 	@Test
@@ -428,6 +450,14 @@ public class FuturesMarketDataStoreTest {
 				 Statement stmt = conn.createStatement();
 				 ResultSet rs = stmt.executeQuery(sql)) {
 			return rs.next() ? rs.getDouble(1) : 0.0;
+		}
+	}
+
+	private String queryString(String sql) throws Exception {
+		try (Connection conn = DatabaseManager.getConnection();
+				 Statement stmt = conn.createStatement();
+				 ResultSet rs = stmt.executeQuery(sql)) {
+			return rs.next() ? rs.getString(1) : "";
 		}
 	}
 

@@ -44,6 +44,28 @@ public class FuturesManagerDtmAccountingTest {
 		assertEquals("DTM_RUNNER_EXTENDED", stringField(trade, "dtmRunnerDecision"));
 	}
 
+	@Test
+	public void liveFlatSyncTradeReportsTotalPnlWithDtmPartialExactlyOnce() throws Exception {
+		Object position = portfolioPosition("MCL", "LONG", "LIQREC", "2026-06-15 15:18", "3053614409", 81.11, 80.94, 81.36);
+		setField(position, "contracts", Integer.valueOf(3));
+		setField(position, "originalContracts", Integer.valueOf(6));
+		setField(position, "dtmPartialContractsClosed", Integer.valueOf(3));
+		setField(position, "dtmRealizedPnl", Double.valueOf(73.56));
+
+		Object closeFill = nestedInstance("BrokerCloseFill");
+		setField(closeFill, "matched", Boolean.TRUE);
+		setField(closeFill, "orderId", "3053615581");
+		setField(closeFill, "createdAt", "2026-06-15 15:23");
+		setField(closeFill, "price", Double.valueOf(81.36));
+		setField(closeFill, "pnl", Double.valueOf(72.69));
+
+		Object trade = liveFlatSyncTrade(position, closeFill);
+
+		assertEquals(72.69, doubleField(trade, "finalLegPnl"), 0.0001);
+		assertEquals(73.56, doubleField(trade, "dtmRealizedPnl"), 0.0001);
+		assertEquals(146.25, doubleField(trade, "pnl"), 0.0001);
+	}
+
 	private static Object portfolioPosition(String symbol, String side, String strategyCode, String openedAt, String orderId, double entry, double stop, double target) throws Exception {
 		Object position = nestedInstance("PortfolioPosition");
 		setField(position, "symbol", symbol);
@@ -104,6 +126,12 @@ public class FuturesManagerDtmAccountingTest {
 		);
 		method.setAccessible(true);
 		method.invoke(null, Integer.valueOf(sessionId), Integer.valueOf(snapshotId), position, trade, finalActionOverride);
+	}
+
+	private static Object liveFlatSyncTrade(Object position, Object closeFill) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("liveFlatSyncTrade", position.getClass(), closeFill.getClass());
+		method.setAccessible(true);
+		return method.invoke(null, position, closeFill);
 	}
 
 	private static void resetDynamicTradeStatesForSession(int sessionId) throws Exception {

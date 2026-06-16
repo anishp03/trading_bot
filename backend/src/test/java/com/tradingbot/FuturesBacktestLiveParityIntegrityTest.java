@@ -12,8 +12,10 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.Statement;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -25,6 +27,7 @@ public class FuturesBacktestLiveParityIntegrityTest {
 
 	@AfterEach
 	public void tearDown() {
+		System.clearProperty("tradingbot.futuresDataDir");
 		TestDatabaseSupport.clearTempDatabase();
 	}
 
@@ -74,16 +77,34 @@ public class FuturesBacktestLiveParityIntegrityTest {
 			),
 			0.0001
 		);
-			assertEquals(
-				75.0,
-				liveDecisionRealizedPnl("SIMULATED_TARGET_EXIT", "{\"pnl\":75.0}"),
-				0.0001
-			);
-			assertTrue(!liveDecisionPnlAuthoritative("CLOSED_TOPSTEPX", "{\"pnl\":587.56,\"exitPrice\":29810.75}"));
-			assertTrue(liveDecisionPnlAuthoritative(
+		assertEquals(
+			146.25,
+			liveDecisionRealizedPnl(
 				"FLAT_SYNC_TOPSTEPX",
-				"{\"pnl\":202.88,\"brokerClose\":{\"authoritative\":true,\"source\":\"TOPSTEPX_METRICS_RECONCILE\"}}"
-			));
+				"{\"pnl\":72.69,\"finalLegPnl\":72.69,\"dtmRealizedPnl\":73.56,\"dtmPartialContractsClosed\":3,"
+					+ "\"brokerClose\":{\"authoritative\":true,\"source\":\"TOPSTEPX_METRICS_RECONCILE\",\"pnl\":72.69}}"
+			),
+			0.0001
+		);
+		assertEquals(
+			146.25,
+			liveDecisionRealizedPnl(
+				"FLAT_SYNC_TOPSTEPX",
+				"{\"pnl\":146.25,\"finalLegPnl\":72.69,\"dtmRealizedPnl\":73.56,\"dtmPartialContractsClosed\":3,"
+					+ "\"brokerClose\":{\"authoritative\":true,\"source\":\"TOPSTEPX_METRICS_RECONCILE\",\"pnl\":72.69}}"
+			),
+			0.0001
+		);
+		assertEquals(
+			75.0,
+			liveDecisionRealizedPnl("SIMULATED_TARGET_EXIT", "{\"pnl\":75.0}"),
+			0.0001
+		);
+		assertTrue(!liveDecisionPnlAuthoritative("CLOSED_TOPSTEPX", "{\"pnl\":587.56,\"exitPrice\":29810.75}"));
+		assertTrue(liveDecisionPnlAuthoritative(
+			"FLAT_SYNC_TOPSTEPX",
+			"{\"pnl\":202.88,\"brokerClose\":{\"authoritative\":true,\"source\":\"TOPSTEPX_METRICS_RECONCILE\"}}"
+		));
 	}
 
 	@Test
@@ -191,6 +212,107 @@ public class FuturesBacktestLiveParityIntegrityTest {
 
 		assertTrue(json.contains("\"continueAfterRuleViolation\":true"), json);
 		assertTrue(json.contains("\"dailyLossLimit\":1000"), json);
+	}
+
+	@Test
+	public void liveParityReplayDoesNotEmitJune15MnqOpeningMomentumFromFullDayFutureBars() throws Exception {
+		useSharedRuntimeFuturesData();
+		Object config = buildPortfolioBacktestConfig("MNQ", "2026-06-15", "2026-06-15", false);
+		setField(config, "strategyPreset", "bestbiasfree");
+		setField(config, "strategySlot", "PRESET_BESTBIASFREE");
+		Map<?, ?> contexts = buildPortfolioContexts(config);
+
+		assertFalse(contexts.isEmpty(), "MNQ context should load June 15 one-minute bars.");
+
+		List<?> events = liveParitySignalEventsAt(contexts, LocalDate.parse("2026-06-15"), LocalTime.parse("09:52"));
+
+		assertFalse(hasSignal(events, "MNQ", "OMOM"), "MNQ 09:52 OMOM required future same-day bars in the legacy full-day event builder.");
+	}
+
+	@Test
+	public void liveParityReplayDoesNotEmitJune15NqIpbFromFutureLateReferenceBar() throws Exception {
+		useSharedRuntimeFuturesData();
+		Object config = buildPortfolioBacktestConfig("NQ", "2026-06-15", "2026-06-15", false);
+		setField(config, "strategyPreset", "bestbiasfree");
+		setField(config, "strategySlot", "PRESET_BESTBIASFREE");
+		Map<?, ?> contexts = buildPortfolioContexts(config);
+
+		assertFalse(contexts.isEmpty(), "NQ context should load June 15 one-minute bars.");
+
+		List<?> elevenThirtyNine = liveParitySignalEventsAt(contexts, LocalDate.parse("2026-06-15"), LocalTime.parse("11:39"));
+		List<?> twelveOhTwo = liveParitySignalEventsAt(contexts, LocalDate.parse("2026-06-15"), LocalTime.parse("12:02"));
+
+		assertFalse(hasSignal(elevenThirtyNine, "NQ", "IPB"), "NQ 11:39 IPB must not borrow a 14:30 late-session reference bar.");
+		assertFalse(hasSignal(twelveOhTwo, "NQ", "IPB"), "NQ 12:02 IPB must not borrow a 14:30 late-session reference bar.");
+	}
+
+	@Test
+	public void liveParityReplayAllowsJune15MclLateSetupWithDerivedHigherTimeframes() throws Exception {
+		useSharedRuntimeFuturesData();
+		Object config = buildPortfolioBacktestConfig("MCL", "2026-06-15", "2026-06-15", false);
+		setField(config, "strategyPreset", "bestbiasfree");
+		setField(config, "strategySlot", "PRESET_BESTBIASFREE");
+		Map<?, ?> contexts = buildPortfolioContexts(config);
+
+		assertFalse(contexts.isEmpty(), "MCL context should load June 15 one-minute bars.");
+
+		List<?> events = liveParitySignalEventsAt(contexts, LocalDate.parse("2026-06-15"), LocalTime.parse("15:18"));
+
+		assertTrue(
+			hasSignal(events, "MCL", "LIQREC") || hasSignal(events, "MCL", "AFT"),
+			"MCL 15:18 should be evaluated with live-style HTF bars derived from the visible one-minute prefix."
+		);
+	}
+
+	@Test
+	public void liveParityBacktestDerivesJune15EsSignalVwapLikeLive() throws Exception {
+		useSharedRuntimeFuturesData();
+		Object config = buildPortfolioBacktestConfig("ES", "2026-06-15", "2026-06-15", false);
+		setField(config, "strategyPreset", "bestbiasfree");
+		setField(config, "strategySlot", "PRESET_BESTBIASFREE");
+		Map<?, ?> contexts = buildPortfolioContexts(config);
+
+		assertFalse(contexts.isEmpty(), "ES context should load June 15 one-minute bars.");
+
+		Object signalBar = barAt(contexts.get("ES"), LocalDate.parse("2026-06-15"), LocalTime.parse("13:54"));
+		assertNotNull(signalBar);
+		assertTrue(
+			doubleField(signalBar, "vwap") < 7630.0,
+			"Live-parity signal bars must recompute cumulative RTH VWAP instead of trusting the native CSV row value."
+		);
+
+		List<?> events = liveParitySignalEventsAt(contexts, LocalDate.parse("2026-06-15"), LocalTime.parse("13:55"));
+
+		assertFalse(
+			hasSourceSignal(events, "ES", "LIQREC", "VWAP", "SHORT"),
+			"ES 13:55 LIQREC short was caused by the native CSV VWAP being treated as live-visible strategy state."
+		);
+	}
+
+	@Test
+	public void liveParityDailyPrecomputeMatchesExactJune15ReplayAtRegressionTimes() throws Exception {
+		useSharedRuntimeFuturesData();
+		Object config = buildPortfolioBacktestConfig("MNQ,NQ,MCL", "2026-06-15", "2026-06-15", false);
+		setField(config, "strategyPreset", "bestbiasfree");
+		setField(config, "strategySlot", "PRESET_BESTBIASFREE");
+		Map<?, ?> contexts = buildPortfolioContexts(config);
+		LocalDate day = LocalDate.parse("2026-06-15");
+		LocalTime[] times = new LocalTime[] {
+			LocalTime.parse("09:52"),
+			LocalTime.parse("11:39"),
+			LocalTime.parse("12:02"),
+			LocalTime.parse("15:18")
+		};
+		List<java.util.Set<String>> exactKeys = new ArrayList<java.util.Set<String>>();
+		for (int index = 0; index < times.length; index++) {
+			exactKeys.add(eventKeys(liveParitySignalEventsAt(contexts, day, times[index])));
+		}
+
+		prepareLiveParityPortfolioSignalEvents(contexts);
+
+		for (int index = 0; index < times.length; index++) {
+			assertEquals(exactKeys.get(index), eventKeys(signalEventsAt(contexts, day, times[index])));
+		}
 	}
 
 	@Test
@@ -568,6 +690,10 @@ public class FuturesBacktestLiveParityIntegrityTest {
 	}
 
 	private static Object buildPortfolioBacktestConfig(String symbols, boolean useSavedRisk) throws Exception {
+		return buildPortfolioBacktestConfig(symbols, "2026-06-01", "2026-06-10", useSavedRisk);
+	}
+
+	private static Object buildPortfolioBacktestConfig(String symbols, String startDate, String endDate, boolean useSavedRisk) throws Exception {
 		Method method = FuturesManager.class.getDeclaredMethod(
 			"buildPortfolioBacktestConfig",
 			String.class,
@@ -591,8 +717,8 @@ public class FuturesBacktestLiveParityIntegrityTest {
 		return method.invoke(
 			null,
 			symbols,
-			"2026-06-01",
-			"2026-06-10",
+			startDate,
+			endDate,
 			Double.valueOf(50000.0),
 			Double.valueOf(2000.0),
 			Double.valueOf(1000.0),
@@ -606,6 +732,101 @@ public class FuturesBacktestLiveParityIntegrityTest {
 			Boolean.valueOf(useSavedRisk),
 			Double.valueOf(0.0),
 			"TOPSTEP_50K"
+		);
+	}
+
+	private static Map<?, ?> buildPortfolioContexts(Object config) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("buildPortfolioContexts", config.getClass());
+		method.setAccessible(true);
+		return (Map<?, ?>) method.invoke(null, config);
+	}
+
+	private static List<?> liveParitySignalEventsAt(Map<?, ?> contexts, LocalDate day, LocalTime time) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("liveParitySignalEventsAt", Map.class, LocalDate.class, LocalTime.class);
+		method.setAccessible(true);
+		return (List<?>) method.invoke(null, contexts, day, time);
+	}
+
+	private static void prepareLiveParityPortfolioSignalEvents(Map<?, ?> contexts) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("prepareLiveParityPortfolioSignalEvents", Map.class);
+		method.setAccessible(true);
+		method.invoke(null, contexts);
+	}
+
+	private static List<?> signalEventsAt(Map<?, ?> contexts, LocalDate day, LocalTime time) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("signalEventsAt", Map.class, LocalDate.class, LocalTime.class);
+		method.setAccessible(true);
+		return (List<?>) method.invoke(null, contexts, day, time);
+	}
+
+	private static java.util.Set<String> eventKeys(List<?> events) throws Exception {
+		java.util.Set<String> keys = new java.util.TreeSet<String>();
+		for (Object event : events) {
+			Object signal = field(event, "signal");
+			keys.add(
+				stringField(event, "symbol")
+					+ "|"
+					+ (signal == null ? "" : stringField(signal, "strategyCode"))
+					+ "|"
+					+ (signal == null ? "" : stringField(signal, "side"))
+					+ "|"
+					+ field(event, "entryTime")
+			);
+		}
+		return keys;
+	}
+
+	private static boolean hasSignal(List<?> events, String symbol, String strategyCode) throws Exception {
+		for (Object event : events) {
+			if (symbol.equals(stringField(event, "symbol"))) {
+				Object signal = field(event, "signal");
+				if (signal != null && strategyCode.equals(stringField(signal, "strategyCode"))) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private static boolean hasSourceSignal(List<?> events, String symbol, String strategyCode, String sourceStrategyCode, String side) throws Exception {
+		for (Object event : events) {
+			if (!symbol.equals(stringField(event, "symbol"))) {
+				continue;
+			}
+			Object signal = field(event, "signal");
+			if (signal == null) {
+				continue;
+			}
+			if (
+				strategyCode.equals(stringField(signal, "strategyCode"))
+					&& sourceStrategyCode.equals(stringField(signal, "sourceStrategyCode"))
+					&& side.equals(stringField(signal, "side"))
+			) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Object barAt(Object context, LocalDate day, LocalTime time) throws Exception {
+		Map<LocalDate, List<?>> byDay = (Map<LocalDate, List<?>>) field(context, "byDay");
+		List<?> bars = byDay.get(day);
+		if (bars == null) {
+			return null;
+		}
+		for (Object bar : bars) {
+			if (time.equals(field(bar, "marketTime"))) {
+				return bar;
+			}
+		}
+		return null;
+	}
+
+	private static void useSharedRuntimeFuturesData() {
+		System.setProperty(
+			"tradingbot.futuresDataDir",
+			Path.of("..", "..", "shared_runtime", "market_data", "futures").toAbsolutePath().normalize().toString()
 		);
 	}
 
