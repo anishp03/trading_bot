@@ -15,6 +15,10 @@ import {
   shouldAppendLivePatchCandle,
   visibleLiveEventDetailEntries,
 } from "./futuresLiveChartUtils.js";
+import {
+  composeTradeCacheRealizedPnl,
+  mergeTradeCachePnlFields,
+} from "./liveTradeCacheUtils.js";
 import { apiFetch, isApiNetworkError } from "../utils/api.js";
 import { EASTERN_TIME_LABEL, formatEstTime } from "../utils/time.js";
 
@@ -385,8 +389,8 @@ export default function FuturesLive() {
   );
   const tradeMetricCount = allTradeRows.length;
   const displayMonitor = useMemo(
-    () => resolveDisplayMonitor(liveMonitor, monitorCache, symbolsCsv, selectedTimeframe, monitorDataActive, selectedChartSymbol),
-    [monitorDataActive, liveMonitor, monitorCache, selectedChartSymbol, selectedTimeframe, symbolsCsv]
+    () => resolveDisplayMonitor(liveMonitor, monitorCache, symbolsCsv, selectedTimeframe, selectedChartSymbol),
+    [liveMonitor, monitorCache, selectedChartSymbol, selectedTimeframe, symbolsCsv]
   );
   const rawChartCandles = useMemo(
     () => displayMonitor?.marketData?.[selectedChartSymbol] || [],
@@ -1546,9 +1550,17 @@ function LiveRiskHeartbeatCard({ heartbeat }) {
         <RiskHeartbeatMetric label="Daily PnL" value={formatCurrency(safe.dailyPnl)} accent={safe.dailyPnl} />
         <RiskHeartbeatMetric label="DLL Room" value={formatAccountCurrency(safe.dailyRiskRoom)} accent={safe.dailyRiskRoom > safe.configuredMaxRisk ? 1 : safe.dailyRiskRoom <= 0 ? -1 : 0} />
         <RiskHeartbeatMetric label="MLL Room" value={formatAccountCurrency(safe.trailingCushion)} accent={safe.trailingCushion > 0 ? 1 : -1} />
-        <RiskHeartbeatMetric label={safe.riskSizingMode === RISK_SIZING_DYNAMIC ? "Dynamic Cap" : "Risk Cap"} value={formatAccountCurrency(safe.dynamicMaxRisk)} />
-        <RiskHeartbeatMetric label="Max Risk Now" value={formatAccountCurrency(safe.effectiveMaxRisk)} />
+        <RiskHeartbeatMetric label="Configured Cap" value={formatAccountCurrency(safe.configuredMaxRisk)} />
+        <RiskHeartbeatMetric label="Mode Cap" value={formatAccountCurrency(safe.modeAdjustedCap)} detail={safe.modeCapLabel} />
+        <RiskHeartbeatMetric label="Max Risk Now" value={formatAccountCurrency(safe.effectiveMaxRisk)} accent={safe.effectiveMaxRisk <= 0 ? -1 : safe.effectiveMaxRisk < safe.configuredMaxRisk ? -0.5 : 1} detail="Risk budget, not target" />
       </div>
+      <div className="futures-risk-heartbeat-breakdown">
+        <span><b>DLL Budget</b>{formatAccountCurrency(safe.dllRiskBudget)}</span>
+        <span><b>MLL Budget</b>{formatAccountCurrency(safe.mllRiskBudget)}</span>
+        <span><b>Limited by</b>{safe.limitingBudgetLabel}</span>
+        <span><b>Ratio</b>{formatNumber(safe.riskSizingRatio, 2)}x</span>
+      </div>
+      <p className="futures-risk-heartbeat-note">{safe.riskExplanation}</p>
       <div className="futures-risk-heartbeat-foot">
         <span>Risk <b>{safe.riskSizingLabel}</b></span>
         <span>{safe.riskSizingMode === RISK_SIZING_DYNAMIC ? "DLL Reserve" : "DLL Guard"} <b>{formatAccountCurrency(safe.riskSizingMode === RISK_SIZING_DYNAMIC ? safe.riskPolicy?.dllReserveDollars || 0 : safe.dailyRiskRoom)}</b></span>
@@ -1561,12 +1573,13 @@ function LiveRiskHeartbeatCard({ heartbeat }) {
   );
 }
 
-function RiskHeartbeatMetric({ label, value, accent = 0 }) {
+function RiskHeartbeatMetric({ label, value, accent = 0, detail = "" }) {
   const tone = accent > 0 ? "pos" : accent < 0 ? "neg" : "";
   return (
     <div className="futures-risk-heartbeat-metric">
       <span>{label}</span>
       <strong className={tone}>{value}</strong>
+      {detail && <em>{detail}</em>}
     </div>
   );
 }
@@ -3169,8 +3182,7 @@ function latestSessionChartCandles(candles) {
   return latestSession.length > 0 ? latestSession : series;
 }
 
-function resolveDisplayMonitor(liveMonitor, monitorCache, symbolsCsv, selectedTimeframe, monitorActive, selectedSymbol) {
-  if (!monitorActive) return null;
+function resolveDisplayMonitor(liveMonitor, monitorCache, symbolsCsv, selectedTimeframe, selectedSymbol) {
   const normalizedTimeframe = normalizeClientTimeframe(selectedTimeframe);
   const cacheKey = liveMonitorCacheKey(symbolsCsv, normalizedTimeframe);
   const liveTimeframe = normalizeClientTimeframe(liveMonitor?.timeframe);
@@ -3721,6 +3733,15 @@ function buildBrokerClosedTradeRows(trades, provenance = []) {
     const reason = entryPrice > 0
       ? "Topstep Trade/search paired the entry and close fills."
       : "Topstep Trade/search reported a close fill with no entry fill in the current broker window.";
+    const pnlFields = mergeTradeCachePnlFields(
+      {
+        pnl: Number(trade.pnl || 0),
+        finalLegPnl: Number(trade.pnl || 0),
+        dtmRealizedPnl: matchedDecision?.dtmRealizedPnl,
+        dtmPartialContractsClosed: matchedDecision?.dtmPartialContractsClosed,
+      },
+      matchedDecision || {}
+    );
     rows.push({
       id: brokerStableRowId("topstep-trade", trade.accountId, symbol, positionSide, entryTime || trade.createdAt, trade.id || trade.orderId || index),
       symbol,
@@ -3731,7 +3752,7 @@ function buildBrokerClosedTradeRows(trades, provenance = []) {
       contracts: rowContracts,
       entryPrice,
       exitPrice: fillPrice,
-      pnl: Number(trade.pnl || 0),
+      ...pnlFields,
       status: "SOLD_TOPSTEP",
       tradeReason: matchedDecision?.tradeReason || {},
       entryReasoning: matchedDecision?.entryReasoning || matchedDecision?.tradeReason?.entry || {},
@@ -3804,7 +3825,10 @@ function buildLocalClosedTradeCacheRows(trades, accountId = "") {
         contracts,
         entryPrice,
         exitPrice,
-        pnl: Number(trade.pnl || 0),
+        pnl: composeTradeCacheRealizedPnl(trade),
+        finalLegPnl: finiteNumberOrNull(trade.finalLegPnl),
+        dtmRealizedPnl: finiteNumberOrNull(trade.dtmRealizedPnl),
+        dtmPartialContractsClosed: finiteNumberOrNull(trade.dtmPartialContractsClosed),
         status: "SOLD_TOPSTEP",
         tradeReason: trade.tradeReason || {},
         entryReasoning: trade.entryReasoning || trade.tradeReason?.entry || {},
@@ -3903,7 +3927,10 @@ function normalizeCachedBrokerTradeRow(row, accountId = "") {
     contracts,
     entryPrice,
     exitPrice,
-    pnl: finiteNumberOrNull(row?.pnl) || 0,
+    pnl: composeTradeCacheRealizedPnl(row),
+    finalLegPnl: finiteNumberOrNull(row?.finalLegPnl),
+    dtmRealizedPnl: finiteNumberOrNull(row?.dtmRealizedPnl),
+    dtmPartialContractsClosed: finiteNumberOrNull(row?.dtmPartialContractsClosed),
     status: row?.status || "SOLD_TOPSTEP",
     entryReason: row?.entryReason || "",
     exitReason: row?.exitReason || "",
@@ -3955,9 +3982,11 @@ function hydrateBrokerTradeRow(row, cachedRow) {
   const exitReason = useCachedStrategy || isUntrackedReason(row?.exitReason)
     ? tradeReasonExitText(mergedTradeReason) || cachedRow.exitReason || row?.exitReason
     : tradeReasonExitText(mergedTradeReason) || row?.exitReason || cachedRow.exitReason;
+  const pnlFields = mergeTradeCachePnlFields(row, cachedRow);
   return {
     ...cachedRow,
     ...row,
+    ...pnlFields,
     strategyCode: currentCode || cachedCode,
     strategyName: currentCode ? row.strategyName || cachedRow.strategyName : cachedRow.strategyName || row?.strategyName,
     tradeReason: mergedTradeReason,
@@ -4236,6 +4265,9 @@ function enrichBrokerDecisionWithExit(decision, decisions) {
     ...decision,
     status: exit.status || decision.status,
     pnl: exit.pnl,
+    finalLegPnl: exit.finalLegPnl,
+    dtmRealizedPnl: exit.dtmRealizedPnl,
+    dtmPartialContractsClosed: exit.dtmPartialContractsClosed,
     exitPrice: exit.exitPrice,
     tradeReason: mergeTradeReasonPayloads(decision.tradeReason, exit.tradeReason),
     entryReasoning: decision.entryReasoning || decision.tradeReason?.entry || {},
@@ -5995,6 +6027,17 @@ function buildLiveRiskHeartbeat({
   const dllRiskBudget = Math.max(0, dailyRiskRoom - Math.max(0, riskPolicy.dllReserveDollars)) * clampNumber(riskPolicy.dailyRoomUsagePct, 0, 1);
   const mllRiskBudget = Math.max(0, trailingCushion - Math.max(0, riskPolicy.mllReserveDollars)) * clampNumber(riskPolicy.mllRoomUsagePct, 0, 1);
   const effectiveMaxRisk = Math.min(dynamicMaxRisk, dllRiskBudget, mllRiskBudget);
+  const riskSizingRatio = configuredMaxRisk > 0 ? dynamicMaxRisk / configuredMaxRisk : 0;
+  const modeCapLabel = selectedRiskSizingMode === RISK_SIZING_DYNAMIC ? "MLL scaled" : "Static cap";
+  const budgetLimits = [
+    { label: modeCapLabel, value: dynamicMaxRisk },
+    { label: "DLL budget", value: dllRiskBudget },
+    { label: "MLL budget", value: mllRiskBudget },
+  ];
+  const limitingBudget = budgetLimits.reduce((lowest, candidate) => (
+    candidate.value < lowest.value ? candidate : lowest
+  ), budgetLimits[0]);
+  const limitingBudgetLabel = `${limitingBudget.label} ${formatAccountCurrency(limitingBudget.value)}`;
   const brokerReady = metrics?.brokerMetricsReady !== false && (metrics?.dataSource === BROKER_SOURCE_TOPSTEPX || isAuthoritativeTopstepBrokerSnapshot(broker, metrics));
   const selectedAccountId = String(accountId || metrics?.accountId || broker.accountId || liveStatus?.practiceAccountId || "").trim();
   const commissionPerContract = firstFiniteNumber(liveStatus?.commissionPerContract, 1.24);
@@ -6020,8 +6063,11 @@ function buildLiveRiskHeartbeat({
   }
   const source = brokerReady ? "TopstepX" : metrics?.dataSource || "Local";
   const summary = botStarted
-    ? `${balanceMode === "PNL" ? "Funded PnL mode" : "Equity mode"} | ${formatAccountCurrency(dailyRiskRoom)} DLL room`
+    ? `${balanceMode === "PNL" ? "Funded PnL mode" : "Equity mode"} | Max risk ${formatAccountCurrency(effectiveMaxRisk)}`
     : "Start bot to stream account risk";
+  const riskExplanation = effectiveMaxRisk <= 0
+    ? `Blocked by ${limitingBudgetLabel}. Risk budget, not target. Strategy target and DTM exits remain separate.`
+    : `Limited by ${limitingBudgetLabel}. Risk budget, not target. Strategy target and DTM exits remain separate.`;
   return {
     accountId: selectedAccountId,
     balanceMode,
@@ -6032,9 +6078,14 @@ function buildLiveRiskHeartbeat({
     trailingCushion,
     configuredMaxRisk,
     dynamicMaxRisk,
+    modeAdjustedCap: dynamicMaxRisk,
+    modeCapLabel,
+    riskSizingRatio,
     dllRiskBudget,
     mllRiskBudget,
     effectiveMaxRisk,
+    limitingBudgetLabel,
+    riskExplanation,
     riskSizingMode: selectedRiskSizingMode,
     riskSizingLabel: riskOption.label,
     riskPolicy,

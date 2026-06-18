@@ -8881,6 +8881,9 @@ public class FuturesManager {
 							.append("\"status\":").append(jsonString(rs.getString("status"))).append(",")
 							.append("\"pnl\":").append(round(displayPnl)).append(",")
 							.append("\"rawPnl\":").append(round(jsonNumber(payload, "pnl", 0.0))).append(",")
+							.append("\"finalLegPnl\":").append(round(jsonNumber(payload, "finalLegPnl", 0.0))).append(",")
+							.append("\"dtmRealizedPnl\":").append(round(jsonNumber(payload, "dtmRealizedPnl", 0.0))).append(",")
+							.append("\"dtmPartialContractsClosed\":").append((int) Math.round(jsonNumber(payload, "dtmPartialContractsClosed", 0.0))).append(",")
 							.append("\"pnlAuthoritative\":").append(pnlAuthoritative).append(",")
 							.append("\"mfe\":").append(round(jsonNumber(payload, "mfe", 0.0))).append(",")
 							.append("\"mae\":").append(round(jsonNumber(payload, "mae", 0.0))).append(",")
@@ -16490,7 +16493,7 @@ public class FuturesManager {
 		double targetR = dtmTargetR(position);
 		int currentIndex = currentIndexOrEntry(position, context, bar);
 		int barsHeld = Math.max(0, currentIndex - Math.max(0, position.entryIndex));
-		double breakevenTriggerR = dtmTargetAwareTrigger(DTM_BREAKEVEN_TRIGGER_R, targetR, DTM_BREAKEVEN_TARGET_FRACTION, 1.35);
+		double breakevenTriggerR = dtmTargetAwareTrigger(dtmBreakevenTriggerR(), targetR, DTM_BREAKEVEN_TARGET_FRACTION, 1.35);
 		double partialTriggerR = dtmTargetAwareTrigger(DTM_PARTIAL_TRIGGER_R, targetR, DTM_PARTIAL_TARGET_FRACTION, 2.50);
 		double trailTriggerR = dtmTargetAwareTrigger(DTM_TRAIL_TRIGGER_R, targetR, DTM_TRAIL_TARGET_FRACTION, 2.00);
 		LiveRuntimeState.OrderFlowSnapshot flow = orderFlow == null ? LiveRuntimeState.orderFlowSnapshot(position.symbol) : orderFlow;
@@ -17163,6 +17166,14 @@ public class FuturesManager {
 	private static double dtmTargetAwareTrigger(double baseTriggerR, double targetR, double targetFraction, double maxTriggerR) {
 		double targetAware = targetR > 0.0 ? targetR * targetFraction : 0.0;
 		return Math.min(Math.max(baseTriggerR, targetAware), Math.max(baseTriggerR, maxTriggerR));
+	}
+
+	private static double dtmBreakevenTriggerR() {
+		return clamp(
+			parseDouble(System.getProperty("tradingbot.dtm.breakevenTriggerR"), DTM_BREAKEVEN_TRIGGER_R),
+			0.25,
+			9.0
+		);
 	}
 
 	private static boolean dtmDynamicProtectiveOrdersEnabled() {

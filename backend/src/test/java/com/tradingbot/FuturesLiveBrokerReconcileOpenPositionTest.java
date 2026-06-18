@@ -61,6 +61,78 @@ public class FuturesLiveBrokerReconcileOpenPositionTest {
 	}
 
 	@Test
+	public void pendingBrokerReconcileStillAllowsBrokerMetricsResolution() throws Exception {
+		insertSnapshot();
+		insertLiveDecision(
+			86,
+			"SUBMITTED_TOPSTEPX",
+			"2026-06-16 10:26",
+			"2026-06-16 10:27",
+			"TopstepX order submitted from live signal (order 3137373702).",
+			"{\"brokerSubmit\":{\"success\":true,\"orderId\":3137373702,\"brokerOrderId\":\"3137373702\"}}"
+		);
+		insertLiveDecision(
+			87,
+			"PENDING_BROKER_RECONCILE",
+			"2026-06-16 10:27",
+			"2026-06-16 10:27",
+			"TopstepX reports no open broker position for MNQ, but no matching broker close fill was found yet for order 3137373702.",
+			"{\"status\":\"PENDING_BROKER_RECONCILE\",\"symbol\":\"MNQ\",\"brokerOrderId\":\"3137373702\"}"
+		);
+		String brokerMetrics = "{"
+			+ "\"success\":true,"
+			+ "\"source\":\"TOPSTEPX\","
+			+ "\"positions\":[],"
+			+ "\"trades\":[{"
+				+ "\"accountId\":\"24175826\","
+				+ "\"symbol\":\"MNQ\","
+				+ "\"side\":\"BUY\","
+				+ "\"closed\":true,"
+				+ "\"orderId\":3137373704,"
+				+ "\"createdAt\":\"2026-06-16T14:27:34.000000+00:00\","
+				+ "\"price\":30695.0,"
+				+ "\"pnl\":112.0,"
+				+ "\"fees\":1.24"
+			+ "}]"
+		+ "}";
+
+		int reconciled = reconcileBrokerFlatLiveEntries(74, 47, brokerMetrics);
+
+		assertEquals(1, reconciled);
+		assertEquals(112.0, resolvedDecisionPnl());
+		assertEquals(0, liveOpenPositionsForSession(74, 47).size(), "resolved reconcile must keep DTM management closed");
+	}
+
+	@Test
+	public void liveDecisionHistoryExposesDtmPnlComponents() throws Exception {
+		insertSnapshot();
+		insertLiveDecision(
+			88,
+			"FLAT_SYNC_TOPSTEPX",
+			"2026-06-15 15:18",
+			"2026-06-15T19:37:44.403079+00:00",
+			"TopstepX matched broker close fill.",
+			"{\"openedAt\":\"2026-06-15 15:18\","
+				+ "\"closedAt\":\"2026-06-15T19:37:44.403079+00:00\","
+				+ "\"entryPrice\":81.11,"
+				+ "\"exitPrice\":81.36,"
+				+ "\"pnl\":72.69,"
+				+ "\"finalLegPnl\":72.69,"
+				+ "\"dtmRealizedPnl\":73.56,"
+				+ "\"dtmPartialContractsClosed\":3,"
+				+ "\"brokerClose\":{\"success\":true,\"status\":\"FLAT_SYNC_TOPSTEPX\",\"authoritative\":true}}"
+		);
+
+		String json = FuturesManager.getLiveSignalDecisionsJson(74, 10);
+
+		assertTrue(json.contains("\"pnl\":146.25"), json);
+		assertTrue(json.contains("\"rawPnl\":72.69"), json);
+		assertTrue(json.contains("\"finalLegPnl\":72.69"), json);
+		assertTrue(json.contains("\"dtmRealizedPnl\":73.56"), json);
+		assertTrue(json.contains("\"dtmPartialContractsClosed\":3"), json);
+	}
+
+	@Test
 	public void brokerManagementBlockedStateSuppressesFurtherTopstepxDtmManagement() throws Exception {
 		Object topstepSession = liveSession("TOPSTEPX");
 		Object simulatedSession = liveSession("SIMULATED");
@@ -82,6 +154,12 @@ public class FuturesLiveBrokerReconcileOpenPositionTest {
 		Method method = FuturesManager.class.getDeclaredMethod("dtmBrokerManagementSuspended", session.getClass(), state.getClass());
 		method.setAccessible(true);
 		return ((Boolean) method.invoke(null, session, state)).booleanValue();
+	}
+
+	private static int reconcileBrokerFlatLiveEntries(int sessionId, int snapshotId, String brokerMetricsJson) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("reconcileBrokerFlatLiveEntries", int.class, int.class, String.class);
+		method.setAccessible(true);
+		return ((Integer) method.invoke(null, sessionId, snapshotId, brokerMetricsJson)).intValue();
 	}
 
 	private static Object liveSession(String executionMode) throws Exception {
@@ -133,6 +211,21 @@ public class FuturesLiveBrokerReconcileOpenPositionTest {
 			stmt.setString(5, reason);
 			stmt.setString(6, payloadJson);
 			stmt.executeUpdate();
+		}
+	}
+
+	private static double resolvedDecisionPnl() throws Exception {
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement stmt = conn.prepareStatement(
+				"SELECT payloadJson FROM FuturesLiveSignalDecisions WHERE sessionID = 74 AND snapshotID = 47 AND symbol = 'MNQ' AND status = 'FLAT_SYNC_TOPSTEPX' ORDER BY decisionID DESC LIMIT 1"
+			 )) {
+			try (java.sql.ResultSet rs = stmt.executeQuery()) {
+				assertTrue(rs.next(), "expected a resolved broker flat-sync decision");
+				String payload = rs.getString("payloadJson");
+				Method method = FuturesManager.class.getDeclaredMethod("jsonNumber", String.class, String.class, double.class);
+				method.setAccessible(true);
+				return ((Double) method.invoke(null, payload, "pnl", 0.0)).doubleValue();
+			}
 		}
 	}
 }

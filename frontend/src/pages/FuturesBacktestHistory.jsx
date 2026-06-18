@@ -290,10 +290,8 @@ export default function FuturesBacktestHistory() {
             <AnalyticsSummary summary={selectedSegments.summary} run={previewRun} />
             <ProfitVisuals symbols={selectedSymbols} monthly={selectedSegments.monthly} />
             <div className="row g-3 mt-1">
-              <SymbolTable symbols={selectedSymbols} />
-              <SegmentTable title="Daily" segments={selectedSegments.daily} />
-              <SegmentTable title="Weekly" segments={selectedSegments.weekly} />
-              <SegmentTable title="Monthly" segments={selectedSegments.monthly} />
+              <SegmentBarPanel title="Daily" segments={selectedSegments.daily} emptyText="No daily segment data yet." />
+              <SegmentBarPanel title="Weekly" segments={selectedSegments.weekly} emptyText="No weekly segment data yet." />
             </div>
           </div>
 
@@ -381,67 +379,6 @@ function formatReplaySemantics(dataSource) {
   return "";
 }
 
-function SegmentTable({ title, segments }) {
-  return (
-    <div className="col-12 col-lg-6">
-      <div className="app-card h-100 futures-segment-card">
-        <div className="fw-bold app-kicker mb-2">{title}</div>
-        <div className="app-table-wrap strategy-table-wrap futures-segment-scroll">
-          <div className="app-grid-head futures-segment-grid">
-            <div>Period</div>
-            <div>P/L</div>
-            <div>Trades</div>
-            <div>Win</div>
-            <div>Avg</div>
-          </div>
-          {segments.map((segment) => (
-            <div key={segment.segment} className="app-grid-row futures-segment-grid">
-              <div>{formatSegmentPeriod(segment.segment)}</div>
-              <div className={segment.pnl >= 0 ? "app-pnl-pos" : "app-pnl-neg"}>{formatCurrency(segment.pnl)}</div>
-              <div>{segment.trades}</div>
-              <div>{formatPercent(segment.winRate)}</div>
-              <div>{formatCurrency(segment.avgPnl)}</div>
-            </div>
-          ))}
-          {segments.length === 0 && <div className="app-empty">No segment data yet.</div>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SymbolTable({ symbols }) {
-  return (
-    <div className="col-12 col-lg-6">
-      <div className="app-card h-100 futures-segment-card">
-        <div className="fw-bold app-kicker mb-2">By Contract</div>
-        <div className="app-table-wrap strategy-table-wrap futures-segment-scroll">
-          <div className="app-grid-head futures-segment-grid">
-            <div>Symbol</div>
-            <div>P/L</div>
-            <div>Trades</div>
-            <div>Win</div>
-            <div>Avg</div>
-          </div>
-          {symbols.map((symbol) => (
-            <div key={symbol.symbol} className="app-grid-row futures-segment-grid">
-              <div>
-                <strong>{symbol.symbol}</strong>
-                {symbol.contractName && <div className="app-muted">{symbol.contractName}</div>}
-              </div>
-              <div className={symbol.pnl >= 0 ? "app-pnl-pos" : "app-pnl-neg"}>{formatCurrency(symbol.pnl)}</div>
-              <div>{symbol.trades}</div>
-              <div>{formatPercent(symbol.winRate)}</div>
-              <div>{formatCurrency(symbol.avgPnl)}</div>
-            </div>
-          ))}
-          {symbols.length === 0 && <div className="app-empty">No symbol contribution data yet.</div>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function AnalyticsSummary({ summary, run }) {
   if (!summary) return null;
   return (
@@ -463,6 +400,19 @@ function AnalyticsSummary({ summary, run }) {
       <AnalyticsTile label="Avg R/R" value={formatNumber(summary.averageRiskReward, 2)} />
     </div>
   );
+}
+
+function SegmentBarPanel({ title, segments, emptyText }) {
+  const rows = Array.isArray(segments)
+    ? segments.map((segment) => ({
+        key: segment.segment,
+        label: formatSegmentPeriod(segment.segment),
+        value: Number(segment.pnl || 0),
+        meta: `${formatNumber(segment.trades, 0)} trades · ${formatPercent(segment.winRate)} win`,
+      }))
+    : [];
+
+  return <BarPanel title={title} rows={rows} scrollable emptyText={emptyText} />;
 }
 
 function ProfitVisuals({ symbols, monthly }) {
@@ -497,13 +447,13 @@ function ProfitVisuals({ symbols, monthly }) {
   );
 }
 
-function BarPanel({ title, rows }) {
+function BarPanel({ title, rows, scrollable = false, emptyText = "No visual data yet." }) {
   const maxAbs = Math.max(1, ...rows.map((row) => Math.abs(row.value)));
   return (
     <div className="col-12 col-xl-6">
       <div className="app-card h-100 futures-profit-chart">
         <div className="fw-bold app-kicker mb-2">{title}</div>
-        <div className="futures-profit-bar-list">
+        <div className={scrollable ? "futures-profit-bar-list futures-profit-bar-list-scroll" : "futures-profit-bar-list"}>
           {rows.map((row) => {
             const percent = Math.max(2, Math.round((Math.abs(row.value) / maxAbs) * 100));
             const positive = row.value >= 0;
@@ -526,7 +476,7 @@ function BarPanel({ title, rows }) {
               </div>
             );
           })}
-          {rows.length === 0 && <div className="app-empty">No visual data yet.</div>}
+          {rows.length === 0 && <div className="app-empty">{emptyText}</div>}
         </div>
       </div>
     </div>

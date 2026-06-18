@@ -902,6 +902,30 @@ textarea {
   gap: 0.62rem;
 }
 
+.futures-profit-bar-list-scroll {
+  max-height: 430px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.28rem;
+  scrollbar-color: rgba(255, 255, 255, 0.26) rgba(255, 255, 255, 0.04);
+  scrollbar-width: thin;
+}
+
+.futures-profit-bar-list-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.futures-profit-bar-list-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 999px;
+}
+
+.futures-profit-bar-list-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border: 2px solid rgba(17, 24, 39, 0.9);
+  border-radius: 999px;
+}
+
 .futures-profit-bar-row {
   display: grid;
   grid-template-columns: minmax(86px, 0.58fr) minmax(120px, 1fr) minmax(110px, 0.7fr);
@@ -953,6 +977,14 @@ textarea {
   justify-items: end;
   gap: 1px;
   min-width: 0;
+}
+
+.futures-profit-bar-value strong,
+.futures-profit-bar-value span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .strategy-grid {
@@ -1180,8 +1212,39 @@ textarea {
 }
 
 .futures-portfolio-run-grid {
-  grid-template-columns: 0.44fr minmax(150px, 1.08fr) minmax(78px, 0.52fr) 0.58fr 0.82fr 0.66fr 0.78fr 0.52fr 0.55fr 0.55fr 0.82fr 0.68fr 0.68fr minmax(96px, 0.72fr);
-  min-width: 1260px;
+  grid-template-columns: 58px minmax(146px, 1.02fr) minmax(82px, 0.54fr) minmax(70px, 0.46fr) minmax(108px, 0.72fr) minmax(84px, 0.52fr) minmax(94px, 0.58fr) minmax(64px, 0.42fr) minmax(70px, 0.42fr) minmax(100px, 0.58fr) minmax(110px, 0.66fr) minmax(82px, 0.48fr) minmax(150px, 0.78fr) minmax(124px, 0.66fr);
+  min-width: 1360px;
+  gap: 6px;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.futures-portfolio-run-grid > div {
+  min-width: 0;
+}
+
+.futures-portfolio-run-grid > div:nth-child(13) {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.futures-portfolio-run-grid > div:nth-child(13) .app-badge {
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.08rem;
+}
+
+.futures-portfolio-run-grid > div:last-child {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.futures-portfolio-run-grid > div:last-child .app-btn {
+  max-width: 100%;
+  white-space: nowrap;
 }
 
 .futures-trade-grid {
@@ -3462,7 +3525,7 @@ textarea {
 
 .futures-risk-heartbeat-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -3498,12 +3561,65 @@ textarea {
   text-overflow: ellipsis;
 }
 
+.futures-risk-heartbeat-metric em {
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.52);
+  font-size: 0.64rem;
+  font-style: normal;
+  font-weight: 750;
+  line-height: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .futures-risk-heartbeat-metric strong.pos {
   color: rgba(146, 232, 177, 0.98);
 }
 
 .futures-risk-heartbeat-metric strong.neg {
   color: rgba(255, 141, 141, 0.98);
+}
+
+.futures-risk-heartbeat-breakdown {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.futures-risk-heartbeat-breakdown span {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.028);
+  color: var(--app-link);
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1rem;
+  padding: 8px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.futures-risk-heartbeat-breakdown b {
+  color: var(--app-muted);
+  font-size: 0.66rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.futures-risk-heartbeat-note {
+  margin: 0;
+  border-left: 3px solid rgba(125, 211, 252, 0.36);
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.76rem;
+  line-height: 1.15rem;
+  padding: 2px 0 2px 10px;
 }
 
 .futures-risk-heartbeat-foot {
@@ -5369,7 +5485,8 @@ textarea {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .futures-risk-heartbeat-grid {
+  .futures-risk-heartbeat-grid,
+  .futures-risk-heartbeat-breakdown {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
@@ -5527,6 +5644,7 @@ textarea {
   .futures-chart-symbol-row,
   .futures-symbol-state-grid,
   .futures-risk-heartbeat-grid,
+  .futures-risk-heartbeat-breakdown,
   .futures-risk-heartbeat-foot,
   .futures-bot-tracker-grid,
   .documents-pipeline-grid,
@@ -6486,6 +6604,7 @@ textarea {
   }
 
   .futures-risk-heartbeat-grid,
+  .futures-risk-heartbeat-breakdown,
   .futures-risk-heartbeat-foot {
     grid-template-columns: minmax(0, 1fr);
   }
