@@ -74,6 +74,17 @@ public class RuntimeMutationGuardTest {
 	}
 
 	@Test
+	public void stoppedEventClearsStaleLatestRunningSession() throws Exception {
+		System.setProperty("tradingbot.runtimeRole", "live");
+		insertRunningLiveSession();
+		insertBotStoppedEvent(1);
+
+		RuntimeMutationGuard.Decision decision = RuntimeMutationGuard.backtestMutationAllowed("portfolio-backtest");
+
+		assertTrue(decision.allowed, decision.message);
+	}
+
+	@Test
 	public void historicalSubmittedLedgerDoesNotBlockBacktestGeneration() throws Exception {
 		System.setProperty("tradingbot.runtimeRole", "live");
 		insertLedgerRow("SUBMITTED_TOPSTEPX");
@@ -121,6 +132,16 @@ public class RuntimeMutationGuardTest {
 				"INSERT INTO FuturesLiveOrderLedger (snapshotID, accountId, symbol, side, orderType, contracts, entryPrice, stopPrice, targetPrice, status, requestJson, responseJson, createdAt, updatedAt) "
 					+ "VALUES (1, 'acct', 'MNQ', 'SHORT', 'MARKET', 1, 100.0, 101.0, 99.0, ?, '{}', '{}', '2026-06-06 09:45', '2026-06-06 09:45')")) {
 			stmt.setString(1, status);
+			stmt.executeUpdate();
+		}
+	}
+
+	private static void insertBotStoppedEvent(int sessionId) throws Exception {
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement stmt = conn.prepareStatement(
+				 "INSERT INTO FuturesLiveThinkingLog (sessionID, eventType, phase, tone, symbol, barTime, summary, detail, detailsJson, createdAt) "
+					 + "VALUES (?, 'BOT_STOPPED', 'Live Bot', 'closed', '', '', 'Live bot stopped.', 'test stopped', '{}', '2026-06-06 09:47')")) {
+			stmt.setInt(1, sessionId);
 			stmt.executeUpdate();
 		}
 	}

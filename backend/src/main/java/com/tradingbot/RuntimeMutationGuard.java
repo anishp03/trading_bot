@@ -48,8 +48,13 @@ final class RuntimeMutationGuard {
 			 Statement stmt = conn.createStatement()) {
 			state.runningSessions = count(stmt,
 				"SELECT COUNT(*) FROM ("
-					+ "SELECT status FROM FuturesLiveEngineSessions ORDER BY sessionID DESC LIMIT 1"
-					+ ") WHERE UPPER(COALESCE(status, '')) = 'RUNNING'"
+					+ "SELECT sessionID, status FROM FuturesLiveEngineSessions ORDER BY sessionID DESC LIMIT 1"
+					+ ") latest WHERE UPPER(COALESCE(status, '')) = 'RUNNING' "
+					+ "AND NOT EXISTS ("
+					+ "SELECT 1 FROM FuturesLiveThinkingLog "
+					+ "WHERE sessionID = latest.sessionID "
+					+ "AND UPPER(COALESCE(eventType, '')) = 'BOT_STOPPED'"
+					+ ")"
 			);
 			state.pendingOrders = count(stmt,
 				"SELECT COUNT(*) FROM FuturesLiveOrderLedger "

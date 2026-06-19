@@ -24,24 +24,26 @@ public class DtmBreakevenRetestVariationRunner {
 	private static class Variant {
 		private final String name;
 		private final boolean dtmEnabled;
+		private final boolean dtmBreakevenEnabled;
 		private final double dtmBreakevenTriggerR;
 		private final boolean disableLegacyManagedStops;
 
-		private Variant(String name, boolean dtmEnabled, double dtmBreakevenTriggerR, boolean disableLegacyManagedStops) {
+		private Variant(String name, boolean dtmEnabled, boolean dtmBreakevenEnabled, double dtmBreakevenTriggerR, boolean disableLegacyManagedStops) {
 			this.name = name;
 			this.dtmEnabled = dtmEnabled;
+			this.dtmBreakevenEnabled = dtmBreakevenEnabled;
 			this.dtmBreakevenTriggerR = dtmBreakevenTriggerR;
 			this.disableLegacyManagedStops = disableLegacyManagedStops;
 		}
 	}
 
 	private static final Variant[] VARIANTS = new Variant[] {
-		new Variant("current_dtm_be075", true, 0.75, false),
-		new Variant("dtm_delayed_be125", true, 1.25, false),
-		new Variant("dtm_delayed_be200", true, 2.00, false),
-		new Variant("dtm_no_breakeven_900", true, 9.00, false),
-		new Variant("dtm_off_current_legacy", false, 0.75, false),
-		new Variant("dtm_off_legacy_stops_disabled", false, 0.75, true)
+		new Variant("official_dtm_no_breakeven", true, false, 0.75, false),
+		new Variant("diagnostic_dtm_be075", true, true, 0.75, false),
+		new Variant("diagnostic_dtm_be125", true, true, 1.25, false),
+		new Variant("diagnostic_dtm_be200", true, true, 2.00, false),
+		new Variant("dtm_off_current_legacy", false, false, 0.75, false),
+		new Variant("dtm_off_legacy_stops_disabled", false, false, 0.75, true)
 	};
 
 	public static void main(String[] args) throws Exception {
@@ -72,8 +74,9 @@ public class DtmBreakevenRetestVariationRunner {
 
 		System.out.println("ANALYSIS_DB=" + analysisDb);
 		System.out.println("FUTURES_DATA_DIR=" + futuresDataDir);
-		System.out.println("variant,runId,dtmEnabled,dtmBreakevenTriggerR,trades,pnl,returnPct,winPct,pf,maxDdPct,maxIntradayLoss,maxMae,stopTrades,managedStopTrades,lossCutTrades,targetTrades,dtmBreakevenTrades,dtmTrailTrades,dtmPartialTrades,dtmEarlyCutTrades,dtmExtensionTrades,ruleViolation");
+		System.out.println("variant,runId,dtmEnabled,dtmBreakevenEnabled,dtmBreakevenTriggerR,trades,pnl,returnPct,winPct,pf,maxDdPct,maxIntradayLoss,maxMae,stopTrades,managedStopTrades,lossCutTrades,targetTrades,dtmBreakevenTrades,dtmTrailTrades,dtmPartialTrades,dtmEarlyCutTrades,dtmExtensionTrades,ruleViolation");
 		for (Variant variant : VARIANTS) {
+			System.setProperty("tradingbot.dtm.breakevenEnabled", String.valueOf(variant.dtmBreakevenEnabled));
 			System.setProperty("tradingbot.dtm.breakevenTriggerR", String.valueOf(variant.dtmBreakevenTriggerR));
 			applyVariantSettings(variant);
 			int id = runPortfolio(variant);
@@ -142,13 +145,14 @@ public class DtmBreakevenRetestVariationRunner {
 			runStmt.setInt(1, id);
 			try (ResultSet rs = runStmt.executeQuery()) {
 				if (!rs.next()) {
-					System.out.println(variant.name + "," + id + "," + variant.dtmEnabled + "," + variant.dtmBreakevenTriggerR + ",missing");
+					System.out.println(variant.name + "," + id + "," + variant.dtmEnabled + "," + variant.dtmBreakevenEnabled + "," + variant.dtmBreakevenTriggerR + ",missing");
 					return;
 				}
 				ExitMix mix = exitMix(conn, id);
 				System.out.println(variant.name
 					+ "," + id
 					+ "," + variant.dtmEnabled
+					+ "," + variant.dtmBreakevenEnabled
 					+ "," + round(variant.dtmBreakevenTriggerR)
 					+ "," + rs.getInt("numTrades")
 					+ "," + round(rs.getDouble("totalProfit"))

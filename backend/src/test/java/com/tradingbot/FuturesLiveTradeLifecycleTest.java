@@ -1,6 +1,7 @@
 package com.tradingbot;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.AfterEach;
@@ -42,6 +43,7 @@ public class FuturesLiveTradeLifecycleTest {
 		assertTrue(json.contains("DTM_PARTIAL_HALF_RUNNER_EXTENDED"), json);
 		assertTrue(json.contains("SIMULATED_DTM_PARTIAL_CLOSE"), json);
 		assertTrue(json.contains("DTM_CUT_EARLY_THESIS_FAILED"), json);
+		assertFalse(json.contains("DTM_MOVE_STOP_BREAKEVEN"), json);
 		assertTrue(json.contains("\"tradeReason\""), json);
 		assertTrue(json.contains("\"entryReasoning\""), json);
 		assertTrue(json.contains("\"exitReasoning\""), json);

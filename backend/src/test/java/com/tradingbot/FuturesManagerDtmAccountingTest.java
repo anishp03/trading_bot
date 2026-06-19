@@ -66,6 +66,15 @@ public class FuturesManagerDtmAccountingTest {
 		assertEquals(146.25, doubleField(trade, "pnl"), 0.0001);
 	}
 
+	@Test
+	public void dtmTrailingStopUsesTrailDistanceInsteadOfBreakevenFallback() throws Exception {
+		FuturesManager.InstrumentSpec spec = new FuturesManager.InstrumentSpec();
+		spec.tickSize = 1.0;
+
+		assertEquals(105.0, updateDtmTrailingStop(spec, "LONG", 98.0, 107.0, 2.0), 0.0001);
+		assertEquals(101.0, updateDtmTrailingStop(spec, "SHORT", 106.0, 99.0, 2.0), 0.0001);
+	}
+
 	private static Object portfolioPosition(String symbol, String side, String strategyCode, String openedAt, String orderId, double entry, double stop, double target) throws Exception {
 		Object position = nestedInstance("PortfolioPosition");
 		setField(position, "symbol", symbol);
@@ -132,6 +141,19 @@ public class FuturesManagerDtmAccountingTest {
 		Method method = FuturesManager.class.getDeclaredMethod("liveFlatSyncTrade", position.getClass(), closeFill.getClass());
 		method.setAccessible(true);
 		return method.invoke(null, position, closeFill);
+	}
+
+	private static double updateDtmTrailingStop(FuturesManager.InstrumentSpec spec, String side, double activeStop, double closePrice, double trailDistance) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod(
+			"updateDtmTrailingStop",
+			FuturesManager.InstrumentSpec.class,
+			String.class,
+			double.class,
+			double.class,
+			double.class
+		);
+		method.setAccessible(true);
+		return ((Double) method.invoke(null, spec, side, Double.valueOf(activeStop), Double.valueOf(closePrice), Double.valueOf(trailDistance))).doubleValue();
 	}
 
 	private static void resetDynamicTradeStatesForSession(int sessionId) throws Exception {

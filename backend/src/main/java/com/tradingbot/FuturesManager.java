@@ -16516,7 +16516,10 @@ public class FuturesManager {
 		double targetR = dtmTargetR(position);
 		int currentIndex = currentIndexOrEntry(position, context, bar);
 		int barsHeld = Math.max(0, currentIndex - Math.max(0, position.entryIndex));
-		double breakevenTriggerR = dtmTargetAwareTrigger(dtmBreakevenTriggerR(), targetR, DTM_BREAKEVEN_TARGET_FRACTION, 1.35);
+		boolean dtmBreakevenEnabled = dtmBreakevenProtectionEnabled();
+		double breakevenTriggerR = dtmBreakevenEnabled
+			? dtmTargetAwareTrigger(dtmBreakevenTriggerR(), targetR, DTM_BREAKEVEN_TARGET_FRACTION, 1.35)
+			: Double.POSITIVE_INFINITY;
 		double partialTriggerR = dtmTargetAwareTrigger(DTM_PARTIAL_TRIGGER_R, targetR, DTM_PARTIAL_TARGET_FRACTION, 2.50);
 		double trailTriggerR = dtmTargetAwareTrigger(DTM_TRAIL_TRIGGER_R, targetR, DTM_TRAIL_TARGET_FRACTION, 2.00);
 		LiveRuntimeState.OrderFlowSnapshot flow = orderFlow == null ? LiveRuntimeState.orderFlowSnapshot(position.symbol) : orderFlow;
@@ -16587,7 +16590,7 @@ public class FuturesManager {
 				return extensionDecision;
 			}
 		}
-		if (!brokerManagementSuspended && barsHeld >= dtmMinimumBarsBeforeProtect(position) && favorableCloseR >= breakevenTriggerR && !state.breakevenMoved) {
+		if (dtmBreakevenEnabled && !brokerManagementSuspended && barsHeld >= dtmMinimumBarsBeforeProtect(position) && favorableCloseR >= breakevenTriggerR && !state.breakevenMoved) {
 			double stop = "LONG".equals(position.side)
 				? roundToTick(position.spec, position.entryPrice + position.spec.tickSize)
 				: roundToTick(position.spec, position.entryPrice - position.spec.tickSize);
@@ -16744,7 +16747,7 @@ public class FuturesManager {
 			}
 		}
 		if (!brokerManagementSuspended && barsHeld >= dtmMinimumBarsBeforeTargetManagement(position) && favorableCloseR >= trailTriggerR) {
-			double trail = updateManagedStop(position.spec, position.side, position.entryPrice, position.activeStopPrice, bar.close, position.initialRisk, position.minTrailDistance);
+			double trail = updateDtmTrailingStop(position.spec, position.side, position.activeStopPrice, bar.close, position.minTrailDistance);
 			if (stopImprovesRisk(position, trail) && Math.abs(trail - state.lastStopPrice) >= position.spec.tickSize - 0.000001) {
 				DynamicTradeDecision decision = new DynamicTradeDecision();
 				decision.actionCode = "DTM_TRAIL_STOP";
@@ -17197,6 +17200,10 @@ public class FuturesManager {
 			0.25,
 			9.0
 		);
+	}
+
+	private static boolean dtmBreakevenProtectionEnabled() {
+		return parseBoolean(System.getProperty("tradingbot.dtm.breakevenEnabled"), false);
 	}
 
 	private static boolean dtmDynamicProtectiveOrdersEnabled() {
@@ -19312,12 +19319,7 @@ public class FuturesManager {
 		if (!"OPEN_ORDER".equals(cleanOrDefault(source, "").toUpperCase(Locale.US))) {
 			return false;
 		}
-		double fillVolume = jsonFirstNumber(
-			ledger + payload,
-			new String[] { "fillVolume", "filledVolume", "filledQuantity", "filledSize" },
-			0.0
-		);
-		return fillVolume <= 0.0;
+		return true;
 	}
 
 	private static FuturesLiveSession copyLiveSession(FuturesLiveSession source) {
@@ -29151,6 +29153,17 @@ public class FuturesManager {
 
 	private static double updateManagedStop(InstrumentSpec spec, String side, double entryPrice, double activeStop, double closePrice, double initialRisk, double trailDistance) {
 		return updateManagedStop(spec, side, entryPrice, activeStop, closePrice, initialRisk, trailDistance, null);
+	}
+
+	private static double updateDtmTrailingStop(InstrumentSpec spec, String side, double activeStop, double closePrice, double trailDistance) {
+		if (spec == null || spec.tickSize <= 0.0 || trailDistance <= 0.0) {
+			return activeStop;
+		}
+		double effectiveTrailDistance = Math.max(spec.tickSize, trailDistance);
+		if ("LONG".equals(side)) {
+			return roundToTick(spec, Math.max(activeStop, closePrice - effectiveTrailDistance));
+		}
+		return roundToTick(spec, Math.min(activeStop, closePrice + effectiveTrailDistance));
 	}
 
 	private static double updateManagedStop(InstrumentSpec spec, String side, double entryPrice, double activeStop, double closePrice, double initialRisk, double trailDistance, FuturesStrategySettings settings) {

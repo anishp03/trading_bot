@@ -123,6 +123,25 @@ public class FuturesLiveBrokerReconcileOpenPositionTest {
 	}
 
 	@Test
+	public void partiallyFilledOpenOrderIsNotManagedAsFullOpenPosition() throws Exception {
+		insertSnapshot();
+		insertLiveDecision(
+			86,
+			"SUBMITTED_TOPSTEPX",
+			"2026-06-18 15:00",
+			"2026-06-18 15:01",
+			"TopstepX order submitted from live signal (order 3154221481).",
+			"{\"brokerSubmit\":{\"success\":true,\"orderId\":3154221481,\"brokerOrderId\":\"3154221481\","
+				+ "\"verificationSource\":\"OPEN_ORDER\",\"verification\":{\"attempted\":true,\"source\":\"OPEN_ORDER\","
+				+ "\"order\":{\"id\":3154221481,\"fillVolume\":1,\"filledPrice\":4236.9}}}}"
+		);
+
+		List<?> positions = liveOpenPositionsForSession(74, 47);
+
+		assertEquals(0, positions.size(), "open-order verification must not create a full-size managed position even if broker reports a partial fill");
+	}
+
+	@Test
 	public void openOrderVerifiedEntryDoesNotBecomePendingBrokerReconcile() throws Exception {
 		insertSnapshot();
 		insertLiveDecision(
