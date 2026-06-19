@@ -19794,9 +19794,10 @@ public class FuturesManager {
 		if (!liveTradeCachePayloadMatchesAccount(payload, cleanAccountId)) {
 			return "{\"success\":false,\"message\":\"Live trade cache payload account does not match the selected account.\",\"accountId\":" + jsonString(cleanAccountId) + "}";
 		}
+		String sanitizedPayload = sanitizeLiveTradeCachePayload(payload, cleanAccountId);
 		File file = liveTradeCacheFile(cleanAccountId);
 		try {
-			Files.write(file.toPath(), payload.getBytes(StandardCharsets.UTF_8));
+			Files.write(file.toPath(), sanitizedPayload.getBytes(StandardCharsets.UTF_8));
 			return "{"
 				+ "\"success\":true,"
 				+ "\"message\":\"Live trade cache saved.\","
@@ -29623,6 +29624,38 @@ public class FuturesManager {
 			}
 		}
 		return true;
+	}
+
+	private static String sanitizeLiveTradeCachePayload(String payloadJson, String cleanAccountId) {
+		String cleanTarget = cleanLiveTradeCacheAccountId(cleanAccountId);
+		List<String> rows = jsonArrayObjects(payloadJson, "rows");
+		StringBuilder sanitizedRows = new StringBuilder();
+		int accepted = 0;
+		int droppedLocalDecisionRows = 0;
+		for (int index = 0; index < rows.size(); index++) {
+			String row = rows.get(index);
+			if (liveTradeCacheRowIsLocalDecision(row)) {
+				droppedLocalDecisionRows++;
+				continue;
+			}
+			if (accepted > 0) {
+				sanitizedRows.append(",");
+			}
+			sanitizedRows.append(row);
+			accepted++;
+		}
+		return "{"
+			+ "\"success\":true,"
+			+ "\"version\":" + Math.max(1, (int) Math.round(jsonNumber(payloadJson, "version", 1.0))) + ","
+			+ "\"accountId\":" + jsonString(cleanTarget) + ","
+			+ "\"updatedAt\":" + jsonString(cleanOrDefault(jsonText(payloadJson, "updatedAt", ""), LocalDateTime.now().format(DISPLAY_TIME_FORMAT))) + ","
+			+ "\"droppedLocalDecisionRows\":" + droppedLocalDecisionRows + ","
+			+ "\"rows\":[" + sanitizedRows + "]"
+			+ "}";
+	}
+
+	private static boolean liveTradeCacheRowIsLocalDecision(String rowJson) {
+		return "LOCAL-DECISION".equals(cleanOrDefault(jsonText(rowJson, "cacheSource", ""), "").toUpperCase(Locale.US));
 	}
 
 	private static String emptyLiveTradeCacheJson(String accountId) {

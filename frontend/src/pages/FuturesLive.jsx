@@ -17,7 +17,9 @@ import {
 } from "./futuresLiveChartUtils.js";
 import {
   composeTradeCacheRealizedPnl,
+  isBrokerConfirmedTradeCacheRow,
   mergeTradeCachePnlFields,
+  shouldCreateLocalClosedTradeCacheRow,
 } from "./liveTradeCacheUtils.js";
 import { apiFetch, isApiNetworkError } from "../utils/api.js";
 import { EASTERN_TIME_LABEL, formatEstTime } from "../utils/time.js";
@@ -353,9 +355,9 @@ export default function FuturesLive() {
   );
   const enrichedClosedTradeRows = useMemo(
     () => brokerHistoryDataActive
-      ? mergeBrokerTradeCacheRows(hydratedTradeCacheRows, allClosedTradeCacheRows, { accountId: accountScopeId })
+      ? mergeBrokerTradeCacheRows(hydratedTradeCacheRows, durableBrokerTradeCacheRows, { accountId: accountScopeId })
       : allClosedTradeCacheRows,
-    [accountScopeId, allClosedTradeCacheRows, brokerHistoryDataActive, hydratedTradeCacheRows]
+    [accountScopeId, allClosedTradeCacheRows, brokerHistoryDataActive, durableBrokerTradeCacheRows, hydratedTradeCacheRows]
   );
   const dtmThinkingEvents = useMemo(
     () => extractDtmThinkingEvents(liveThinking),
@@ -776,7 +778,8 @@ export default function FuturesLive() {
       return [];
     }
 
-    const localRows = compactBrokerTradeCacheRows(readLocalTradeCacheRows(cleanAccountId), cleanAccountId);
+    const localRows = compactBrokerTradeCacheRows(readLocalTradeCacheRows(cleanAccountId), cleanAccountId)
+      .filter(isBrokerConfirmedTradeCacheRow);
     setCachedAllTradeRows(localRows);
     tradeCachePersistSignature.current = brokerTradeCacheSignature(localRows);
     setTradeCacheReady(true);
@@ -788,7 +791,8 @@ export default function FuturesLive() {
       if (!response.ok || payload.json?.success === false) {
         throw new Error(payload.json?.message || payload.text || "Failed to load live trade cache.");
       }
-      const remoteRows = compactBrokerTradeCacheRows(payload.json?.rows, cleanAccountId);
+      const remoteRows = compactBrokerTradeCacheRows(payload.json?.rows, cleanAccountId)
+        .filter(isBrokerConfirmedTradeCacheRow);
       const mergedRows = compactBrokerTradeCacheRows(mergeBrokerTradeCacheRows(remoteRows, localRows, { accountId: cleanAccountId }), cleanAccountId);
       if (tradeCacheAccount.current !== cleanAccountId) return mergedRows;
       setCachedAllTradeRows(mergedRows);
@@ -804,7 +808,8 @@ export default function FuturesLive() {
   async function persistLiveTradeCacheRows(rows, { force = false } = {}) {
     const cleanAccountId = String(accountScopeId || "").trim();
     if (!cleanAccountId) return [];
-    const nextRows = compactBrokerTradeCacheRows(rows, cleanAccountId);
+    const nextRows = compactBrokerTradeCacheRows(rows, cleanAccountId)
+      .filter(isBrokerConfirmedTradeCacheRow);
     const nextSignature = brokerTradeCacheSignature(nextRows);
     if (!force && nextSignature === tradeCachePersistSignature.current) {
       return nextRows;
@@ -3802,7 +3807,7 @@ function buildBrokerClosedTradeRows(trades, provenance = []) {
 function buildLocalClosedTradeCacheRows(trades, accountId = "") {
   const cleanAccountId = String(accountId || "").trim();
   return (Array.isArray(trades) ? trades : [])
-    .filter((trade) => isEntryDecision(trade) && isClosedTradeDecision(trade))
+    .filter((trade) => isEntryDecision(trade) && isClosedTradeDecision(trade) && shouldCreateLocalClosedTradeCacheRow(trade))
     .map((trade, index) => {
       const strategyCode = usableStrategyCode(trade.strategyCode);
       const symbol = String(trade.symbol || "").toUpperCase();
@@ -4013,10 +4018,6 @@ function hydratedTradeCacheSource(row, cachedRow) {
   if (rowSource) return rowSource;
   const cachedSource = String(cachedRow?.cacheSource || "").trim();
   return cachedSource && cachedSource !== "local-decision" ? cachedSource : "topstep-enriched";
-}
-
-function isBrokerConfirmedTradeCacheRow(row) {
-  return String(row?.cacheSource || "").trim() !== "local-decision";
 }
 
 function findCachedBrokerTradeRow(row, cacheRows, cacheIndex) {

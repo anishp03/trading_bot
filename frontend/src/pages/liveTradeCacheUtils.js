@@ -51,3 +51,28 @@ export function mergeTradeCachePnlFields(row = {}, cachedRow = {}) {
   if (partialContracts != null) fields.dtmPartialContractsClosed = partialContracts;
   return fields;
 }
+
+export function isBrokerConfirmedTradeCacheRow(row) {
+  return String(row?.cacheSource || "").trim() !== "local-decision";
+}
+
+export function shouldCreateLocalClosedTradeCacheRow(trade = {}) {
+  const status = String(trade.status || "").toUpperCase();
+  if (status.startsWith("SIMULATED") || status.includes("DRY_RUN")) {
+    return false;
+  }
+  const reviewFacts = trade.tradeReason?.exit?.reviewFacts || {};
+  const realizedSource = String(reviewFacts.finalRealizedPnlSource || "").toUpperCase();
+  const priceSource = String(reviewFacts.priceSource || "").toUpperCase();
+  const brokerClose = reviewFacts.brokerClose || {};
+  const brokerCloseStatus = String(brokerClose.status || "").toUpperCase();
+  const brokerCloseSource = String(brokerClose.source || "").toUpperCase();
+  return status.includes("TOPSTEPX")
+    && (
+      realizedSource === "BROKER_FILL"
+      || priceSource === "BROKER_FILL"
+      || brokerClose.authoritative === true
+      || brokerCloseSource === "TOPSTEPX_METRICS_RECONCILE"
+      || brokerCloseStatus.includes("TOPSTEPX")
+    );
+}
