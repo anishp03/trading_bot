@@ -322,6 +322,10 @@ export default function FuturesBacktest() {
       if (!response.ok) {
         throw new Error(payload.json?.message || payload.text || "Failed to generate futures portfolio run.");
       }
+      const portfolioBacktestId = Number(payload.json?.portfolioBacktestId || 0);
+      if (!portfolioBacktestId) {
+        throw new Error(payload.json?.message || payload.text || "Portfolio run did not return a saved backtest ID.");
+      }
       navigate("/futures-backtest-history");
     } catch (error) {
       console.error("Error generating futures portfolio run:", error);
@@ -445,6 +449,7 @@ export default function FuturesBacktest() {
             {isRunning ? "Running..." : "Start Portfolio Run"}
           </button>
         </div>
+        {feedback && <div className={feedback.toLowerCase().includes("failed") || feedback.toLowerCase().includes("did not") ? "app-pnl-neg app-kicker mb-3" : "app-muted app-kicker mb-3"}>{feedback}</div>}
 
         <div className="row g-3">
           <Field label="Strategy Config" className="col-12 col-md-4 col-xl-3">
@@ -606,7 +611,6 @@ export default function FuturesBacktest() {
             </div>
           </div>
 
-          {feedback && <div className="col-12 app-muted app-kicker">{feedback}</div>}
         </div>
       </div>
     </div>
@@ -630,6 +634,10 @@ async function readApiResponse(response) {
   try {
     return { json: JSON.parse(text), text };
   } catch {
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.toLowerCase().includes("text/html") || /^<!doctype\s+html/i.test(text.trim()) || /^<html[\s>]/i.test(text.trim())) {
+      return { json: null, text: "Backend returned an HTML page instead of portfolio run JSON." };
+    }
     return { json: null, text };
   }
 }

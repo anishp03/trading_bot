@@ -8450,7 +8450,7 @@ public class FuturesManager {
 			tag
 		);
 		boolean success = jsonBoolean(responseJson, "success");
-		String status = success ? cleanOrDefault(successStatus, "SUBMITTED_TOPSTEPX") : cleanOrDefault(failureStatus, "SUBMIT_REJECTED_TOPSTEPX");
+		String status = topstepxLiveSubmitStatus(responseJson, success, successStatus, failureStatus);
 		int ledgerId = insertLiveOrderLedger(snapshotId, configuredAccountId, normalizedSymbol, normalizedSide, orderType, requestedContracts, safeEntry, safeStop, safeTarget, status, requestJson, responseJson, createdAt);
 		String message = jsonText(responseJson, "message", success ? "TopstepX order submitted." : "TopstepX order was rejected.");
 		recordLiveAudit(status, success ? "WARN" : "ERROR", cleanSource + " TopstepX order " + (success ? "submitted" : "rejected") + " for " + normalizedSymbol, responseJson);
@@ -8478,6 +8478,29 @@ public class FuturesManager {
 			+ "\"request\":" + requestJson + ","
 			+ "\"response\":" + jsonObjectOrDefault(responseJson, "{}")
 			+ "}";
+	}
+
+	private static String topstepxLiveSubmitStatus(String responseJson, boolean success, String successStatus, String failureStatus) {
+		if (!success) {
+			return cleanOrDefault(failureStatus, "SUBMIT_REJECTED_TOPSTEPX");
+		}
+		if (topstepxBrokerSubmitVerifiedOpenOrder(responseJson, "")) {
+			return "RESTING_TOPSTEPX";
+		}
+		return cleanOrDefault(successStatus, "SUBMITTED_TOPSTEPX");
+	}
+
+	private static String topstepxSubmittedSignalReason(String status, String orderId) {
+		String cleanOrderId = cleanOrDefault(orderId, "");
+		if ("RESTING_TOPSTEPX".equals(cleanOrDefault(status, ""))) {
+			return "TopstepX order is resting from live signal" + (cleanOrderId.length() == 0 ? "." : " (order " + cleanOrderId + ").");
+		}
+		return "TopstepX order submitted from live signal" + (cleanOrderId.length() == 0 ? "." : " (order " + cleanOrderId + ").");
+	}
+
+	private static boolean liveEntryStatusCreatesManagedPosition(String status) {
+		String cleanStatus = cleanOrDefault(status, "");
+		return "SUBMITTED_TOPSTEPX".equals(cleanStatus) || "ACCEPTED_SIMULATED_LIVE".equals(cleanStatus);
 	}
 
 	private static String closeTopstepxPracticePositionViaAdapter(
@@ -15817,14 +15840,14 @@ public class FuturesManager {
 						}
 					boolean submitted = jsonBoolean(brokerSubmitJson, "success");
 					boolean requiresAutoOcoBrackets = !submitted && jsonBoolean(brokerSubmitJson, "requiresAutoOcoBrackets");
-					status = submitted ? "SUBMITTED_TOPSTEPX" : "SUBMIT_BLOCKED";
+					status = submitted ? jsonText(brokerSubmitJson, "status", "SUBMITTED_TOPSTEPX") : "SUBMIT_BLOCKED";
 					String orderId = jsonText(brokerSubmitJson, "orderId", "");
 					if (orderId.length() == 0) {
 						double numericOrderId = jsonNumber(brokerSubmitJson, "orderId", 0.0);
 						orderId = numericOrderId > 0.0 ? String.valueOf((long) numericOrderId) : "";
 					}
 					reason = submitted
-						? "TopstepX order submitted from live signal" + (orderId.length() == 0 ? "." : " (order " + orderId + ").")
+						? topstepxSubmittedSignalReason(status, orderId)
 						: (requiresAutoOcoBrackets ? TOPSTEPX_AUTO_OCO_REQUIRED_MESSAGE : "TopstepX order was blocked: " + jsonStringSummary(brokerSubmitJson));
 				} else {
 				status = "ACCEPTED_SIMULATED_LIVE";
@@ -15884,7 +15907,7 @@ public class FuturesManager {
 							+ "\"tradeReason\":" + entryReasonJson
 							+ "}"
 					);
-					if (order.position != null) {
+					if (order.position != null && liveEntryStatusCreatesManagedPosition(status)) {
 						openPositions.add(order.position);
 					}
 				String strategyKey = strategyDailyLimitKey(candidate.symbol, signal.strategyCode);
@@ -18933,6 +18956,9 @@ public class FuturesManager {
 					String strategyCode = cleanOrDefault(rs.getString("strategyCode"), "LIVE");
 					String payloadJson = cleanOrDefault(rs.getString("payloadJson"), "{}");
 					String ledgerResponseJson = cleanOrDefault(rs.getString("ledgerResponseJson"), "{}");
+					if (topstepxBrokerSubmitVerifiedOpenOrder(payloadJson, ledgerResponseJson)) {
+						continue;
+					}
 					int maxHoldBars = Math.max(0, (int) Math.round(jsonNumber(payloadJson, "maxHoldBars", liveMaxHoldBarsForStrategy(strategyCode, strategySettings))));
 					PortfolioPosition position = new PortfolioPosition();
 					position.symbol = symbol;
@@ -19130,7 +19156,7 @@ public class FuturesManager {
 			+ "FROM FuturesLiveSignalDecisions "
 			+ "WHERE sessionID = ? AND snapshotID = ? AND contracts > 0 "
 			+ "AND signalTime LIKE ? "
-			+ "AND status IN ('SUBMITTED_TOPSTEPX', 'ACCEPTED_SIMULATED_LIVE') "
+			+ "AND status IN ('SUBMITTED_TOPSTEPX', 'RESTING_TOPSTEPX', 'ACCEPTED_SIMULATED_LIVE') "
 			+ "GROUP BY symbol, strategyCode";
 		try (Connection conn = DatabaseManager.getConnection();
 			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -19270,6 +19296,28 @@ public class FuturesManager {
 		}
 		double numeric = jsonFirstNumber(json, new String[] { "brokerOrderId", "orderId", "closeOrderId" }, 0.0);
 		return numeric > 0.0 ? String.valueOf((long) numeric) : "";
+	}
+
+	private static boolean topstepxBrokerSubmitVerifiedOpenOrder(String payloadJson, String ledgerResponseJson) {
+		String payload = cleanOrDefault(payloadJson, "{}");
+		String ledger = cleanOrDefault(ledgerResponseJson, "{}");
+		String payloadVerification = jsonObjectForKey(payload, "verification");
+		String ledgerVerification = jsonObjectForKey(ledger, "verification");
+		String source = firstNonBlank(
+			jsonText(ledger, "verificationSource", ""),
+			jsonText(payload, "verificationSource", ""),
+			jsonText(ledgerVerification, "source", ""),
+			jsonText(payloadVerification, "source", "")
+		);
+		if (!"OPEN_ORDER".equals(cleanOrDefault(source, "").toUpperCase(Locale.US))) {
+			return false;
+		}
+		double fillVolume = jsonFirstNumber(
+			ledger + payload,
+			new String[] { "fillVolume", "filledVolume", "filledQuantity", "filledSize" },
+			0.0
+		);
+		return fillVolume <= 0.0;
 	}
 
 	private static FuturesLiveSession copyLiveSession(FuturesLiveSession source) {

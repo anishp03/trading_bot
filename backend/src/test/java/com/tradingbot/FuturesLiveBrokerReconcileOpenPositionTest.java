@@ -104,6 +104,51 @@ public class FuturesLiveBrokerReconcileOpenPositionTest {
 	}
 
 	@Test
+	public void openOrderVerifiedEntryIsNotManagedAsOpenPosition() throws Exception {
+		insertSnapshot();
+		insertLiveDecision(
+			86,
+			"SUBMITTED_TOPSTEPX",
+			"2026-06-18 15:00",
+			"2026-06-18 15:01",
+			"TopstepX order submitted from live signal (order 3154221481).",
+			"{\"brokerSubmit\":{\"success\":true,\"orderId\":3154221481,\"brokerOrderId\":\"3154221481\","
+				+ "\"verificationSource\":\"OPEN_ORDER\",\"verification\":{\"attempted\":true,\"source\":\"OPEN_ORDER\","
+				+ "\"order\":{\"id\":3154221481,\"fillVolume\":0}}}}"
+		);
+
+		List<?> positions = liveOpenPositionsForSession(74, 47);
+
+		assertEquals(0, positions.size(), "open broker order verification must not create a DTM-managed live position");
+	}
+
+	@Test
+	public void openOrderVerifiedEntryDoesNotBecomePendingBrokerReconcile() throws Exception {
+		insertSnapshot();
+		insertLiveDecision(
+			86,
+			"SUBMITTED_TOPSTEPX",
+			"2026-06-18 15:00",
+			"2026-06-18 15:01",
+			"TopstepX order submitted from live signal (order 3154221481).",
+			"{\"brokerSubmit\":{\"success\":true,\"orderId\":3154221481,\"brokerOrderId\":\"3154221481\","
+				+ "\"verificationSource\":\"OPEN_ORDER\",\"verification\":{\"attempted\":true,\"source\":\"OPEN_ORDER\","
+				+ "\"order\":{\"id\":3154221481,\"fillVolume\":0}}}}"
+		);
+		String brokerMetrics = "{"
+			+ "\"success\":true,"
+			+ "\"source\":\"TOPSTEPX\","
+			+ "\"positions\":[],"
+			+ "\"trades\":[]"
+			+ "}";
+
+		int reconciled = reconcileBrokerFlatLiveEntries(74, 47, brokerMetrics);
+
+		assertEquals(0, reconciled);
+		assertEquals(0, countPendingBrokerReconcileRows(), "resting unfilled orders must not be misclassified as missing broker positions");
+	}
+
+	@Test
 	public void liveDecisionHistoryExposesDtmPnlComponents() throws Exception {
 		insertSnapshot();
 		insertLiveDecision(
@@ -225,6 +270,18 @@ public class FuturesLiveBrokerReconcileOpenPositionTest {
 				Method method = FuturesManager.class.getDeclaredMethod("jsonNumber", String.class, String.class, double.class);
 				method.setAccessible(true);
 				return ((Double) method.invoke(null, payload, "pnl", 0.0)).doubleValue();
+			}
+		}
+	}
+
+	private static int countPendingBrokerReconcileRows() throws Exception {
+		try (Connection conn = DatabaseManager.getConnection();
+			 PreparedStatement stmt = conn.prepareStatement(
+				"SELECT COUNT(*) FROM FuturesLiveSignalDecisions WHERE sessionID = 74 AND snapshotID = 47 AND status = 'PENDING_BROKER_RECONCILE'"
+			 )) {
+			try (java.sql.ResultSet rs = stmt.executeQuery()) {
+				assertTrue(rs.next(), "expected count row");
+				return rs.getInt(1);
 			}
 		}
 	}
