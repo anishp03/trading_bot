@@ -32,6 +32,7 @@ const TIMEFRAME_OPTIONS = [
   { value: "5m", label: "5m" },
   { value: "30m", label: "30m" },
   { value: "1h", label: "1h" },
+  { value: "4h", label: "4h" },
 ];
 const LIVE_MARKS_REFRESH_MS = 1000;
 const LIVE_MARKS_UI_REFRESH_MS = LIVE_MARKS_REFRESH_MS;
@@ -4937,6 +4938,7 @@ function timeframeMinutesForClient(value) {
   if (value === "5m") return 5;
   if (value === "30m") return 30;
   if (value === "1h") return 60;
+  if (value === "4h") return 240;
   return 1;
 }
 
@@ -6242,6 +6244,7 @@ function timeframeLabel(value) {
   if (value === "5m") return "5 minute";
   if (value === "30m") return "30 minute";
   if (value === "1h") return "1 hour";
+  if (value === "4h") return "4 hour";
   return "1 minute";
 }
 

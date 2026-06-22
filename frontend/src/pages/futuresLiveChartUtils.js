@@ -143,7 +143,7 @@ export function shouldAppendLivePatchCandle({ series, patch, timeframe = "1m" } 
 }
 
 function normalizeMonitorTimeframe(value) {
-  if (value === "5m" || value === "30m" || value === "1h") return value;
+  if (value === "5m" || value === "30m" || value === "1h" || value === "4h") return value;
   return "1m";
 }
 
@@ -151,6 +151,7 @@ function timeframeMinutes(value) {
   if (value === "5m") return 5;
   if (value === "30m") return 30;
   if (value === "1h") return 60;
+  if (value === "4h") return 240;
   return 1;
 }
 

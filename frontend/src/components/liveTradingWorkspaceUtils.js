@@ -3,6 +3,7 @@ const BARS_PER_TRADING_DAY = {
   "5m": 78,
   "30m": 13,
   "1h": 7,
+  "4h": 2,
 };
 
 const RANGE_TRADING_DAYS = {

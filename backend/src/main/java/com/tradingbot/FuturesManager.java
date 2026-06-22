@@ -155,7 +155,7 @@ public class FuturesManager {
 	private static String liveSessionPrepLoggedDate = "";
 	private static String liveEntryGateOpenedLoggedDate = "";
 	private static String liveEntryGateClosedLoggedDate = "";
-	private static final String[] LIVE_GRAPH_TIMEFRAMES = new String[] { "1m", "5m", "30m", "1h" };
+	private static final String[] LIVE_GRAPH_TIMEFRAMES = new String[] { "1m", "5m", "30m", "1h", "4h" };
 	private static final int LIVE_GRAPH_TIMELINE_LIMIT = 2000;
 	private static final long LIVE_WARMUP_CACHE_TTL_MS = TimeUnit.HOURS.toMillis(6L);
 	private static final int LIVE_REALTIME_EVENT_SAMPLE_FLOOR = 1200;
@@ -12232,6 +12232,10 @@ public class FuturesManager {
 
 	private static LocalDateTime realtimeCandleBucket(LocalDateTime eventTime, String timeframe) {
 		String normalized = normalizeLiveMonitorTimeframe(timeframe);
+		if ("4h".equals(normalized)) {
+			int hour = (eventTime.getHour() / 4) * 4;
+			return eventTime.withHour(hour).withMinute(0).withSecond(0).withNano(0);
+		}
 		if ("1h".equals(normalized)) {
 			return eventTime.withMinute(0).withSecond(0).withNano(0);
 		}
@@ -12432,6 +12436,9 @@ public class FuturesManager {
 		if ("60".equals(normalized) || "60min".equals(normalized) || "1hour".equals(normalized) || "1h".equals(normalized)) {
 			return "1h";
 		}
+		if ("240".equals(normalized) || "240min".equals(normalized) || "4hour".equals(normalized) || "4h".equals(normalized)) {
+			return "4h";
+		}
 		return "1m";
 	}
 
@@ -12448,6 +12455,9 @@ public class FuturesManager {
 		}
 		if ("1h".equals(normalized)) {
 			return "1hour";
+		}
+		if ("4h".equals(normalized)) {
+			return "4hour";
 		}
 		return TIMEFRAME_FOLDER;
 	}
@@ -12466,12 +12476,18 @@ public class FuturesManager {
 		if ("1h".equals(normalized)) {
 			return "1 hour";
 		}
+		if ("4h".equals(normalized)) {
+			return "4 hour";
+		}
 		return "1 minute";
 	}
 
 	private static int liveMonitorDefaultLimit(String timeframe) {
 		String normalized = normalizeLiveMonitorTimeframe(timeframe);
 		if ("1h".equals(normalized)) {
+			return 160;
+		}
+		if ("4h".equals(normalized)) {
 			return 160;
 		}
 		if ("30m".equals(normalized)) {
@@ -12494,6 +12510,9 @@ public class FuturesManager {
 		String normalized = normalizeLiveMonitorTimeframe(timeframe);
 		if ("1h".equals(normalized)) {
 			return 60;
+		}
+		if ("4h".equals(normalized)) {
+			return 240;
 		}
 		if ("30m".equals(normalized)) {
 			return 30;

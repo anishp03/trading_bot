@@ -41,6 +41,7 @@ test("monitorLimitForTimeframe requests the full live graph timeline", () => {
   assert.equal(monitorLimitForTimeframe("5m"), 2000);
   assert.equal(monitorLimitForTimeframe("30m"), 2000);
   assert.equal(monitorLimitForTimeframe("1h"), 2000);
+  assert.equal(monitorLimitForTimeframe("4h"), 2000);
 });
 
 test("liveBotControlState does not expose a separate stop market feed state", () => {
@@ -93,6 +94,10 @@ test("liveMonitorRequestKey separates in-flight monitor requests by selected tim
     liveMonitorRequestKey("MES,MNQ,NQ", "5m"),
     "liveMonitor:5m:MES,MNQ,NQ"
   );
+  assert.equal(
+    liveMonitorRequestKey("MES,MNQ,NQ", "4h"),
+    "liveMonitor:4h:MES,MNQ,NQ"
+  );
 });
 
 test("liveMonitorCacheKey separates cached chart data by timeframe and symbol universe", () => {
@@ -108,6 +113,10 @@ test("liveMonitorCacheKey separates cached chart data by timeframe and symbol un
     liveMonitorCacheKey("MES,MNQ,NQ", "1h"),
     liveMonitorCacheKey("MES,MNQ,NQ", "5m")
   );
+  assert.notEqual(
+    liveMonitorCacheKey("MES,MNQ,NQ", "1h"),
+    liveMonitorCacheKey("MES,MNQ,NQ", "4h")
+  );
 });
 
 test("liveMonitorMatchesCacheKey rejects monitors from another timeframe or symbol universe", () => {
@@ -122,6 +131,10 @@ test("liveMonitorMatchesCacheKey rejects monitors from another timeframe or symb
   );
   assert.equal(
     liveMonitorMatchesCacheKey({ timeframe: "1h", monitorCacheKey: liveMonitorCacheKey("MES", "1h") }, cacheKey, "1h"),
+    false
+  );
+  assert.equal(
+    liveMonitorMatchesCacheKey({ timeframe: "4h", monitorCacheKey: liveMonitorCacheKey("MES,MNQ,NQ", "4h") }, cacheKey, "1h"),
     false
   );
 });
@@ -188,4 +201,16 @@ test("shouldAppendLivePatchCandle allows normal next live mark candles", () => {
   const livePatch = { time: "2026-06-11 09:32", close: 28894.88, live: true };
 
   assert.equal(shouldAppendLivePatchCandle({ series, patch: livePatch, timeframe: "1m" }), true);
+});
+
+test("shouldAppendLivePatchCandle uses 4h timeframe gap tolerance", () => {
+  const series = [
+    { time: "2026-06-11 08:00", close: 28890 },
+    { time: "2026-06-11 12:00", close: 28892 },
+  ];
+  const nextFourHourPatch = { time: "2026-06-11 16:00", close: 28894.88, live: true };
+  const stalePatch = { time: "2026-06-12 09:30", close: 28910, live: true };
+
+  assert.equal(shouldAppendLivePatchCandle({ series, patch: nextFourHourPatch, timeframe: "4h" }), true);
+  assert.equal(shouldAppendLivePatchCandle({ series, patch: stalePatch, timeframe: "4h" }), false);
 });

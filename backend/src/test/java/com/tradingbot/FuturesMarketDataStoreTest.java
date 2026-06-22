@@ -360,6 +360,26 @@ public class FuturesMarketDataStoreTest {
 	}
 
 	@Test
+	public void liveMonitorAggregatesCapturedRowsForFourHourChart() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		FuturesMarketDataStore.initializeStore();
+		insertCapturedBar("MES", "2026-06-04T13:30:00Z", 5300.0);
+		insertCapturedBar("MES", "2026-06-04T15:59:00Z", 5302.0);
+		insertCapturedBar("MES", "2026-06-04T16:00:00Z", 5304.0);
+
+		String json = FuturesManager.getLiveMonitorJson("MES", 4, "4h");
+
+		assertTrue(json.contains("\"timeframe\":\"4h\""), json);
+		assertTrue(json.contains("\"timeframeLabel\":\"4 hour\""), json);
+		assertTrue(json.contains("\"dataSource\":\"LIVE_CAPTURED_BARS\""), json);
+		assertTrue(json.contains("\"capturedBars\":2"), json);
+		assertTrue(json.contains("\"time\":\"2026-06-04 08:00\""), json);
+		assertTrue(json.contains("\"time\":\"2026-06-04 12:00\""), json);
+		assertTrue(json.contains("\"close\":5302"), json);
+		assertTrue(json.contains("\"close\":5304"), json);
+	}
+
+	@Test
 	public void liveMonitorCandlesUseRecentCapturedRowsWithoutRthFiltering() throws Exception {
 		TestDatabaseSupport.useTempDatabase(tempDir);
 		FuturesMarketDataStore.initializeStore();

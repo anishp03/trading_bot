@@ -19,7 +19,9 @@ test("rangeBarsForTimeframe scales visible ranges by candle timeframe", () => {
   assert.equal(rangeBarsForTimeframe("1D", "5m"), 78);
   assert.equal(rangeBarsForTimeframe("1D", "30m"), 13);
   assert.equal(rangeBarsForTimeframe("1D", "1h"), 7);
+  assert.equal(rangeBarsForTimeframe("1D", "4h"), 2);
   assert.equal(rangeBarsForTimeframe("5D", "5m"), 390);
+  assert.equal(rangeBarsForTimeframe("5D", "4h"), 10);
 });
 
 test("chartSourceStatus reports live-only warmup gaps as source pending", () => {

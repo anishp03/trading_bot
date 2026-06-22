@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Set;
 
@@ -45,6 +46,17 @@ public class FuturesLiveMonitorWarmupTest {
 		assertEquals(2000, liveGraphWarmupLimit("5m"));
 		assertEquals(2000, liveGraphWarmupLimit("30m"));
 		assertEquals(2000, liveGraphWarmupLimit("1h"));
+		assertEquals(2000, liveGraphWarmupLimit("4h"));
+	}
+
+	@Test
+	public void liveMonitorSupportsFourHourTimeframeContract() throws Exception {
+		assertEquals("4h", normalizeLiveMonitorTimeframe("4h"));
+		assertEquals("4h", normalizeLiveMonitorTimeframe("240min"));
+		assertEquals(240, liveMonitorTimeframeMinutes("4h"));
+		assertEquals("4 hour", liveMonitorTimeframeLabel("4h"));
+		assertEquals(LocalDateTime.of(2026, 6, 11, 8, 0), realtimeCandleBucket(LocalDateTime.of(2026, 6, 11, 11, 59), "4h"));
+		assertEquals(LocalDateTime.of(2026, 6, 11, 12, 0), realtimeCandleBucket(LocalDateTime.of(2026, 6, 11, 12, 0), "4h"));
 	}
 
 	private static Object liveWarmupBarsForMonitorSymbol(String symbol, String timeframe, int limit) throws Exception {
@@ -57,6 +69,30 @@ public class FuturesLiveMonitorWarmupTest {
 		Method method = FuturesManager.class.getDeclaredMethod("liveGraphWarmupLimit", String.class);
 		method.setAccessible(true);
 		return ((Integer) method.invoke(null, timeframe)).intValue();
+	}
+
+	private static String normalizeLiveMonitorTimeframe(String timeframe) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("normalizeLiveMonitorTimeframe", String.class);
+		method.setAccessible(true);
+		return (String) method.invoke(null, timeframe);
+	}
+
+	private static int liveMonitorTimeframeMinutes(String timeframe) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("liveMonitorTimeframeMinutes", String.class);
+		method.setAccessible(true);
+		return ((Integer) method.invoke(null, timeframe)).intValue();
+	}
+
+	private static String liveMonitorTimeframeLabel(String timeframe) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("liveMonitorTimeframeLabel", String.class);
+		method.setAccessible(true);
+		return (String) method.invoke(null, timeframe);
+	}
+
+	private static LocalDateTime realtimeCandleBucket(LocalDateTime eventTime, String timeframe) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("realtimeCandleBucket", LocalDateTime.class, String.class);
+		method.setAccessible(true);
+		return (LocalDateTime) method.invoke(null, eventTime, timeframe);
 	}
 
 	private static Object newLiveSession() throws Exception {
