@@ -94,8 +94,8 @@ public class ProjectXRealtimeManager {
 				stmt.execute("CREATE INDEX IF NOT EXISTS idx_futures_realtime_symbol_time ON FuturesLiveRealtimeEvents (hub, symbol, receivedAt)");
 				stmt.execute("CREATE INDEX IF NOT EXISTS idx_futures_realtime_symbol_id ON FuturesLiveRealtimeEvents (hub, symbol, realtimeEventID)");
 				storeInitialized = true;
-			} catch (SQLException e) {
-				e.printStackTrace();
+				} catch (SQLException e) {
+					logDiagnostic("initializeStore", e);
 			}
 		}
 	}
@@ -388,7 +388,7 @@ public class ProjectXRealtimeManager {
 				}
 			}
 		} catch (SQLException e) {
-			e.printStackTrace();
+			logDiagnostic("recentEventsJson", e);
 		}
 		json.append("]");
 		return json.toString();
@@ -794,8 +794,8 @@ public class ProjectXRealtimeManager {
 				pstmt.setString(6, isBlank(payloadJson) ? "{}" : payloadJson);
 				pstmt.setString(7, receivedAt);
 				pstmt.executeUpdate();
-			} catch (SQLException e) {
-				e.printStackTrace();
+				} catch (SQLException e) {
+					logDiagnostic("recordRealtimeEvent", e);
 			}
 		}
 		synchronized (ProjectXRealtimeManager.class) {
@@ -1092,5 +1092,11 @@ public class ProjectXRealtimeManager {
 			.replace("\n", "\\n")
 			.replace("\r", "\\r")
 			+ "\"";
+	}
+
+	private static void logDiagnostic(String action, Exception error) {
+		String type = error == null ? "unknown" : error.getClass().getSimpleName();
+		String message = error == null ? "unknown error" : safeMessage(error.getMessage());
+		System.err.println("[projectx-realtime] action=" + cleanOrDefault(action, "unknown") + " errorType=" + type + " message=" + message);
 	}
 }

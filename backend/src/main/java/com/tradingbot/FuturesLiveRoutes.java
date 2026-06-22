@@ -1,6 +1,7 @@
 package com.tradingbot;
 
 import io.javalin.Javalin;
+import java.util.function.Function;
 
 final class FuturesLiveRoutes {
     private FuturesLiveRoutes() {
@@ -155,51 +156,129 @@ final class FuturesLiveRoutes {
 
         app.post("/api/futures/live/start", ctx -> {
             String symbol = ApiRequestUtils.valueOrDefault(ctx.queryParam("symbol"), "MNQ");
-            String symbols = ApiRequestUtils.valueOrDefault(ctx.queryParam("symbols"), defaultPortfolioSymbols);
-            String executionMode = ApiRequestUtils.valueOrDefault(ctx.queryParam("executionMode"), "SIMULATED");
-            String fundedProfile = ApiRequestUtils.valueOrDefault(ctx.queryParam("fundedProfile"), "TOPSTEP_50K");
-            String accountId = ApiRequestUtils.valueOrDefault(ctx.queryParam("accountId"), "");
-            String strategyPreset = ApiRequestUtils.valueOrDefault(ctx.queryParam("strategyPreset"), "bestbiasfree");
             FuturesManager.FuturesRiskSettings savedRisk = FuturesManager.loadFuturesRiskSettings(symbol);
-            double accountSize = ApiRequestUtils.parseDoubleOrDefault(ctx.queryParam("accountSize"), savedRisk.accountSize);
-            double maxTrailingDrawdown = ApiRequestUtils.parseDoubleOrDefault(ctx.queryParam("maxTrailingDrawdown"), savedRisk.maxTrailingDrawdown);
-            double dailyLossLimit = ApiRequestUtils.parseDoubleOrDefault(ctx.queryParam("dailyLossLimit"), savedRisk.dailyLossLimit);
-            double maxRiskPerTrade = ApiRequestUtils.parseDoubleOrDefault(ctx.queryParam("maxRiskPerTrade"), savedRisk.maxRiskPerTrade);
-            int maxContracts = ApiRequestUtils.parseIntOrDefault(ctx.queryParam("maxContracts"), savedRisk.maxContracts);
-            double commissionPerContract = ApiRequestUtils.parseDoubleOrDefault(ctx.queryParam("commissionPerContract"), savedRisk.commissionPerContract);
-            double slippageTicks = ApiRequestUtils.parseDoubleOrDefault(ctx.queryParam("slippageTicks"), savedRisk.slippageTicks);
-            double profitTarget = ApiRequestUtils.parseDoubleOrDefault(ctx.queryParam("profitTarget"), savedRisk.profitTarget);
-            int maxOpenPositions = ApiRequestUtils.parseIntOrDefault(ctx.queryParam("maxOpenPositions"), 1);
-            int maxAggregateContracts = ApiRequestUtils.parseIntOrDefault(ctx.queryParam("maxAggregateContracts"), maxContracts);
-            double maxAggregateMiniUnits = ApiRequestUtils.parseDoubleOrDefault(ctx.queryParam("maxAggregateMiniUnits"), 5.0);
-            String riskSizingMode = ApiRequestUtils.valueOrDefault(ctx.queryParam("riskSizingMode"), "DYNAMIC_COMPOUND_MLL");
-            boolean dtmEnabled = ApiRequestUtils.parseBooleanOrDefault(ctx.queryParam("dtmEnabled"), true);
+            LiveStartRequest request = liveStartRequestFromParams(ctx::queryParam, defaultPortfolioSymbols, savedRisk);
 
             ctx.contentType("application/json").result(FuturesManager.startLive(
-                symbol,
-                executionMode,
-                fundedProfile,
-                accountId,
-                accountSize,
-                maxTrailingDrawdown,
-                dailyLossLimit,
-                maxRiskPerTrade,
-                maxContracts,
-                commissionPerContract,
-                slippageTicks,
-                profitTarget,
-                maxOpenPositions,
-                maxAggregateContracts,
-                maxAggregateMiniUnits,
-                symbols,
-                strategyPreset,
-                riskSizingMode,
-                dtmEnabled
+                request.symbol,
+                request.executionMode,
+                request.fundedProfile,
+                request.accountId,
+                request.accountSize,
+                request.maxTrailingDrawdown,
+                request.dailyLossLimit,
+                request.maxRiskPerTrade,
+                request.maxContracts,
+                request.commissionPerContract,
+                request.slippageTicks,
+                request.profitTarget,
+                request.maxOpenPositions,
+                request.maxAggregateContracts,
+                request.maxAggregateMiniUnits,
+                request.symbols,
+                request.strategyPreset,
+                request.riskSizingMode,
+                request.dtmEnabled
             ));
         });
 
         app.post("/api/futures/live/stop", ctx -> {
             ctx.contentType("application/json").result(FuturesManager.stopLive());
         });
+    }
+
+    static LiveStartRequest liveStartRequestFromParams(
+        Function<String, String> params,
+        String defaultPortfolioSymbols,
+        FuturesManager.FuturesRiskSettings savedRisk
+    ) {
+        FuturesManager.FuturesRiskSettings risk = savedRisk == null ? new FuturesManager.FuturesRiskSettings() : savedRisk;
+        String symbol = ApiRequestUtils.valueOrDefault(params.apply("symbol"), "MNQ");
+        int maxContracts = ApiRequestUtils.parseIntOrDefault(params.apply("maxContracts"), risk.maxContracts);
+        return new LiveStartRequest(
+            symbol,
+            ApiRequestUtils.valueOrDefault(params.apply("symbols"), defaultPortfolioSymbols),
+            ApiRequestUtils.valueOrDefault(params.apply("executionMode"), "SIMULATED"),
+            ApiRequestUtils.valueOrDefault(params.apply("fundedProfile"), "TOPSTEP_50K"),
+            ApiRequestUtils.valueOrDefault(params.apply("accountId"), ""),
+            ApiRequestUtils.valueOrDefault(params.apply("strategyPreset"), "bestbiasfree"),
+            ApiRequestUtils.parseDoubleOrDefault(params.apply("accountSize"), risk.accountSize),
+            ApiRequestUtils.parseDoubleOrDefault(params.apply("maxTrailingDrawdown"), risk.maxTrailingDrawdown),
+            ApiRequestUtils.parseDoubleOrDefault(params.apply("dailyLossLimit"), risk.dailyLossLimit),
+            ApiRequestUtils.parseDoubleOrDefault(params.apply("maxRiskPerTrade"), risk.maxRiskPerTrade),
+            maxContracts,
+            ApiRequestUtils.parseDoubleOrDefault(params.apply("commissionPerContract"), risk.commissionPerContract),
+            ApiRequestUtils.parseDoubleOrDefault(params.apply("slippageTicks"), risk.slippageTicks),
+            ApiRequestUtils.parseDoubleOrDefault(params.apply("profitTarget"), risk.profitTarget),
+            ApiRequestUtils.parseIntOrDefault(params.apply("maxOpenPositions"), 1),
+            ApiRequestUtils.parseIntOrDefault(params.apply("maxAggregateContracts"), maxContracts),
+            ApiRequestUtils.parseDoubleOrDefault(params.apply("maxAggregateMiniUnits"), 5.0),
+            ApiRequestUtils.valueOrDefault(params.apply("riskSizingMode"), "DYNAMIC_COMPOUND_MLL"),
+            ApiRequestUtils.parseBooleanOrDefault(params.apply("dtmEnabled"), true)
+        );
+    }
+
+    static final class LiveStartRequest {
+        final String symbol;
+        final String symbols;
+        final String executionMode;
+        final String fundedProfile;
+        final String accountId;
+        final String strategyPreset;
+        final double accountSize;
+        final double maxTrailingDrawdown;
+        final double dailyLossLimit;
+        final double maxRiskPerTrade;
+        final int maxContracts;
+        final double commissionPerContract;
+        final double slippageTicks;
+        final double profitTarget;
+        final int maxOpenPositions;
+        final int maxAggregateContracts;
+        final double maxAggregateMiniUnits;
+        final String riskSizingMode;
+        final boolean dtmEnabled;
+
+        LiveStartRequest(
+            String symbol,
+            String symbols,
+            String executionMode,
+            String fundedProfile,
+            String accountId,
+            String strategyPreset,
+            double accountSize,
+            double maxTrailingDrawdown,
+            double dailyLossLimit,
+            double maxRiskPerTrade,
+            int maxContracts,
+            double commissionPerContract,
+            double slippageTicks,
+            double profitTarget,
+            int maxOpenPositions,
+            int maxAggregateContracts,
+            double maxAggregateMiniUnits,
+            String riskSizingMode,
+            boolean dtmEnabled
+        ) {
+            this.symbol = symbol;
+            this.symbols = symbols;
+            this.executionMode = executionMode;
+            this.fundedProfile = fundedProfile;
+            this.accountId = accountId;
+            this.strategyPreset = strategyPreset;
+            this.accountSize = accountSize;
+            this.maxTrailingDrawdown = maxTrailingDrawdown;
+            this.dailyLossLimit = dailyLossLimit;
+            this.maxRiskPerTrade = maxRiskPerTrade;
+            this.maxContracts = maxContracts;
+            this.commissionPerContract = commissionPerContract;
+            this.slippageTicks = slippageTicks;
+            this.profitTarget = profitTarget;
+            this.maxOpenPositions = maxOpenPositions;
+            this.maxAggregateContracts = maxAggregateContracts;
+            this.maxAggregateMiniUnits = maxAggregateMiniUnits;
+            this.riskSizingMode = riskSizingMode;
+            this.dtmEnabled = dtmEnabled;
+        }
     }
 }

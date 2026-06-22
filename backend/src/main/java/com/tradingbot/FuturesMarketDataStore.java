@@ -64,7 +64,7 @@ final class FuturesMarketDataStore {
 						+ ")"
 				);
 			} catch (SQLException e) {
-				e.printStackTrace();
+				logDiagnostic("initializeStore", e);
 			}
 		}
 	}
@@ -281,8 +281,8 @@ final class FuturesMarketDataStore {
 					+ "\"summary\":" + jsonString(rs.getString("summary"))
 					+ "}";
 			}
-		} catch (SQLException e) {
-			e.printStackTrace();
+			} catch (SQLException e) {
+				logDiagnostic("latestReconciliationSummaryJson", e);
 		}
 		return "null";
 	}
@@ -368,8 +368,8 @@ final class FuturesMarketDataStore {
 			pstmt.setString(13, "ProjectX " + clean(eventType) + " live capture");
 			pstmt.setString(14, displayTime());
 			pstmt.executeUpdate();
-		} catch (SQLException e) {
-			e.printStackTrace();
+			} catch (SQLException e) {
+				logDiagnostic("recordRealtimeEvent", e);
 		}
 	}
 
@@ -533,8 +533,8 @@ final class FuturesMarketDataStore {
 					+ "\"lastUpdated\":" + jsonString(lastUpdated)
 					+ "}";
 			}
-		} catch (SQLException e) {
-			e.printStackTrace();
+			} catch (SQLException e) {
+				logDiagnostic("liveCapturedStatsJson", e);
 		}
 		return "{\"rows\":0,\"firstTimestamp\":\"\",\"lastTimestamp\":\"\",\"lastUpdated\":\"\"}";
 	}
@@ -566,8 +566,8 @@ final class FuturesMarketDataStore {
 		try (Connection conn = DatabaseManager.getConnection();
 			 PreparedStatement pstmt = conn.prepareStatement(level2UpsertSql())) {
 			upsertDerivedLevel2(pstmt, symbol, timestamp, bar);
-		} catch (SQLException e) {
-			e.printStackTrace();
+			} catch (SQLException e) {
+				logDiagnostic("upsertDerivedLevel2", e);
 		}
 	}
 
@@ -673,8 +673,8 @@ final class FuturesMarketDataStore {
 				sourceConfidence,
 				sourceDetail
 			);
-		} catch (SQLException e) {
-			e.printStackTrace();
+			} catch (SQLException e) {
+				logDiagnostic("recordLevel2Snapshot", e);
 		}
 	}
 
@@ -819,8 +819,8 @@ final class FuturesMarketDataStore {
 					range[1] = timestamp;
 				}
 			}
-		} catch (SQLException e) {
-			e.printStackTrace();
+			} catch (SQLException e) {
+				logDiagnostic("level2Range", e);
 		}
 		return range;
 	}
@@ -835,8 +835,8 @@ final class FuturesMarketDataStore {
 			pstmt.setString(4, status);
 			pstmt.setString(5, summary);
 			pstmt.executeUpdate();
-		} catch (SQLException e) {
-			e.printStackTrace();
+			} catch (SQLException e) {
+				logDiagnostic("insertReconciliation", e);
 		}
 	}
 
@@ -1120,5 +1120,11 @@ final class FuturesMarketDataStore {
 	private static String jsonSummary(String json) {
 		String clean = clean(json);
 		return clean.length() > 220 ? clean.substring(0, 220) + "..." : clean;
+	}
+
+	private static void logDiagnostic(String action, Exception error) {
+		String type = error == null ? "unknown" : error.getClass().getSimpleName();
+		String message = error == null ? "" : clean(error.getMessage());
+		System.err.println("[futures-market-data] action=" + clean(action) + " errorType=" + type + " message=" + jsonSummary(message));
 	}
 }

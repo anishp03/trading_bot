@@ -1925,6 +1925,136 @@ public class FuturesConnectionManager {
 		}
 	}
 
+	public static String cancelTopstepxPracticeRestingEntryOrder(String requiredAccountId, String symbol, String orderId, String customTag) {
+		initializeStore();
+		ConnectionConfig config = loadConnection(TOPSTEPX);
+		String accountId = cleanOrDefault(requiredAccountId, "");
+		String normalizedSymbol = normalizeFuturesSymbol(symbol);
+		String idOrTag = firstNonBlank(orderId, customTag);
+		if (!config.enabled) {
+			return "{\"success\":false,\"message\":\"TopstepX connection is disabled.\"}";
+		}
+		if (isBlank(config.username) || isBlank(config.apiKey)) {
+			return "{\"success\":false,\"message\":\"TopstepX username/API key are missing.\"}";
+		}
+		if (isBlank(config.accountId) || !accountId.equals(config.accountId.trim())) {
+			return "{\"success\":false,\"message\":" + jsonString("TopstepX configured account must be " + accountId + " before canceling a resting entry order.") + "}";
+		}
+		if (isBlank(normalizedSymbol)) {
+			return "{\"success\":false,\"message\":\"Futures symbol is required before canceling a resting entry order.\"}";
+		}
+		if (isBlank(idOrTag)) {
+			return "{\"success\":false,\"message\":\"Broker order id or custom tag is required before canceling a resting entry order.\"}";
+		}
+
+		try {
+			TopstepxRealtimeConfig realtimeConfig = createTopstepxRealtimeConfig();
+			if (!accountId.equals(realtimeConfig.accountId)) {
+				return "{\"success\":false,\"message\":" + jsonString("ProjectX authenticated account is not " + accountId + ".") + "}";
+			}
+			refreshTopstepxToken(realtimeConfig);
+			assertTopstepxAccountCanTrade(realtimeConfig.baseUrl, realtimeConfig.token, accountId);
+
+			Map<String, String> symbolByContractId = new HashMap<String, String>();
+			Set<String> contractIds = new HashSet<String>();
+			List<TopstepxContractInfo> contracts = resolveTopstepxRealtimeContracts(realtimeConfig, normalizedSymbol);
+			for (int index = 0; index < contracts.size(); index++) {
+				TopstepxContractInfo contract = contracts.get(index);
+				if (contract != null && !isBlank(contract.contractId)) {
+					contractIds.add(contract.contractId);
+					symbolByContractId.put(contract.contractId, normalizeFuturesSymbol(contract.symbol));
+				}
+			}
+
+			HttpResult openPositions = postTopstepxJson(realtimeConfig, "/Position/searchOpen", "{\"accountId\":" + accountId + "}");
+			if (openPositions.statusCode < 200 || openPositions.statusCode >= 300) {
+				return "{\"success\":false,\"message\":" + jsonString("TopstepX open-position search failed: " + topstepxErrorSummary(openPositions.body)) + ",\"statusCode\":" + openPositions.statusCode + ",\"response\":" + syncResponseJson(openPositions, "positions") + "}";
+			}
+			String matchedPosition = matchingBrokerObject(
+				extractJsonArrayObjects(openPositions.body, "positions"),
+				normalizedSymbol,
+				contractIds.isEmpty() ? "" : contractIds.iterator().next(),
+				symbolByContractId,
+				"",
+				0,
+				false
+			);
+			if (!isBlank(matchedPosition)) {
+				return "{"
+					+ "\"success\":true,"
+					+ "\"filledBeforeCancel\":true,"
+					+ "\"message\":" + jsonString("TopstepX resting entry became an open position for " + normalizedSymbol + " before cancel.") + ","
+					+ "\"accountId\":" + jsonString(accountId) + ","
+					+ "\"symbol\":" + jsonString(normalizedSymbol) + ","
+					+ "\"orderId\":" + jsonString(cleanOrDefault(orderId, "")) + ","
+					+ "\"customTag\":" + jsonString(cleanOrDefault(customTag, "")) + ","
+					+ "\"ordersCanceled\":0,"
+					+ "\"position\":" + matchedPosition
+					+ "}";
+			}
+
+			HttpResult openOrders = postTopstepxJson(realtimeConfig, "/Order/searchOpen", "{\"accountId\":" + accountId + "}");
+			if (openOrders.statusCode < 200 || openOrders.statusCode >= 300) {
+				return "{\"success\":false,\"message\":" + jsonString("TopstepX open-order search failed: " + topstepxErrorSummary(openOrders.body)) + ",\"statusCode\":" + openOrders.statusCode + ",\"response\":" + syncResponseJson(openOrders, "orders") + "}";
+			}
+			String matchedOrder = matchingBrokerObject(
+				extractJsonArrayObjects(openOrders.body, "orders"),
+				normalizedSymbol,
+				contractIds.isEmpty() ? "" : contractIds.iterator().next(),
+				symbolByContractId,
+				idOrTag,
+				0,
+				true
+			);
+			if (isBlank(matchedOrder)) {
+				return "{"
+					+ "\"success\":true,"
+					+ "\"alreadyGone\":true,"
+					+ "\"message\":" + jsonString("No matching resting TopstepX entry order remains for " + normalizedSymbol + ".") + ","
+					+ "\"accountId\":" + jsonString(accountId) + ","
+					+ "\"symbol\":" + jsonString(normalizedSymbol) + ","
+					+ "\"orderId\":" + jsonString(cleanOrDefault(orderId, "")) + ","
+					+ "\"customTag\":" + jsonString(cleanOrDefault(customTag, "")) + ","
+					+ "\"ordersCanceled\":0"
+					+ "}";
+			}
+			String matchedOrderId = firstNonBlank(
+				extractJsonNumber(matchedOrder, "id"),
+				extractJsonNumber(matchedOrder, "orderId"),
+				extractJsonString(matchedOrder, "id"),
+				extractJsonString(matchedOrder, "orderId")
+			);
+			if (isBlank(matchedOrderId)) {
+				return "{"
+					+ "\"success\":false,"
+					+ "\"message\":\"Matching resting TopstepX entry order did not include an id.\","
+					+ "\"accountId\":" + jsonString(accountId) + ","
+					+ "\"symbol\":" + jsonString(normalizedSymbol) + ","
+					+ "\"orderId\":" + jsonString(cleanOrDefault(orderId, "")) + ","
+					+ "\"customTag\":" + jsonString(cleanOrDefault(customTag, "")) + ","
+					+ "\"matchedOrder\":" + matchedOrder
+					+ "}";
+			}
+			String body = "{\"accountId\":" + accountId + ",\"orderId\":" + matchedOrderId + "}";
+			HttpResult cancel = postTopstepxJson(realtimeConfig, "/Order/cancel", body);
+			boolean ok = cancel.statusCode >= 200 && cancel.statusCode < 300 && jsonBoolean(cancel.body, "success");
+			return "{"
+				+ "\"success\":" + ok + ","
+				+ "\"message\":" + jsonString(ok ? "TopstepX resting entry order canceled for " + normalizedSymbol + "." : "TopstepX resting entry order cancel failed for " + normalizedSymbol + ".") + ","
+				+ "\"accountId\":" + jsonString(accountId) + ","
+				+ "\"symbol\":" + jsonString(normalizedSymbol) + ","
+				+ "\"orderId\":" + jsonString(matchedOrderId) + ","
+				+ "\"customTag\":" + jsonString(cleanOrDefault(customTag, "")) + ","
+				+ "\"ordersCanceled\":" + (ok ? 1 : 0) + ","
+				+ "\"statusCode\":" + cancel.statusCode + ","
+				+ "\"matchedOrder\":" + matchedOrder + ","
+				+ "\"response\":" + syncResponseJson(cancel, "cancel")
+				+ "}";
+		} catch (Exception e) {
+			return "{\"success\":false,\"message\":" + jsonString("TopstepX resting entry order cancel failed: " + safeMessage(e.getMessage())) + "}";
+		}
+	}
+
 	public static String flattenTopstepxPracticeAccount(String requiredAccountId) {
 		initializeStore();
 		ConnectionConfig config = loadConnection(TOPSTEPX);

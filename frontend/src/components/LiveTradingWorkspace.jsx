@@ -40,6 +40,8 @@ function LiveTradingWorkspaceComponent({
   feedStaleSeconds,
   dataSource,
   capturedBars,
+  realtimeRunning = false,
+  historyPolling = false,
   warmupPending,
   graphReadiness,
   backendOffline,
@@ -83,7 +85,14 @@ function LiveTradingWorkspaceComponent({
     graphReadiness,
   });
   const feedStatus = feedHealthLabel(feedStaleSeconds, lastRealtimeEventAt, serverTime);
-  const sourceStatus = chartSourceStatus(dataSource, capturedBars);
+  const sourceStatus = chartSourceStatus(dataSource, capturedBars, {
+    backendOffline,
+    botStarted,
+    realtimeRunning,
+    historyPolling,
+    feedStaleSeconds,
+  });
+  const chartSnapshotWarning = sourceStatus.state === "stale" || sourceStatus.state === "offline";
   const visibleHover = latestCandle;
 
   const syncChartCandles = useCallback((nextCandles, options = {}) => {
@@ -339,13 +348,19 @@ function LiveTradingWorkspaceComponent({
           </div>
 
           <div
-            className="live-workspace-chart-frame"
+            className={chartSnapshotWarning ? "live-workspace-chart-frame has-runtime-warning" : "live-workspace-chart-frame"}
             onPointerDown={onChartInteraction}
             onPointerMove={onChartInteraction}
             onTouchMove={onChartInteraction}
             onWheel={onChartInteraction}
           >
             <div ref={chartHostRef} className="live-workspace-chart" />
+            {chartSnapshotWarning && chartCandles.length > 0 && (
+              <div className={`live-workspace-chart-state-banner ${sourceStatus.tone}`}>
+                <strong>{sourceStatus.label}</strong>
+                <span>{sourceStatus.detail}</span>
+              </div>
+            )}
             {(!chartReady || chartCandles.length === 0) && (
               <div className="live-workspace-empty">
                 <strong>{chartStatus.title}</strong>

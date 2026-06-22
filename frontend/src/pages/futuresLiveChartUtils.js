@@ -39,6 +39,8 @@ export function visibleLiveEventDetailEntries(entry) {
   const priority = [
     "symbols",
     "symbol",
+    "logSource",
+    "source",
     "sessionId",
     "strategyConfig",
     "riskConfig",

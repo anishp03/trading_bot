@@ -26,19 +26,55 @@ test("chartSourceStatus reports live-only warmup gaps as source pending", () => 
     label: "Source pending",
     detail: "Chart source pending",
     tone: "is-waiting",
+    state: "pending",
   });
 
   assert.deepEqual(chartSourceStatus("PROJECTX_SIGNALR_WAITING", 0), {
     label: "Waiting",
     detail: "Waiting for live candles",
     tone: "is-waiting",
+    state: "waiting",
   });
 
   assert.deepEqual(chartSourceStatus("LIVE_CAPTURED_BARS", 12), {
     label: "Captured bars",
     detail: "12 captured candles",
     tone: "is-live",
+    state: "live",
   });
+});
+
+test("chartSourceStatus does not mark captured bars as live when the monitor feed is stopped", () => {
+  assert.deepEqual(
+    chartSourceStatus("LIVE_CAPTURED_BARS", 520, {
+      botStarted: false,
+      realtimeRunning: false,
+      historyPolling: false,
+      feedStaleSeconds: 184536,
+    }),
+    {
+      label: "Stored snapshot",
+      detail: "520 stored candles; feed stopped 51h 15m ago",
+      tone: "is-stale",
+      state: "stale",
+    }
+  );
+});
+
+test("chartSourceStatus flags stale captured bars while the bot is running", () => {
+  assert.deepEqual(
+    chartSourceStatus("LIVE_CAPTURED_BARS", 350, {
+      botStarted: true,
+      realtimeRunning: true,
+      feedStaleSeconds: 45,
+    }),
+    {
+      label: "Stale snapshot",
+      detail: "350 stored candles; last feed 45s ago",
+      tone: "is-stale",
+      state: "stale",
+    }
+  );
 });
 
 test("shouldApplyProgrammaticRange only moves the viewport for intentional chart/range changes", () => {

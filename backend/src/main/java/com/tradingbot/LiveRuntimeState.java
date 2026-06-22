@@ -638,11 +638,7 @@ public class LiveRuntimeState {
 			+ " positions=" + checks.positionCount
 			+ " orders=" + checks.orderCount
 			+ " trades=" + checks.tradeCount;
-		if (checks.hasError || checks.hasWarn) {
-			System.err.println(message);
-		} else {
-			System.out.println(message);
-		}
+			logDiagnostic("metrics-check", message);
 	}
 
 	private static String positionsJson() {
@@ -1512,6 +1508,10 @@ public class LiveRuntimeState {
 				+ "\"message\":" + jsonString(message)
 				+ "}";
 		}
+	}
+
+	private static void logDiagnostic(String action, String message) {
+		System.err.println("[live-runtime] action=" + cleanForLog(action) + " message=" + cleanForLog(message));
 	}
 
 	private static class LiveCandle {

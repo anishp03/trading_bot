@@ -168,6 +168,78 @@ public class FuturesLiveBrokerReconcileOpenPositionTest {
 	}
 
 	@Test
+	public void pdbShortUsesMarketableProtectedLimitPrice() throws Exception {
+		double brokerEntry = liveBrokerSubmitEntryPrice("PDB", "MGC", "SHORT", 4236.9, 4239.0, 4233.9, 4236.8, 4237.0);
+
+		assertEquals(4236.6, brokerEntry, 0.000001, "PDB shorts should cross the bid with a capped protected limit");
+	}
+
+	@Test
+	public void pdbLongUsesMarketableProtectedLimitPrice() throws Exception {
+		double brokerEntry = liveBrokerSubmitEntryPrice("PDB", "MGC", "LONG", 4236.9, 4234.0, 4240.0, 4236.8, 4237.0);
+
+		assertEquals(4237.2, brokerEntry, 0.000001, "PDB longs should cross the ask with a capped protected limit");
+	}
+
+	@Test
+	public void nonPdbStrategyPreservesPlannedLimitPrice() throws Exception {
+		double brokerEntry = liveBrokerSubmitEntryPrice("OMOM", "MGC", "SHORT", 4236.9, 4239.0, 4233.9, 4236.8, 4237.0);
+
+		assertEquals(4236.9, brokerEntry, 0.000001, "non-PDB strategies must not inherit PDB execution aggressiveness");
+	}
+
+	@Test
+	public void pdbMarketableLimitDoesNotChaseThroughTargetGeometry() throws Exception {
+		double brokerEntry = liveBrokerSubmitEntryPrice("PDB", "MGC", "SHORT", 4236.9, 4239.0, 4236.65, 4236.8, 4237.0);
+
+		assertEquals(4236.9, brokerEntry, 0.000001, "PDB should not cross the spread if the protected price would already consume the target zone");
+	}
+
+	@Test
+	public void pdbRestingOrderBecomesMissedExecutionAfterCancel() throws Exception {
+		String status = liveStatusAfterRestingEntryLifecycle(
+			"PDB",
+			"RESTING_TOPSTEPX",
+			"{\"success\":true,\"ordersCanceled\":1}"
+		);
+
+		assertEquals("MISSED_EXECUTION_TOPSTEPX", status, "unfilled PDB entries must not remain as launch-equivalent resting orders");
+	}
+
+	@Test
+	public void pdbRestingOrderExposesCancelFailure() throws Exception {
+		String status = liveStatusAfterRestingEntryLifecycle(
+			"PDB",
+			"RESTING_TOPSTEPX",
+			"{\"success\":false,\"ordersCanceled\":0,\"message\":\"cancel failed\"}"
+		);
+
+		assertEquals("CANCEL_FAILED_RESTING_TOPSTEPX", status, "cancel failures must be explicit and not become managed live positions");
+	}
+
+	@Test
+	public void pdbRestingOrderThatFillsBeforeCancelBecomesSubmitted() throws Exception {
+		String status = liveStatusAfterRestingEntryLifecycle(
+			"PDB",
+			"RESTING_TOPSTEPX",
+			"{\"success\":true,\"filledBeforeCancel\":true,\"ordersCanceled\":0}"
+		);
+
+		assertEquals("SUBMITTED_TOPSTEPX", status, "a real broker fill found during resting-order cleanup must remain managed");
+	}
+
+	@Test
+	public void nonPdbRestingOrderKeepsExistingRestingState() throws Exception {
+		String status = liveStatusAfterRestingEntryLifecycle(
+			"OMOM",
+			"RESTING_TOPSTEPX",
+			"{\"success\":true,\"ordersCanceled\":1}"
+		);
+
+		assertEquals("RESTING_TOPSTEPX", status, "non-PDB broker launch paths must keep their existing resting-order semantics");
+	}
+
+	@Test
 	public void liveDecisionHistoryExposesDtmPnlComponents() throws Exception {
 		insertSnapshot();
 		insertLiveDecision(
@@ -218,6 +290,42 @@ public class FuturesLiveBrokerReconcileOpenPositionTest {
 		Method method = FuturesManager.class.getDeclaredMethod("dtmBrokerManagementSuspended", session.getClass(), state.getClass());
 		method.setAccessible(true);
 		return ((Boolean) method.invoke(null, session, state)).booleanValue();
+	}
+
+	private static double liveBrokerSubmitEntryPrice(
+		String strategyCode,
+		String symbol,
+		String side,
+		double plannedEntryPrice,
+		double stopPrice,
+		double targetPrice,
+		double bestBid,
+		double bestAsk
+	) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod(
+			"liveBrokerSubmitEntryPrice",
+			String.class,
+			String.class,
+			String.class,
+			double.class,
+			double.class,
+			double.class,
+			double.class,
+			double.class
+		);
+		method.setAccessible(true);
+		return ((Double) method.invoke(null, strategyCode, symbol, side, plannedEntryPrice, stopPrice, targetPrice, bestBid, bestAsk)).doubleValue();
+	}
+
+	private static String liveStatusAfterRestingEntryLifecycle(String strategyCode, String status, String cancelJson) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod(
+			"liveStatusAfterRestingEntryLifecycle",
+			String.class,
+			String.class,
+			String.class
+		);
+		method.setAccessible(true);
+		return (String) method.invoke(null, strategyCode, status, cancelJson);
 	}
 
 	private static int reconcileBrokerFlatLiveEntries(int sessionId, int snapshotId, String brokerMetricsJson) throws Exception {

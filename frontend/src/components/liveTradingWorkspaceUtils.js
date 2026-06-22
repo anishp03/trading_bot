@@ -15,6 +15,7 @@ const RANGE_TRADING_DAYS = {
 
 const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MAX_FORMAT_CACHE_SIZE = 2048;
+const MARKET_DATA_STALE_SECONDS = 30;
 const tickMarkCache = new Map();
 const timeLabelCache = new Map();
 
@@ -111,6 +112,9 @@ export function liveWorkspaceRenderSignature(props) {
     Boolean(props?.warmupPending),
     Boolean(props?.backendOffline),
     Boolean(props?.marketIdle),
+    Boolean(props?.realtimeRunning),
+    Boolean(props?.historyPolling),
+    Number(props?.feedStaleSeconds ?? -1),
     props?.dataSource || "",
     Number(props?.capturedBars || 0),
     props?.graphReadiness?.ready === true ? "ready" : props?.graphReadiness?.message || "",
@@ -126,14 +130,52 @@ export function liveWorkspaceRenderSignature(props) {
   ].join("|");
 }
 
-export function chartSourceStatus(dataSource, capturedBars) {
+export function chartSourceStatus(dataSource, capturedBars, runtime = {}) {
   const source = String(dataSource || "").trim().toUpperCase();
   const capturedCount = Number(capturedBars || 0);
+  const feedStaleSeconds = Number(runtime?.feedStaleSeconds ?? -1);
+  const backendOffline = Boolean(runtime?.backendOffline);
+  const botStarted = Boolean(runtime?.botStarted);
+  const realtimeRunning = Boolean(runtime?.realtimeRunning);
+  const historyPolling = Boolean(runtime?.historyPolling);
+  const hasRuntimeFeedState = ["botStarted", "realtimeRunning", "historyPolling"].some((key) => Object.prototype.hasOwnProperty.call(runtime || {}, key));
+  const feedKnownStopped = feedStaleSeconds >= 0 && feedStaleSeconds > MARKET_DATA_STALE_SECONDS;
+  const monitorStopped = hasRuntimeFeedState && !backendOffline && !botStarted && !realtimeRunning && !historyPolling;
+  const capturedLabel = capturedCount > 0 ? `${formatInteger(capturedCount)} stored candles` : "Stored candles";
+
+  if (backendOffline) {
+    return {
+      label: "Backend offline",
+      detail: capturedCount > 0 ? `${capturedLabel}; backend offline` : "Backend offline",
+      tone: "is-error",
+      state: "offline",
+    };
+  }
+
+  if (capturedCount > 0 && feedKnownStopped) {
+    return {
+      label: botStarted || realtimeRunning ? "Stale snapshot" : "Stored snapshot",
+      detail: `${capturedLabel}; ${botStarted || realtimeRunning ? "last feed" : "feed stopped"} ${formatDuration(feedStaleSeconds)} ago`,
+      tone: "is-stale",
+      state: "stale",
+    };
+  }
+
+  if (capturedCount > 0 && monitorStopped) {
+    return {
+      label: "Stored snapshot",
+      detail: `${capturedLabel}; feed stopped`,
+      tone: "is-stale",
+      state: "stale",
+    };
+  }
+
   if (source.includes("LIVE_CAPTURED_BARS") || capturedCount > 0) {
     return {
       label: "Captured bars",
       detail: capturedCount > 0 ? `${formatInteger(capturedCount)} captured candles` : "Captured minute bars",
       tone: "is-live",
+      state: "live",
     };
   }
   if (source.includes("LIVE_ONLY")) {
@@ -141,6 +183,7 @@ export function chartSourceStatus(dataSource, capturedBars) {
       label: "Source pending",
       detail: "Chart source pending",
       tone: "is-waiting",
+      state: "pending",
     };
   }
   if (source.includes("SIGNALR")) {
@@ -148,6 +191,7 @@ export function chartSourceStatus(dataSource, capturedBars) {
       label: source.includes("WAITING") ? "Waiting" : "Live stream",
       detail: source.includes("WAITING") ? "Waiting for live candles" : "Realtime aggregate fallback",
       tone: source.includes("WAITING") ? "is-waiting" : "is-fallback",
+      state: source.includes("WAITING") ? "waiting" : "fallback",
     };
   }
   if (source.includes("WARMUP") || source.includes("HISTORY")) {
@@ -155,12 +199,14 @@ export function chartSourceStatus(dataSource, capturedBars) {
       label: "Warmup",
       detail: "History warmup candles",
       tone: "is-waiting",
+      state: "waiting",
     };
   }
   return {
     label: "Source pending",
     detail: "Chart source pending",
     tone: "is-waiting",
+    state: "pending",
   };
 }
 
@@ -275,6 +321,18 @@ function chartTimeToDate(time) {
 
 function formatInteger(value) {
   return Number(value || 0).toLocaleString("en-US", { maximumFractionDigits: 0 });
+}
+
+function formatDuration(seconds) {
+  const numeric = Number(seconds);
+  if (!Number.isFinite(numeric) || numeric < 0) return "syncing";
+  if (numeric < 60) return `${Math.round(numeric)}s`;
+  const minutes = Math.floor(numeric / 60);
+  const remainingSeconds = Math.round(numeric % 60);
+  if (minutes < 60) return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }
 
 function symbolsSignature(symbols) {

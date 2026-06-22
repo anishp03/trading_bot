@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../utils/api.js";
 
 const DEFAULT_SETTINGS = {
@@ -259,7 +259,7 @@ export default function FuturesStrategy() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState("");
 
-  function loadInstruments() {
+  const loadInstruments = useCallback(() => {
     apiFetch("/api/futures/instruments")
       .then((response) => {
         if (!response.ok) throw new Error("Failed to load futures instruments.");
@@ -276,9 +276,9 @@ export default function FuturesStrategy() {
         console.error("Error loading futures instruments:", error);
         setInstruments(INSTRUMENT_FALLBACKS);
       });
-  }
+  }, [selectedSymbol]);
 
-  function loadStrategyPresets() {
+  const loadStrategyPresets = useCallback(() => {
     apiFetch("/api/futures/strategy-presets")
       .then((response) => {
         if (!response.ok) throw new Error("Failed to load strategy presets.");
@@ -295,9 +295,9 @@ export default function FuturesStrategy() {
         console.error("Error loading futures strategy presets:", error);
         setStrategyPresets(CANONICAL_STRATEGY_PRESETS);
       });
-  }
+  }, [selectedPreset]);
 
-  function loadSettings(symbol = selectedSymbol, preset = selectedPreset) {
+  const loadSettings = useCallback((symbol = selectedSymbol, preset = selectedPreset) => {
     setIsLoading(true);
     const params = new URLSearchParams({ symbol, preset });
     apiFetch(`/api/futures/strategy?${params.toString()}`)
@@ -314,16 +314,16 @@ export default function FuturesStrategy() {
         setSaveStatus(`Loaded local defaults for ${symbol}`);
       })
       .finally(() => setIsLoading(false));
-  }
+  }, [selectedPreset, selectedSymbol]);
 
   useEffect(() => {
     loadInstruments();
     loadStrategyPresets();
-  }, []);
+  }, [loadInstruments, loadStrategyPresets]);
 
   useEffect(() => {
     loadSettings(selectedSymbol, selectedPreset);
-  }, [selectedSymbol, selectedPreset]);
+  }, [loadSettings, selectedPreset, selectedSymbol]);
 
   function updateModule(moduleKey, field, value) {
     setSettings((current) => ({

@@ -179,6 +179,14 @@ const DEFAULT_LIVE_RISK_CONFIG = {
   maxAggregateMiniUnits: "5",
 };
 
+function useStableCallback(callback) {
+  const callbackRef = useRef(callback);
+  useEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
+  return useCallback((...args) => callbackRef.current?.(...args), []);
+}
+
 export default function FuturesLive() {
   const [selectedChartSymbol, setSelectedChartSymbol] = useState(DEFAULT_SYMBOLS[0]);
   const [selectedTimeframe, setSelectedTimeframe] = useState("1m");
@@ -541,12 +549,20 @@ export default function FuturesLive() {
   const noteChartInteraction = useCallback(() => {
     chartInteractionUntil.current = Date.now() + 2500;
   }, []);
+  const loadFundedProfilesCallback = useStableCallback(loadFundedProfiles);
+  const loadTopstepAccountsCallback = useStableCallback(loadTopstepAccounts);
+  const loadStrategyPresetsCallback = useStableCallback(loadStrategyPresets);
+  const loadLiveTradeCacheCallback = useStableCallback(loadLiveTradeCache);
+  const persistLiveTradeCacheRowsCallback = useStableCallback(persistLiveTradeCacheRows);
+  const refreshLiveDataCallback = useStableCallback(refreshLiveData);
+  const loadLiveMarksCallback = useStableCallback(loadLiveMarks);
+  const refreshLiveReconciliationCallback = useStableCallback(refreshLiveReconciliation);
 
   useEffect(() => {
-    loadFundedProfiles();
-    loadTopstepAccounts();
-    loadStrategyPresets();
-  }, []);
+    loadFundedProfilesCallback();
+    loadTopstepAccountsCallback();
+    loadStrategyPresetsCallback();
+  }, [loadFundedProfilesCallback, loadStrategyPresetsCallback, loadTopstepAccountsCallback]);
 
   useEffect(() => {
     if (!riskProfileOptions.some((profile) => profile.code === selectedProfileCode)) {
@@ -634,8 +650,8 @@ export default function FuturesLive() {
   useEffect(() => {
     setAllTradeFilters(DEFAULT_TRADE_FILTERS);
     setAllTradePage(1);
-    loadLiveTradeCache(accountScopeId);
-  }, [accountScopeId]);
+    loadLiveTradeCacheCallback(accountScopeId);
+  }, [accountScopeId, loadLiveTradeCacheCallback]);
 
   useEffect(() => {
     setAllTradePage(1);
@@ -643,8 +659,8 @@ export default function FuturesLive() {
 
   useEffect(() => {
     if (!tradeCacheReady || tradeCacheAccount.current !== accountScopeId) return;
-    persistLiveTradeCacheRows(allTradeRows);
-  }, [accountScopeId, allTradeRows, tradeCacheReady]);
+    persistLiveTradeCacheRowsCallback(allTradeRows);
+  }, [accountScopeId, allTradeRows, persistLiveTradeCacheRowsCallback, tradeCacheReady]);
 
   useEffect(() => {
     if (!isUsableAccountMetricsSnapshot(rawAccountScopedMetrics, accountScopeId)) return;
@@ -674,7 +690,7 @@ export default function FuturesLive() {
     if (!monitorSymbols.includes(selectedChartSymbol)) {
       setSelectedChartSymbol(monitorSymbols[0] || DEFAULT_SYMBOLS[0]);
     }
-  }, [symbolsCsv, selectedChartSymbol]);
+  }, [monitorSymbols, selectedChartSymbol]);
 
   useEffect(() => {
     let resetFrame = null;
@@ -691,8 +707,8 @@ export default function FuturesLive() {
   }, [botStarted, monitorSymbols]);
 
   useEffect(() => {
-    refreshLiveData();
-  }, [symbolsCsv, selectedTimeframe, selectedProfileCode, accountScopeId]);
+    refreshLiveDataCallback();
+  }, [accountScopeId, refreshLiveDataCallback, selectedProfileCode, selectedTimeframe, symbolsCsv]);
 
   useEffect(() => {
     if (typeof setFuturesSidebarAccountId !== "function") {
@@ -708,10 +724,10 @@ export default function FuturesLive() {
       setLiveMarks(null);
       return undefined;
     }
-    loadLiveMarks();
-    const intervalId = window.setInterval(loadLiveMarks, LIVE_MARKS_REFRESH_MS);
+    loadLiveMarksCallback();
+    const intervalId = window.setInterval(loadLiveMarksCallback, LIVE_MARKS_REFRESH_MS);
     return () => window.clearInterval(intervalId);
-  }, [accountScopeId, botStarted, symbolsCsv, selectedTimeframe]);
+  }, [accountScopeId, botStarted, loadLiveMarksCallback, selectedTimeframe, symbolsCsv]);
 
   useEffect(() => {
     if (typeof refreshFuturesSidebarStatus !== "function" || !feedRunning || feedStaleSeconds < 0) {
@@ -726,9 +742,9 @@ export default function FuturesLive() {
   }, [feedRunning, feedStaleSeconds, refreshFuturesSidebarStatus]);
 
   useEffect(() => {
-    const intervalId = window.setInterval(refreshLiveReconciliation, LIVE_RECONCILE_REFRESH_MS);
+    const intervalId = window.setInterval(refreshLiveReconciliationCallback, LIVE_RECONCILE_REFRESH_MS);
     return () => window.clearInterval(intervalId);
-  }, [accountScopeId, symbolsCsv, selectedTimeframe]);
+  }, [accountScopeId, refreshLiveReconciliationCallback, selectedTimeframe, symbolsCsv]);
 
   useEffect(() => {
     const sessionId = Number(liveStatus?.sessionId || 0);
@@ -758,12 +774,13 @@ export default function FuturesLive() {
   }, [accountScopeId, backendOffline, botStarted, brokerClosedTradeRows, brokerOpenTradeRows, feedRunning, liveStatus, realtimeStatus, liveMonitor, liveMarks, liveDecisions, liveMetrics, symbolStates]);
 
   useEffect(() => {
+    const controllers = requestControllers.current;
     return () => {
       if (chartTransitionTimer.current) {
         window.clearTimeout(chartTransitionTimer.current);
       }
-      requestControllers.current.forEach((controller) => controller.abort());
-      requestControllers.current.clear();
+      controllers.forEach((controller) => controller.abort());
+      controllers.clear();
     };
   }, []);
 
@@ -1310,15 +1327,18 @@ export default function FuturesLive() {
 
   return (
     <div className="app-page futures-live-page">
-      <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap">
-        <h2 className="app-title m-0">Live Futures Bot</h2>
-        <div className="d-flex align-items-center gap-2 flex-wrap">
+      <div className="futures-live-header">
+        <div className="futures-live-header-copy">
+          <h2 className="app-title m-0">Live Futures Bot</h2>
+          <span>{activeStrategyPreset || DEFAULT_STRATEGY_PRESET}</span>
+        </div>
+        <div className="futures-live-header-actions">
           {!backendOffline && (
             <span className={liveStatus?.running ? "app-badge app-positive-badge" : "app-badge app-neutral-badge"}>
               {liveStatus?.running ? "Running" : "Stopped"}
             </span>
           )}
-          <button type="button" className="app-btn app-btn-small px-3" onClick={() => setLogDrawerOpen(true)}>
+          <button type="button" className="app-btn app-btn-small px-3 futures-live-header-logs" onClick={() => setLogDrawerOpen(true)}>
             Logs {logDrawerEntries.length ? `(${logDrawerEntries.length})` : ""}
           </button>
         </div>
@@ -1457,7 +1477,7 @@ export default function FuturesLive() {
       <section className="futures-monitor-workspace-panel">
         <LiveTradingWorkspace
           ref={liveWorkspaceRef}
-          botStarted={monitorDataActive}
+          botStarted={botStarted}
           candles={chartDisplayCandles}
           isTransitioning={chartTransitioning}
           symbol={selectedChartSymbol}
@@ -1472,6 +1492,8 @@ export default function FuturesLive() {
           feedStaleSeconds={feedStaleSeconds}
           dataSource={selectedSymbolState?.dataSource || liveMonitor?.dataSource || ""}
           capturedBars={Number(selectedSymbolState?.capturedBars || 0)}
+          realtimeRunning={Boolean(realtimeStatus?.running || liveMonitor?.realtimeRunning)}
+          historyPolling={Boolean(liveMonitor?.historyPolling)}
           warmupPending={warmupPending}
           graphReadiness={graphReadiness}
           backendOffline={backendOffline}
@@ -1543,48 +1565,33 @@ function LiveRiskHeartbeatCard({ heartbeat }) {
   return (
     <div className={`futures-risk-heartbeat-panel ${safe.tone}`}>
       <div className="futures-risk-heartbeat-header">
-        <div>
-          <strong>Live Risk Heartbeat</strong>
-          <span>{safe.summary}</span>
-        </div>
-        <span className={`futures-health-pill ${safe.tone}`}>{safe.status}</span>
+        <strong>Live Risk Heartbeat</strong>
       </div>
+      <div className="futures-risk-heartbeat-status">{safe.status}</div>
       <div className="futures-risk-heartbeat-grid">
         <RiskHeartbeatMetric label={safe.balanceMode === "PNL" ? "Funded PnL" : "Risk Equity"} value={formatAccountCurrency(safe.riskCurrentBalance)} accent={safe.dailyPnl} />
-        <RiskHeartbeatMetric label="Day Start" value={formatAccountCurrency(safe.dayStartBalance)} />
         <RiskHeartbeatMetric label="Daily PnL" value={formatCurrency(safe.dailyPnl)} accent={safe.dailyPnl} />
         <RiskHeartbeatMetric label="DLL Room" value={formatAccountCurrency(safe.dailyRiskRoom)} accent={safe.dailyRiskRoom > safe.configuredMaxRisk ? 1 : safe.dailyRiskRoom <= 0 ? -1 : 0} />
         <RiskHeartbeatMetric label="MLL Room" value={formatAccountCurrency(safe.trailingCushion)} accent={safe.trailingCushion > 0 ? 1 : -1} />
         <RiskHeartbeatMetric label="Configured Cap" value={formatAccountCurrency(safe.configuredMaxRisk)} />
-        <RiskHeartbeatMetric label="Mode Cap" value={formatAccountCurrency(safe.modeAdjustedCap)} detail={safe.modeCapLabel} />
-        <RiskHeartbeatMetric label="Max Risk Now" value={formatAccountCurrency(safe.effectiveMaxRisk)} accent={safe.effectiveMaxRisk <= 0 ? -1 : safe.effectiveMaxRisk < safe.configuredMaxRisk ? -0.5 : 1} detail="Risk budget, not target" />
+        <RiskHeartbeatMetric label="Max Risk Now" value={formatAccountCurrency(safe.effectiveMaxRisk)} accent={safe.effectiveMaxRisk <= 0 ? -1 : safe.effectiveMaxRisk < safe.configuredMaxRisk ? -0.5 : 1} />
       </div>
-      <div className="futures-risk-heartbeat-breakdown">
-        <span><b>DLL Budget</b>{formatAccountCurrency(safe.dllRiskBudget)}</span>
-        <span><b>MLL Budget</b>{formatAccountCurrency(safe.mllRiskBudget)}</span>
-        <span><b>Limited by</b>{safe.limitingBudgetLabel}</span>
-        <span><b>Ratio</b>{formatNumber(safe.riskSizingRatio, 2)}x</span>
-      </div>
-      <p className="futures-risk-heartbeat-note">{safe.riskExplanation}</p>
-      <div className="futures-risk-heartbeat-foot">
-        <span>Risk <b>{safe.riskSizingLabel}</b></span>
-        <span>{safe.riskSizingMode === RISK_SIZING_DYNAMIC ? "DLL Reserve" : "DLL Guard"} <b>{formatAccountCurrency(safe.riskSizingMode === RISK_SIZING_DYNAMIC ? safe.riskPolicy?.dllReserveDollars || 0 : safe.dailyRiskRoom)}</b></span>
+      <div className="futures-risk-heartbeat-meta">
+        <span>Mode <b>{safe.riskSizingLabel}</b></span>
+        <span>Limited by <b>{safe.limitingBudgetLabel}</b></span>
         <span>Account <b>{safe.accountId || "Not selected"}</b></span>
         <span>Source <b>{safe.source}</b></span>
-        <span>Cost <b>{formatCurrencyNoSign(safe.commissionPerContract)} / {formatNumber(safe.slippageTicks, 2)}t</b></span>
-        <span>Target <b>{safe.profitTarget > 0 ? formatAccountCurrency(safe.profitTarget) : "Off"}</b></span>
       </div>
     </div>
   );
 }
 
-function RiskHeartbeatMetric({ label, value, accent = 0, detail = "" }) {
+function RiskHeartbeatMetric({ label, value, accent = 0 }) {
   const tone = accent > 0 ? "pos" : accent < 0 ? "neg" : "";
   return (
     <div className="futures-risk-heartbeat-metric">
       <span>{label}</span>
       <strong className={tone}>{value}</strong>
-      {detail && <em>{detail}</em>}
     </div>
   );
 }
@@ -1627,6 +1634,20 @@ function SymbolTrackerSidebar({ trackers, selectedSymbol }) {
 function FuturesLiveLogDrawer({ open, onOpen, onClose, entries, status, onClear, clearBusy }) {
   const rows = Array.isArray(entries) ? entries.slice(0, 1000) : [];
   const statusText = `Status : ${compactLogDrawerStatus(status?.healthLabel || "Waiting")}`;
+
+  useEffect(() => {
+    if (typeof document === "undefined" || !open) return undefined;
+    const body = document.body;
+    const previousOverflow = body.style.overflow;
+    const previousOverscrollBehavior = body.style.overscrollBehavior;
+    body.style.overflow = "hidden";
+    body.style.overscrollBehavior = "contain";
+    return () => {
+      body.style.overflow = previousOverflow;
+      body.style.overscrollBehavior = previousOverscrollBehavior;
+    };
+  }, [open]);
+
   const drawer = (
     <>
       <button
@@ -1639,7 +1660,7 @@ function FuturesLiveLogDrawer({ open, onOpen, onClose, entries, status, onClear,
         <b>{rows.length}</b>
       </button>
       {open && <button type="button" className="futures-log-backdrop" aria-label="Close live logs" onClick={onClose} />}
-      <aside className={open ? "futures-log-drawer open" : "futures-log-drawer"} aria-hidden={!open}>
+      <aside className={open ? "futures-log-drawer open" : "futures-log-drawer"} aria-hidden={!open} aria-modal={open ? "true" : undefined} role="dialog">
         <div className="futures-log-drawer-head">
           <div className="futures-log-drawer-title">Live Logs</div>
           <div className="futures-log-drawer-controls">
@@ -1880,6 +1901,7 @@ function observedLogEntry({ key, sessionId, createdAt, eventType = "", phase, to
   return {
     id: `observed-${key}`,
     observedKey: key,
+    logSource: "ui_observed",
     sessionId,
     createdAt: createdAt || liveLogNow(),
     eventType,
@@ -1891,7 +1913,10 @@ function observedLogEntry({ key, sessionId, createdAt, eventType = "", phase, to
     subtext: detail,
     summary,
     detail,
-    details,
+    details: {
+      logSource: "ui_observed",
+      ...details,
+    },
   };
 }
 
@@ -2016,7 +2041,16 @@ function eventSubtext(entry) {
 
 function eventContextText(entry) {
   const symbol = String(entry?.symbol || entry?.details?.symbol || "").trim().toUpperCase();
-  return symbol;
+  const source = logEntrySourceLabel(entry);
+  return [source, symbol].filter(Boolean).join(" | ");
+}
+
+function logEntrySourceLabel(entry) {
+  const rawSource = cleanLogText(entry?.logSource || entry?.details?.logSource || entry?.source || entry?.details?.source || "");
+  if (rawSource === "ui_observed" || entry?.observedKey || String(entry?.id || "").startsWith("observed-")) {
+    return "UI observed";
+  }
+  return "Backend";
 }
 
 function eventToneClass(entry) {
@@ -2049,6 +2083,8 @@ function detailLabel(key) {
   const labels = {
     symbols: "symbols",
     symbol: "symbol",
+    logSource: "source",
+    source: "source",
     strategyConfig: "strategy config",
     riskConfig: "risk config",
     marketData: "market data",
@@ -5143,7 +5179,7 @@ function TradeMetricsGrid({ metrics, pnlLabel = "P/L", tradeLabel = "Trades", re
 
 function TradePagination({ page, totalPages, pageSize, onPrev, onNext }) {
   return (
-    <div className="d-flex align-items-center justify-content-between gap-2 mt-3 flex-wrap">
+    <div className="futures-trade-pagination d-flex align-items-center justify-content-between gap-2 mt-3 flex-wrap">
       <button type="button" className="app-btn px-3" disabled={page <= 1} onClick={onPrev}>
         Prev Trades
       </button>
@@ -6028,7 +6064,6 @@ function buildLiveRiskHeartbeat({
   const dllRiskBudget = Math.max(0, dailyRiskRoom - Math.max(0, riskPolicy.dllReserveDollars)) * clampNumber(riskPolicy.dailyRoomUsagePct, 0, 1);
   const mllRiskBudget = Math.max(0, trailingCushion - Math.max(0, riskPolicy.mllReserveDollars)) * clampNumber(riskPolicy.mllRoomUsagePct, 0, 1);
   const effectiveMaxRisk = Math.min(dynamicMaxRisk, dllRiskBudget, mllRiskBudget);
-  const riskSizingRatio = configuredMaxRisk > 0 ? dynamicMaxRisk / configuredMaxRisk : 0;
   const modeCapLabel = selectedRiskSizingMode === RISK_SIZING_DYNAMIC ? "MLL scaled" : "Static cap";
   const budgetLimits = [
     { label: modeCapLabel, value: dynamicMaxRisk },
@@ -6041,9 +6076,6 @@ function buildLiveRiskHeartbeat({
   const limitingBudgetLabel = `${limitingBudget.label} ${formatAccountCurrency(limitingBudget.value)}`;
   const brokerReady = metrics?.brokerMetricsReady !== false && (metrics?.dataSource === BROKER_SOURCE_TOPSTEPX || isAuthoritativeTopstepBrokerSnapshot(broker, metrics));
   const selectedAccountId = String(accountId || metrics?.accountId || broker.accountId || liveStatus?.practiceAccountId || "").trim();
-  const commissionPerContract = firstFiniteNumber(liveStatus?.commissionPerContract, 1.24);
-  const slippageTicks = firstFiniteNumber(liveStatus?.slippageTicks, 1);
-  const profitTarget = firstFiniteNumber(liveStatus?.profitTarget, profile?.profitTarget, 0);
   let tone = "ok";
   let status = "Live";
   if (backendOffline) {
@@ -6063,12 +6095,6 @@ function buildLiveRiskHeartbeat({
     status = "Reduced";
   }
   const source = brokerReady ? "TopstepX" : metrics?.dataSource || "Local";
-  const summary = botStarted
-    ? `${balanceMode === "PNL" ? "Funded PnL mode" : "Equity mode"} | Max risk ${formatAccountCurrency(effectiveMaxRisk)}`
-    : "Start bot to stream account risk";
-  const riskExplanation = effectiveMaxRisk <= 0
-    ? `Blocked by ${limitingBudgetLabel}. Risk budget, not target. Strategy target and DTM exits remain separate.`
-    : `Limited by ${limitingBudgetLabel}. Risk budget, not target. Strategy target and DTM exits remain separate.`;
   return {
     accountId: selectedAccountId,
     balanceMode,
@@ -6079,22 +6105,13 @@ function buildLiveRiskHeartbeat({
     trailingCushion,
     configuredMaxRisk,
     dynamicMaxRisk,
-    modeAdjustedCap: dynamicMaxRisk,
-    modeCapLabel,
-    riskSizingRatio,
     dllRiskBudget,
     mllRiskBudget,
     effectiveMaxRisk,
     limitingBudgetLabel,
-    riskExplanation,
     riskSizingMode: selectedRiskSizingMode,
     riskSizingLabel: riskOption.label,
-    riskPolicy,
-    commissionPerContract,
-    slippageTicks,
-    profitTarget,
     source,
-    summary,
     status,
     tone,
   };
@@ -6270,12 +6287,6 @@ function formatCurrency(value) {
   const numeric = Number(value || 0);
   const sign = numeric > 0 ? "+" : numeric < 0 ? "-" : "";
   return `${sign}$${Math.abs(numeric).toFixed(2)}`;
-}
-
-function formatCurrencyNoSign(value) {
-  const numeric = Number(value || 0);
-  if (!Number.isFinite(numeric)) return "$0.00";
-  return `$${Math.abs(numeric).toFixed(2)}`;
 }
 
 function formatAccountCurrency(value) {

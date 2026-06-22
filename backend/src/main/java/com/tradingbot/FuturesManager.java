@@ -49,6 +49,7 @@ import java.util.concurrent.TimeUnit;
 public class FuturesManager {
 	private static final String TIMEFRAME_FOLDER = "1min";
 	private static final String SYNTHETIC_LEVEL2_FOLDER = "level2-synthetic";
+	private static final String SYNTHETIC_LIVE_LIFECYCLE_PROVENANCE = "synthetic_live_lifecycle_self_test";
 	private static final ZoneId NEW_YORK_ZONE = ZoneId.of("America/New_York");
 	private static final DateTimeFormatter DISPLAY_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 	private static final DateTimeFormatter SERVER_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -126,6 +127,7 @@ public class FuturesManager {
 	private static final double PORTFOLIO_BACKTEST_MAE_RULE_BUFFER = 100.0;
 	private static final String DEFAULT_LIVE_SYMBOLS = "MES,MNQ,NQ,MGC,ES,M2K,MYM,MCL";
 	private static final String TOPSTEPX_AUTO_OCO_REQUIRED_MESSAGE = "ProjectX rejected bracket attachments because this TopstepX account is still using Position Brackets. Enable Auto OCO Brackets in TopstepX Risk Settings before live strategy orders can submit. No entry-only fallback was used.";
+	private static final double PDB_MARKETABLE_LIMIT_PROTECTION_TICKS = 2.0;
 	private static final int LIVE_TRADE_CACHE_MAX_BYTES = 20_000_000;
 	private static final int LIVE_HISTORY_ROW_LIMIT = 10000;
 	private static final int DEFAULT_LIVE_BROKER_TRADE_HISTORY_DAYS = 3650;
@@ -8407,10 +8409,15 @@ public class FuturesManager {
 		double safeEntry = entryPrice > 0.0 ? roundToTick(spec, entryPrice) : 0.0;
 		double safeStop = stopPrice > 0.0 ? roundToTick(spec, stopPrice) : 0.0;
 		double safeTarget = targetPrice > 0.0 ? roundToTick(spec, targetPrice) : 0.0;
-		String orderType = safeEntry > 0.0 ? "LIMIT" : "MARKET";
 		String cleanSource = cleanOrDefault(source, "LIVE_SIGNAL");
 		String cleanStrategyCode = firstNonBlank(strategyCode, strategyCodeFromOrderReason(reason));
 		String cleanStrategyName = firstNonBlank(strategyName, liveStrategyNameForCode(cleanStrategyCode));
+		LiveRuntimeState.OrderFlowSnapshot orderFlow = LiveRuntimeState.orderFlowSnapshot(normalizedSymbol);
+		double topBookBid = orderFlow != null && orderFlow.available && orderFlow.fresh ? orderFlow.bestBid : 0.0;
+		double topBookAsk = orderFlow != null && orderFlow.available && orderFlow.fresh ? orderFlow.bestAsk : 0.0;
+		double brokerEntry = liveBrokerSubmitEntryPrice(cleanStrategyCode, normalizedSymbol, normalizedSide, safeEntry, safeStop, safeTarget, topBookBid, topBookAsk);
+		String executionPolicy = liveBrokerExecutionPolicy(cleanStrategyCode, safeEntry, brokerEntry, topBookBid, topBookAsk);
+		String orderType = brokerEntry > 0.0 ? "LIMIT" : "MARKET";
 		String tagPrefix = cleanSource.toLowerCase().replaceAll("[^a-z0-9]+", "-") + "-" + normalizedSymbol;
 		if (cleanStrategyCode.length() > 0) {
 			tagPrefix += "-" + cleanStrategyCode.toLowerCase();
@@ -8428,9 +8435,14 @@ public class FuturesManager {
 			+ "\"strategyName\":" + jsonString(cleanStrategyName) + ","
 			+ "\"side\":" + jsonString(normalizedSide) + ","
 			+ "\"orderType\":" + jsonString(orderType) + ","
+			+ "\"executionPolicy\":" + jsonString(executionPolicy) + ","
 			+ "\"contracts\":" + requestedContracts + ","
 			+ "\"fundedMiniUnits\":" + requestedMiniUnits + ","
-			+ "\"entryPrice\":" + safeEntry + ","
+			+ "\"entryPrice\":" + brokerEntry + ","
+			+ "\"strategyEntryPrice\":" + safeEntry + ","
+			+ "\"brokerEntryPrice\":" + brokerEntry + ","
+			+ "\"topBookBid\":" + topBookBid + ","
+			+ "\"topBookAsk\":" + topBookAsk + ","
 			+ "\"stopPrice\":" + safeStop + ","
 			+ "\"targetPrice\":" + safeTarget + ","
 			+ "\"customTag\":" + jsonString(tag) + ","
@@ -8444,16 +8456,31 @@ public class FuturesManager {
 			normalizedSymbol,
 			normalizedSide,
 			requestedContracts,
-			safeEntry,
+			brokerEntry,
 			safeStop,
 			safeTarget,
 			tag
 		);
 		boolean success = jsonBoolean(responseJson, "success");
 		String status = topstepxLiveSubmitStatus(responseJson, success, successStatus, failureStatus);
-		int ledgerId = insertLiveOrderLedger(snapshotId, configuredAccountId, normalizedSymbol, normalizedSide, orderType, requestedContracts, safeEntry, safeStop, safeTarget, status, requestJson, responseJson, createdAt);
-		String message = jsonText(responseJson, "message", success ? "TopstepX order submitted." : "TopstepX order was rejected.");
-		recordLiveAudit(status, success ? "WARN" : "ERROR", cleanSource + " TopstepX order " + (success ? "submitted" : "rejected") + " for " + normalizedSymbol, responseJson);
+		String restingCancelJson = "";
+		if (shouldCancelRestingEntryAfterSubmit(cleanStrategyCode, status)) {
+			String restingOrderId = brokerOrderIdFromJson(responseJson);
+			restingCancelJson = FuturesConnectionManager.cancelTopstepxPracticeRestingEntryOrder(
+				requiredAccountId,
+				normalizedSymbol,
+				restingOrderId,
+				tag
+			);
+			status = liveStatusAfterRestingEntryLifecycle(cleanStrategyCode, status, restingCancelJson);
+			responseJson = mergeSimpleJson(responseJson, "\"restingEntryCancel\":" + jsonObjectOrDefault(restingCancelJson, "{}"));
+			if (liveEntryStatusIsTerminalNonFill(status)) {
+				success = false;
+			}
+		}
+		int ledgerId = insertLiveOrderLedger(snapshotId, configuredAccountId, normalizedSymbol, normalizedSide, orderType, requestedContracts, brokerEntry, safeStop, safeTarget, status, requestJson, responseJson, createdAt);
+		String message = liveBrokerSubmitMessage(responseJson, status, success);
+		recordLiveAudit(status, success ? "WARN" : "ERROR", cleanSource + " TopstepX order " + (success ? "submitted" : "did not fill") + " for " + normalizedSymbol, responseJson);
 		return "{"
 			+ "\"success\":" + success + ","
 			+ "\"message\":" + jsonString(message) + ","
@@ -8470,11 +8497,18 @@ public class FuturesManager {
 			+ "\"entryTime\":" + jsonString(cleanOrDefault(entryTime, "")) + ","
 			+ "\"side\":" + jsonString(normalizedSide) + ","
 			+ "\"orderType\":" + jsonString(orderType) + ","
+			+ "\"executionPolicy\":" + jsonString(executionPolicy) + ","
+			+ "\"terminalNonFill\":" + liveEntryStatusIsTerminalNonFill(status) + ","
 			+ "\"contracts\":" + requestedContracts + ","
 			+ "\"fundedMiniUnits\":" + requestedMiniUnits + ","
-			+ "\"entryPrice\":" + safeEntry + ","
+			+ "\"entryPrice\":" + brokerEntry + ","
+			+ "\"strategyEntryPrice\":" + safeEntry + ","
+			+ "\"brokerEntryPrice\":" + brokerEntry + ","
+			+ "\"topBookBid\":" + topBookBid + ","
+			+ "\"topBookAsk\":" + topBookAsk + ","
 			+ "\"stopPrice\":" + safeStop + ","
 			+ "\"targetPrice\":" + safeTarget + ","
+			+ "\"restingEntryCancel\":" + jsonObjectOrDefault(restingCancelJson, "{}") + ","
 			+ "\"request\":" + requestJson + ","
 			+ "\"response\":" + jsonObjectOrDefault(responseJson, "{}")
 			+ "}";
@@ -8490,10 +8524,92 @@ public class FuturesManager {
 		return cleanOrDefault(successStatus, "SUBMITTED_TOPSTEPX");
 	}
 
+	private static boolean shouldCancelRestingEntryAfterSubmit(String strategyCode, String status) {
+		return "PDB".equals(cleanOrDefault(strategyCode, "").toUpperCase(Locale.US))
+			&& "RESTING_TOPSTEPX".equals(cleanOrDefault(status, ""));
+	}
+
+	private static String liveStatusAfterRestingEntryLifecycle(String strategyCode, String status, String cancelJson) {
+		String cleanStatus = cleanOrDefault(status, "");
+		if (!shouldCancelRestingEntryAfterSubmit(strategyCode, cleanStatus)) {
+			return cleanStatus;
+		}
+		if (jsonBoolean(cancelJson, "filledBeforeCancel")) {
+			return "SUBMITTED_TOPSTEPX";
+		}
+		return jsonBoolean(cancelJson, "success") ? "MISSED_EXECUTION_TOPSTEPX" : "CANCEL_FAILED_RESTING_TOPSTEPX";
+	}
+
+	private static boolean liveEntryStatusIsTerminalNonFill(String status) {
+		String cleanStatus = cleanOrDefault(status, "");
+		return "MISSED_EXECUTION_TOPSTEPX".equals(cleanStatus)
+			|| "CANCEL_FAILED_RESTING_TOPSTEPX".equals(cleanStatus);
+	}
+
+	private static String liveBrokerSubmitMessage(String responseJson, String status, boolean success) {
+		if ("MISSED_EXECUTION_TOPSTEPX".equals(cleanOrDefault(status, ""))) {
+			return "TopstepX accepted the PDB entry as a resting order, but no fill was confirmed; the resting entry was canceled and marked missed.";
+		}
+		if ("CANCEL_FAILED_RESTING_TOPSTEPX".equals(cleanOrDefault(status, ""))) {
+			return "TopstepX accepted the PDB entry as a resting order, but no fill was confirmed and the targeted resting-order cancel failed.";
+		}
+		return jsonText(responseJson, "message", success ? "TopstepX order submitted." : "TopstepX order was rejected.");
+	}
+
+	private static String liveBrokerExecutionPolicy(String strategyCode, double plannedEntryPrice, double brokerEntryPrice, double bestBid, double bestAsk) {
+		if (!"PDB".equals(cleanOrDefault(strategyCode, "").toUpperCase(Locale.US))) {
+			return "PLANNED_LIMIT";
+		}
+		if (bestBid <= 0.0 || bestAsk <= 0.0 || brokerEntryPrice <= 0.0 || Math.abs(brokerEntryPrice - plannedEntryPrice) < 0.000001) {
+			return "PDB_PLANNED_LIMIT";
+		}
+		return "PDB_MARKETABLE_PROTECTED_LIMIT";
+	}
+
+	private static double liveBrokerSubmitEntryPrice(
+		String strategyCode,
+		String symbol,
+		String side,
+		double plannedEntryPrice,
+		double stopPrice,
+		double targetPrice,
+		double bestBid,
+		double bestAsk
+	) {
+		InstrumentSpec spec = instrumentFor(symbol);
+		double planned = plannedEntryPrice > 0.0 ? roundToTick(spec, plannedEntryPrice) : 0.0;
+		if (!"PDB".equals(cleanOrDefault(strategyCode, "").toUpperCase(Locale.US))) {
+			return planned;
+		}
+		if (planned <= 0.0 || bestBid <= 0.0 || bestAsk <= 0.0 || bestAsk < bestBid) {
+			return planned;
+		}
+		double tick = Math.max(0.000001, spec.tickSize);
+		String cleanSide = cleanOrDefault(side, "").toUpperCase(Locale.US);
+		boolean longSide = "LONG".equals(cleanSide) || "BUY".equals(cleanSide);
+		boolean shortSide = "SHORT".equals(cleanSide) || "SELL".equals(cleanSide);
+		double protectedPrice;
+		if (longSide) {
+			protectedPrice = roundToTick(spec, bestAsk + (PDB_MARKETABLE_LIMIT_PROTECTION_TICKS * tick));
+			if ((targetPrice > 0.0 && protectedPrice >= targetPrice) || (stopPrice > 0.0 && protectedPrice <= stopPrice)) {
+				return planned;
+			}
+			return protectedPrice;
+		}
+		if (shortSide) {
+			protectedPrice = roundToTick(spec, bestBid - (PDB_MARKETABLE_LIMIT_PROTECTION_TICKS * tick));
+			if ((targetPrice > 0.0 && protectedPrice <= targetPrice) || (stopPrice > 0.0 && protectedPrice >= stopPrice)) {
+				return planned;
+			}
+			return protectedPrice;
+		}
+		return planned;
+	}
+
 	private static String topstepxSubmittedSignalReason(String status, String orderId) {
 		String cleanOrderId = cleanOrDefault(orderId, "");
 		if ("RESTING_TOPSTEPX".equals(cleanOrDefault(status, ""))) {
-			return "TopstepX order is resting from live signal" + (cleanOrderId.length() == 0 ? "." : " (order " + cleanOrderId + ").");
+			return "TopstepX order is resting from live signal with no confirmed fill" + (cleanOrderId.length() == 0 ? "." : " (order " + cleanOrderId + ").");
 		}
 		return "TopstepX order submitted from live signal" + (cleanOrderId.length() == 0 ? "." : " (order " + cleanOrderId + ").");
 	}
@@ -10152,9 +10268,10 @@ public class FuturesManager {
 			success ? "Synthetic live trade lifecycle self-test completed." : "Synthetic live trade lifecycle self-test found workflow issues."
 		);
 		return "{"
-			+ "\"success\":" + success + ","
-				+ "\"message\":" + jsonString(success ? "Synthetic live trade lifecycle self-test completed without workflow errors." : "Synthetic live trade lifecycle self-test found workflow issues.") + ","
-				+ "\"symbols\":" + jsonString(String.join(",", symbols)) + ","
+				+ "\"success\":" + success + ","
+					+ "\"message\":" + jsonString(success ? "Synthetic live trade lifecycle self-test completed without workflow errors." : "Synthetic live trade lifecycle self-test found workflow issues.") + ","
+					+ "\"provenance\":" + jsonString(SYNTHETIC_LIVE_LIFECYCLE_PROVENANCE) + ","
+					+ "\"symbols\":" + jsonString(String.join(",", symbols)) + ","
 				+ "\"sessionId\":" + sessionId + ","
 			+ "\"snapshotId\":" + snapshot.snapshotId + ","
 			+ "\"acceptedEntries\":" + acceptedEntries + ","
@@ -10564,8 +10681,9 @@ public class FuturesManager {
 			normalizeSymbol(candidate.symbol) + " " + cleanOrDefault(signal.strategyCode, "LIVE") + " " + cleanOrDefault(signal.side, "") + " candidate found.",
 			"Validating risk limits, exposure, and Topstep order room.",
 			"{"
-				+ "\"symbol\":" + jsonString(normalizeSymbol(candidate.symbol)) + ","
-				+ "\"strategy\":" + jsonString(cleanOrDefault(signal.strategyCode, "LIVE")) + ","
+					+ "\"symbol\":" + jsonString(normalizeSymbol(candidate.symbol)) + ","
+					+ "\"provenance\":" + jsonString(SYNTHETIC_LIVE_LIFECYCLE_PROVENANCE) + ","
+					+ "\"strategy\":" + jsonString(cleanOrDefault(signal.strategyCode, "LIVE")) + ","
 				+ "\"side\":" + jsonString(cleanOrDefault(signal.side, "")) + ","
 				+ "\"signalTime\":" + jsonString(candidate.signalTime) + ","
 				+ "\"barTime\":" + jsonString(candidate.entryTime) + ","
@@ -10593,8 +10711,9 @@ public class FuturesManager {
 			normalizeSymbol(candidate.symbol) + " " + cleanOrDefault(signal.strategyCode, "LIVE") + " " + cleanOrDefault(signal.side, "") + " submitted to Topstep.",
 			entryReasonText,
 			"{"
-				+ "\"symbol\":" + jsonString(normalizeSymbol(candidate.symbol)) + ","
-				+ "\"strategy\":" + jsonString(cleanOrDefault(signal.strategyCode, "LIVE")) + ","
+					+ "\"symbol\":" + jsonString(normalizeSymbol(candidate.symbol)) + ","
+					+ "\"provenance\":" + jsonString(SYNTHETIC_LIVE_LIFECYCLE_PROVENANCE) + ","
+					+ "\"strategy\":" + jsonString(cleanOrDefault(signal.strategyCode, "LIVE")) + ","
 				+ "\"side\":" + jsonString(cleanOrDefault(signal.side, "")) + ","
 				+ "\"contracts\":" + order.contracts + ","
 				+ "\"entry\":" + round(order.entryPrice) + ","
@@ -10623,9 +10742,10 @@ public class FuturesManager {
 			trade.closedAt,
 			normalizeSymbol(trade.symbol) + " " + cleanOrDefault(trade.strategyCode, "") + " " + cleanOrDefault(trade.side, "") + " exited.",
 			exitReasonText,
-			"{"
-				+ "\"symbol\":" + jsonString(normalizeSymbol(trade.symbol)) + ","
-				+ "\"strategy\":" + jsonString(cleanOrDefault(trade.strategyCode, "")) + ","
+				"{"
+					+ "\"symbol\":" + jsonString(normalizeSymbol(trade.symbol)) + ","
+					+ "\"provenance\":" + jsonString(SYNTHETIC_LIVE_LIFECYCLE_PROVENANCE) + ","
+					+ "\"strategy\":" + jsonString(cleanOrDefault(trade.strategyCode, "")) + ","
 				+ "\"side\":" + jsonString(cleanOrDefault(trade.side, "")) + ","
 				+ "\"contracts\":" + trade.contracts + ","
 				+ "\"exitPrice\":" + round(trade.exitPrice) + ","
@@ -15837,16 +15957,20 @@ public class FuturesManager {
 								candidate.signalTime,
 								candidate.entryTime
 							);
-						}
+					}
 					boolean submitted = jsonBoolean(brokerSubmitJson, "success");
 					boolean requiresAutoOcoBrackets = !submitted && jsonBoolean(brokerSubmitJson, "requiresAutoOcoBrackets");
-					status = submitted ? jsonText(brokerSubmitJson, "status", "SUBMITTED_TOPSTEPX") : "SUBMIT_BLOCKED";
+					String brokerStatus = jsonText(brokerSubmitJson, "status", "");
+					boolean terminalNonFill = liveEntryStatusIsTerminalNonFill(brokerStatus) || jsonBoolean(brokerSubmitJson, "terminalNonFill");
+					status = submitted || terminalNonFill ? cleanOrDefault(brokerStatus, "SUBMITTED_TOPSTEPX") : "SUBMIT_BLOCKED";
 					String orderId = jsonText(brokerSubmitJson, "orderId", "");
 					if (orderId.length() == 0) {
 						double numericOrderId = jsonNumber(brokerSubmitJson, "orderId", 0.0);
 						orderId = numericOrderId > 0.0 ? String.valueOf((long) numericOrderId) : "";
 					}
-					reason = submitted
+					reason = terminalNonFill
+						? jsonText(brokerSubmitJson, "message", "TopstepX accepted a resting entry order but no fill was confirmed.")
+						: submitted
 						? topstepxSubmittedSignalReason(status, orderId)
 						: (requiresAutoOcoBrackets ? TOPSTEPX_AUTO_OCO_REQUIRED_MESSAGE : "TopstepX order was blocked: " + jsonStringSummary(brokerSubmitJson));
 				} else {
@@ -15855,53 +15979,61 @@ public class FuturesManager {
 			}
 				insertLiveSignalDecisionFromSignal(session.sessionId, snapshot.snapshotId, candidate.symbol, signal, candidate.signalTime, candidate.entryTime, order.contracts, order.entryPrice, order.stopPrice, order.targetPrice, order.fundedMiniUnits, status, reason, brokerSubmitJson, order.diagnosticsJson);
 				candidateAuditParts.add(liveCycleCandidateAuditJson(candidate, status, reason, order.contracts, order.entryPrice, order.stopPrice, order.targetPrice, order.diagnosticsJson, brokerSubmitJson));
-				if (status.startsWith("SUBMIT_BLOCKED")) {
+				if (status.startsWith("SUBMIT_BLOCKED") || liveEntryStatusIsTerminalNonFill(status)) {
 					pushLiveEvent(
 						session.sessionId,
-						"ORDER_REJECTED",
+						liveEntryStatusIsTerminalNonFill(status) ? "ORDER_MISSED" : "ORDER_REJECTED",
 						"TopstepX",
 						"blocked",
 						candidate.symbol,
 						candidate.entryTime,
-						normalizeSymbol(candidate.symbol) + " " + cleanOrDefault(signal.strategyCode, "LIVE") + " " + cleanOrDefault(signal.side, "") + " rejected by Topstep.",
-						cleanOrDefault(reason, "Topstep rejected the order."),
+						normalizeSymbol(candidate.symbol) + " " + cleanOrDefault(signal.strategyCode, "LIVE") + " " + cleanOrDefault(signal.side, "") + (liveEntryStatusIsTerminalNonFill(status) ? " missed execution after resting at Topstep." : " rejected by Topstep."),
+						cleanOrDefault(reason, liveEntryStatusIsTerminalNonFill(status) ? "Topstep accepted the order as resting but no fill was confirmed." : "Topstep rejected the order."),
 						"{"
 							+ "\"symbol\":" + jsonString(normalizeSymbol(candidate.symbol)) + ","
 							+ "\"strategy\":" + jsonString(cleanOrDefault(signal.strategyCode, "LIVE")) + ","
 							+ "\"side\":" + jsonString(cleanOrDefault(signal.side, "")) + ","
+							+ "\"status\":" + jsonString(cleanOrDefault(status, "")) + ","
+							+ "\"executionPolicy\":" + jsonString(jsonText(brokerSubmitJson, "executionPolicy", "")) + ","
 							+ "\"contracts\":" + order.contracts + ","
 							+ "\"entry\":" + round(order.entryPrice) + ","
+							+ "\"brokerEntry\":" + jsonNumber(brokerSubmitJson, "brokerEntryPrice", order.entryPrice) + ","
 							+ "\"stop\":" + round(order.stopPrice) + ","
 							+ "\"target\":" + round(order.targetPrice) + ","
 							+ "\"reason\":" + jsonString(cleanOrDefault(reason, "Topstep rejected the order."))
 							+ "}"
 					);
 					rejectedThisCycle++;
-				} else {
-					String submittedOrderId = jsonText(brokerSubmitJson, "orderId", "");
-					if (submittedOrderId.length() == 0) {
-						double numericSubmittedOrderId = jsonNumber(brokerSubmitJson, "orderId", 0.0);
-						submittedOrderId = numericSubmittedOrderId > 0.0 ? String.valueOf((long) numericSubmittedOrderId) : "";
-					}
-					String entryReasonJson = liveEntryTradeReasoningJson(candidate.symbol, signal, signal.side, order.contracts, order.entryPrice, order.stopPrice, order.targetPrice, order.fundedMiniUnits, status, reason, order.diagnosticsJson);
-					String entryReasonText = jsonText(entryReasonJson, "entryReasonText", "Order submitted from a validated live strategy signal.");
-					pushLiveEvent(
-						session.sessionId,
-						"ORDER_SUBMITTED",
-						"TopstepX",
-						"accepted",
-						candidate.symbol,
-						candidate.entryTime,
-						normalizeSymbol(candidate.symbol) + " " + cleanOrDefault(signal.strategyCode, "LIVE") + " " + cleanOrDefault(signal.side, "") + " submitted to Topstep.",
-						entryReasonText,
-						"{"
-							+ "\"symbol\":" + jsonString(normalizeSymbol(candidate.symbol)) + ","
-							+ "\"strategy\":" + jsonString(cleanOrDefault(signal.strategyCode, "LIVE")) + ","
-							+ "\"side\":" + jsonString(cleanOrDefault(signal.side, "")) + ","
-							+ "\"contracts\":" + order.contracts + ","
-							+ "\"entry\":" + round(order.entryPrice) + ","
-							+ "\"stop\":" + round(order.stopPrice) + ","
-							+ "\"target\":" + round(order.targetPrice) + ","
+					} else {
+						String submittedOrderId = jsonText(brokerSubmitJson, "orderId", "");
+						if (submittedOrderId.length() == 0) {
+							double numericSubmittedOrderId = jsonNumber(brokerSubmitJson, "orderId", 0.0);
+							submittedOrderId = numericSubmittedOrderId > 0.0 ? String.valueOf((long) numericSubmittedOrderId) : "";
+						}
+						String entryReasonJson = liveEntryTradeReasoningJson(candidate.symbol, signal, signal.side, order.contracts, order.entryPrice, order.stopPrice, order.targetPrice, order.fundedMiniUnits, status, reason, order.diagnosticsJson);
+						String entryReasonText = jsonText(entryReasonJson, "entryReasonText", "Order submitted from a validated live strategy signal.");
+						boolean restingOrder = "RESTING_TOPSTEPX".equals(cleanOrDefault(status, ""));
+						pushLiveEvent(
+							session.sessionId,
+							restingOrder ? "ORDER_RESTING" : "ORDER_SUBMITTED",
+							"TopstepX",
+							restingOrder ? "warn" : "accepted",
+							candidate.symbol,
+							candidate.entryTime,
+							normalizeSymbol(candidate.symbol) + " " + cleanOrDefault(signal.strategyCode, "LIVE") + " " + cleanOrDefault(signal.side, "") + (restingOrder ? " is resting at Topstep with no confirmed fill." : " submitted to Topstep."),
+							entryReasonText,
+							"{"
+								+ "\"symbol\":" + jsonString(normalizeSymbol(candidate.symbol)) + ","
+								+ "\"strategy\":" + jsonString(cleanOrDefault(signal.strategyCode, "LIVE")) + ","
+								+ "\"side\":" + jsonString(cleanOrDefault(signal.side, "")) + ","
+								+ "\"status\":" + jsonString(cleanOrDefault(status, "")) + ","
+								+ "\"executionPolicy\":" + jsonString(jsonText(brokerSubmitJson, "executionPolicy", "")) + ","
+								+ "\"contracts\":" + order.contracts + ","
+								+ "\"entry\":" + round(order.entryPrice) + ","
+								+ "\"brokerEntry\":" + jsonNumber(brokerSubmitJson, "brokerEntryPrice", order.entryPrice) + ","
+								+ "\"strategyEntry\":" + jsonNumber(brokerSubmitJson, "strategyEntryPrice", order.entryPrice) + ","
+								+ "\"stop\":" + round(order.stopPrice) + ","
+								+ "\"target\":" + round(order.targetPrice) + ","
 							+ "\"orderId\":" + jsonString(submittedOrderId) + ","
 							+ "\"entryReason\":" + jsonString(entryReasonText) + ","
 							+ "\"tradeReason\":" + entryReasonJson
@@ -16148,6 +16280,7 @@ public class FuturesManager {
 				exitReasonText,
 				"{"
 					+ "\"symbol\":" + jsonString(normalizeSymbol(trade.symbol)) + ","
+					+ "\"provenance\":" + jsonString(SYNTHETIC_LIVE_LIFECYCLE_PROVENANCE) + ","
 					+ "\"strategy\":" + jsonString(cleanOrDefault(trade.strategyCode, "")) + ","
 					+ "\"side\":" + jsonString(cleanOrDefault(trade.side, "")) + ","
 					+ "\"contracts\":" + trade.contracts + ","
@@ -18491,7 +18624,27 @@ public class FuturesManager {
 	private static List<Bar> liveHigherTimeframeBarsFromMinuteBars(List<Bar> minuteBars, InstrumentSpec spec, String timeframe, int limit) {
 		List<Bar> bars = aggregateBarsForTimeframe(minuteBars, timeframe, limit);
 		enrichLiveBars(bars, spec);
+		suppressUnderwarmedHigherTimeframeEma(bars);
 		return bars;
+	}
+
+	private static void suppressUnderwarmedHigherTimeframeEma(List<Bar> bars) {
+		if (bars == null || bars.isEmpty()) {
+			return;
+		}
+		for (int index = 0; index < bars.size(); index++) {
+			Bar bar = bars.get(index);
+			int closedBars = index + 1;
+			if (closedBars < 9) {
+				bar.ema9 = 0.0;
+			}
+			if (closedBars < 20) {
+				bar.ema20 = 0.0;
+			}
+			if (closedBars < 50) {
+				bar.ema50 = 0.0;
+			}
+		}
 	}
 
 	private static LiveWarmupBars cachedLiveWarmupBarsForSymbol(String symbol, String timeframe, int limit) {
@@ -21102,7 +21255,7 @@ public class FuturesManager {
 						stop = compressedShortStop(target.spec, bars, index, bar.close, maxRiskTicks);
 					}
 					double risk = stop - bar.close;
-					if (risk > 0.0 && riskTicks(target.spec, bar.close, stop) <= maxRiskTicks) {
+					if (risk > 0.0 && riskTicksWithinMax(target.spec, bar.close, stop, maxRiskTicks)) {
 						events.add(mymBreadthEvent(target, day, index, index + 1, "SHORT", stop, bar.close - (risk * settings.mymBreadthRewardRisk), settings.mymBreadthMaxHoldBars));
 						lastShortBucket = bucket;
 						added++;
@@ -21126,7 +21279,7 @@ public class FuturesManager {
 						stop = compressedLongStop(target.spec, bars, index, bar.close, maxRiskTicks);
 					}
 					double risk = bar.close - stop;
-					if (risk > 0.0 && riskTicks(target.spec, bar.close, stop) <= maxRiskTicks) {
+					if (risk > 0.0 && riskTicksWithinMax(target.spec, bar.close, stop, maxRiskTicks)) {
 						events.add(mymBreadthEvent(target, day, index, index + 1, "LONG", stop, bar.close + (risk * settings.mymBreadthRewardRisk), settings.mymBreadthMaxHoldBars));
 						lastLongBucket = bucket;
 						added++;
@@ -22319,7 +22472,7 @@ public class FuturesManager {
 				if (validCompressedStop) {
 					double compressedRisk = Math.abs(entryPrice - compressedStop);
 					double compressedRiskTicks = compressedRisk / context.spec.tickSize;
-					if (compressedRiskTicks >= 1.0 && compressedRiskTicks <= maxLiveRiskTicks) {
+					if (compressedRiskTicks >= 1.0 && ticksWithinMax(compressedRiskTicks, maxLiveRiskTicks)) {
 						stopPrice = compressedStop;
 						initialRisk = compressedRisk;
 						rawRiskTicks = compressedRiskTicks;
@@ -23810,7 +23963,7 @@ public class FuturesManager {
 				if (midpointRejected && rmcHigherTimeframeAligned("SHORT", fifteenMinuteBars, bar.marketTime) && rmcOrderFlowConfirms("SHORT", flow, safe)) {
 					double stop = roundToTick(spec, Math.min(Math.max(bar.high, pullbackHigh) + (2.0 * tick), bar.close + (safe.rangeMidpointMaxRiskTicks * tick)));
 					double risk = stop - bar.close;
-					if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= safe.rangeMidpointMaxRiskTicks) {
+					if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, safe.rangeMidpointMaxRiskTicks)) {
 						double target = roundToTick(spec, bar.close - (risk * safe.rangeMidpointRewardRisk));
 						signals.add(signal("RMC", "Range Midpoint Continuation", "SHORT", index, bar.close, stop, target, safe.rangeMidpointMaxHoldBars, rmcNotes("short", midpoint, impulseTicks, retracePct, flow)));
 					}
@@ -23831,7 +23984,7 @@ public class FuturesManager {
 				if (midpointRejected && rmcHigherTimeframeAligned("LONG", fifteenMinuteBars, bar.marketTime) && rmcOrderFlowConfirms("LONG", flow, safe)) {
 					double stop = roundToTick(spec, Math.max(Math.min(bar.low, pullbackLow) - (2.0 * tick), bar.close - (safe.rangeMidpointMaxRiskTicks * tick)));
 					double risk = bar.close - stop;
-					if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= safe.rangeMidpointMaxRiskTicks) {
+					if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, safe.rangeMidpointMaxRiskTicks)) {
 						double target = roundToTick(spec, bar.close + (risk * safe.rangeMidpointRewardRisk));
 						signals.add(signal("RMC", "Range Midpoint Continuation", "LONG", index, bar.close, stop, target, safe.rangeMidpointMaxHoldBars, rmcNotes("long", midpoint, impulseTicks, retracePct, flow)));
 					}
@@ -24170,7 +24323,7 @@ public class FuturesManager {
 					stop = compressedShortStop(spec, bars, index, bar.close, maxRiskTicks);
 				}
 				double risk = stop - bar.close;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("MCLTC", "MCL Trend Fade", "SHORT", index, bar.close, stop, bar.close - (risk * settings.mclTrendRewardRisk), settings.mclTrendMaxHoldBars, "MCL trend-fade entry after crude stretches above VWAP/EMA and session-open structure with bounded reversal risk."));
 					lastShortBucket = bucket;
 				}
@@ -24192,7 +24345,7 @@ public class FuturesManager {
 					stop = compressedLongStop(spec, bars, index, bar.close, maxRiskTicks);
 				}
 				double risk = bar.close - stop;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("MCLTC", "MCL Trend Fade", "LONG", index, bar.close, stop, bar.close + (risk * settings.mclTrendRewardRisk), settings.mclTrendMaxHoldBars, "MCL trend-fade entry after crude stretches below VWAP/EMA and session-open structure with bounded reversal risk."));
 					lastLongBucket = bucket;
 				}
@@ -24268,7 +24421,7 @@ public class FuturesManager {
 				&& bar.rsi14 <= 76.0) {
 				double stop = Math.min(recentSwingLow(bars, index, 5), bar.ema20) - (spec.tickSize * 2.0);
 				double risk = bar.close - stop;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("IDXCONF", "MYM Index Confirmation", "LONG", index, bar.close, stop, bar.close + (risk * settings.mymIndexConfirmationRewardRisk), settings.mymIndexConfirmationMaxHoldBars, "MYM continuation after Dow-style broad trend confirmation from VWAP, EMA slope, session open, and range expansion."));
 					lastLongBucket = bucket;
 				}
@@ -24287,7 +24440,7 @@ public class FuturesManager {
 				&& bar.rsi14 <= 55.0) {
 				double stop = Math.max(recentSwingHigh(bars, index, 5), bar.ema20) + (spec.tickSize * 2.0);
 				double risk = stop - bar.close;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("IDXCONF", "MYM Index Confirmation", "SHORT", index, bar.close, stop, bar.close - (risk * settings.mymIndexConfirmationRewardRisk), settings.mymIndexConfirmationMaxHoldBars, "MYM continuation after Dow-style broad trend confirmation from VWAP, EMA slope, session open, and range expansion."));
 					lastShortBucket = bucket;
 				}
@@ -24362,7 +24515,7 @@ public class FuturesManager {
 				&& closeLocation >= 0.56) {
 				double stop = Math.min(recentSwingLow(bars, index, 4), high - buffer) - (spec.tickSize * 2.0);
 				double risk = bar.close - stop;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("MYMORB2", "MYM ORB Retest", "LONG", index, bar.close, stop, bar.close + (risk * settings.mymOrbRetestRewardRisk), settings.mymOrbRetestMaxHoldBars, "MYM-specific second-chance ORB retest after breakout holds the opening range."));
 					longTaken = true;
 				}
@@ -24379,7 +24532,7 @@ public class FuturesManager {
 				&& closeLocation <= 0.44) {
 				double stop = Math.max(recentSwingHigh(bars, index, 4), low + buffer) + (spec.tickSize * 2.0);
 				double risk = stop - bar.close;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("MYMORB2", "MYM ORB Retest", "SHORT", index, bar.close, stop, bar.close - (risk * settings.mymOrbRetestRewardRisk), settings.mymOrbRetestMaxHoldBars, "MYM-specific second-chance ORB retest after breakdown rejects the opening range."));
 					shortTaken = true;
 				}
@@ -24432,7 +24585,7 @@ public class FuturesManager {
 				&& bar.close > bar.open
 				&& bar.bodyPct >= settings.orbMinBodyPct
 				&& (settings.orbMaxSignalRangeTicks <= 0.0 || signalRangeTicks <= settings.orbMaxSignalRangeTicks)
-				&& (settings.orbMaxBreakoutExtensionTicks <= 0.0 || riskTicks(spec, bar.close, high) <= settings.orbMaxBreakoutExtensionTicks)
+				&& (settings.orbMaxBreakoutExtensionTicks <= 0.0 || ticksWithinMax(riskTicks(spec, bar.close, high), settings.orbMaxBreakoutExtensionTicks))
 				&& (settings.orbMaxVwapDistanceTicks <= 0.0 || vwapDistanceTicks <= settings.orbMaxVwapDistanceTicks)
 				&& (settings.orbMaxTrendSlopeTicks <= 0.0 || trendSlopeTicks <= settings.orbMaxTrendSlopeTicks)
 				&& closeLocation >= ORB_LONG_MIN_CLOSE_LOCATION
@@ -24458,7 +24611,7 @@ public class FuturesManager {
 				&& bar.close < bar.open
 				&& bar.bodyPct >= settings.orbMinBodyPct
 				&& (settings.orbMaxSignalRangeTicks <= 0.0 || signalRangeTicks <= settings.orbMaxSignalRangeTicks)
-				&& (settings.orbMaxBreakoutExtensionTicks <= 0.0 || riskTicks(spec, low, bar.close) <= settings.orbMaxBreakoutExtensionTicks)
+				&& (settings.orbMaxBreakoutExtensionTicks <= 0.0 || ticksWithinMax(riskTicks(spec, low, bar.close), settings.orbMaxBreakoutExtensionTicks))
 				&& (settings.orbMaxVwapDistanceTicks <= 0.0 || vwapDistanceTicks <= settings.orbMaxVwapDistanceTicks)
 				&& (settings.orbMaxTrendSlopeTicks <= 0.0 || trendSlopeTicks <= settings.orbMaxTrendSlopeTicks)) {
 				double stop = settings.enableCompressedOrbBreakout
@@ -24513,7 +24666,7 @@ public class FuturesManager {
 			if (settings.allowOrbRetestLongs && brokeLong && bar.low <= high + (spec.tickSize * 2.0) && bar.close > high && bar.close > bar.open && closeLocation(bar) >= 0.58 && bar.volume >= averageVolume * 0.65) {
 				double stop = recentSwingLow(bars, index, 3) - (spec.tickSize * 2.0);
 				double risk = bar.close - stop;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxOrbRetestRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxOrbRetestRiskTicks)) {
 					signals.add(signal("ORB2", "Opening Range Retest", "LONG", index, bar.close, stop, bar.close + (risk * Math.max(settings.minRewardRisk, 1.0)), settings.openingMomentumMaxHoldBars, "ORB long retest after breakout holds opening range high with compressed swing risk."));
 					break;
 				}
@@ -24521,7 +24674,7 @@ public class FuturesManager {
 			if (settings.allowOrbRetestShorts && brokeShort && bar.high >= low - (spec.tickSize * 2.0) && bar.close < low && bar.close < bar.open && closeLocation(bar) <= 0.42 && bar.volume >= averageVolume * 0.65) {
 				double stop = recentSwingHigh(bars, index, 3) + (spec.tickSize * 2.0);
 				double risk = stop - bar.close;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxOrbRetestRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxOrbRetestRiskTicks)) {
 					signals.add(signal("ORB2", "Opening Range Retest", "SHORT", index, bar.close, stop, bar.close - (risk * Math.max(settings.minRewardRisk, 1.0)), settings.openingMomentumMaxHoldBars, "ORB short retest after breakdown holds opening range low with compressed swing risk."));
 					break;
 				}
@@ -25087,7 +25240,7 @@ public class FuturesManager {
 				&& closeLocation(bar) <= ORB_LONG_MAX_CLOSE_LOCATION) {
 				double stop = compressedLongStop(spec, bars, index, bar.close, maxRiskTicks);
 				double risk = bar.close - stop;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("LORB", "Late ORB Continuation", "LONG", index, bar.close, stop, bar.close + (risk * settings.lateOrbContinuationRewardRisk), settings.lateOrbContinuationMaxHoldBars, "Late opening-range continuation after the initial breakout window, using a compressed swing stop."));
 				}
 			}
@@ -25105,7 +25258,7 @@ public class FuturesManager {
 				&& closeLocation(bar) <= 0.42) {
 				double stop = compressedShortStop(spec, bars, index, bar.close, maxRiskTicks);
 				double risk = stop - bar.close;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("LORB", "Late ORB Continuation", "SHORT", index, bar.close, stop, bar.close - (risk * settings.lateOrbContinuationRewardRisk), settings.lateOrbContinuationMaxHoldBars, "Late opening-range continuation after the initial breakdown window, using a compressed swing stop."));
 				}
 			}
@@ -25169,7 +25322,7 @@ public class FuturesManager {
 				&& closeLocation <= 0.78) {
 				double stop = recentSwingLow(bars, index, 3) - (spec.tickSize * 2.0);
 				double risk = bar.close - stop;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= Math.min(settings.maxInitialRiskTicks, settings.openingMomentumMaxRiskTicks)) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, Math.min(settings.maxInitialRiskTicks, settings.openingMomentumMaxRiskTicks))) {
 					signals.add(signal("OMOM", "Compressed Opening Momentum", "LONG", index, bar.close, stop, bar.close + (risk * settings.openingMomentumRewardRisk), settings.openingMomentumMaxHoldBars, settings.openingMomentumRangeMinutes + "m compressed opening range long breakout with swing-risk stop."));
 					longTaken = true;
 					lastLongBucket = bucket;
@@ -25190,7 +25343,7 @@ public class FuturesManager {
 				&& (1.0 - closeLocation) >= 0.55) {
 				double stop = recentSwingHigh(bars, index, 3) + (spec.tickSize * 2.0);
 				double risk = stop - bar.close;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= Math.min(settings.maxInitialRiskTicks, settings.openingMomentumMaxRiskTicks)) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, Math.min(settings.maxInitialRiskTicks, settings.openingMomentumMaxRiskTicks))) {
 					signals.add(signal("OMOM", "Compressed Opening Momentum", "SHORT", index, bar.close, stop, bar.close - (risk * settings.openingMomentumRewardRisk), settings.openingMomentumMaxHoldBars, settings.openingMomentumRangeMinutes + "m compressed opening range short breakdown with swing-risk stop."));
 					shortTaken = true;
 					lastShortBucket = bucket;
@@ -25345,7 +25498,7 @@ public class FuturesManager {
 			&& (!settings.vwapRequireHigherTimeframeGuard || higherTimeframeBreakoutLong(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = Math.min(recentSwingLow(bars, index, 4), bar.ema20) - (spec.tickSize * 2.0);
 				double risk = bar.close - stop;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxVwapRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxVwapRiskTicks)) {
 					signals.add(signal("VWAP", "VWAP Trend Pullback", "LONG", index, bar.close, stop, bar.close + (risk * Math.max(settings.minRewardRisk, 1.1)), 15, "Compressed VWAP/EMA trend-continuation long after pullback holds above VWAP."));
 				}
 			}
@@ -25364,7 +25517,7 @@ public class FuturesManager {
 				double rewardMultiple = Math.max(settings.minRewardRisk, 1.1);
 				double targetTicks = (risk * rewardMultiple) / spec.tickSize;
 				if (risk > 0.0
-					&& riskTicks(spec, bar.close, stop) <= maxVwapRiskTicks
+					&& riskTicksWithinMax(spec, bar.close, stop, maxVwapRiskTicks)
 					&& (settings.vwapShortMaxTargetTicks <= 0.0 || targetTicks <= settings.vwapShortMaxTargetTicks)) {
 					signals.add(signal("VWAP", "VWAP Trend Pullback", "SHORT", index, bar.close, stop, bar.close - (risk * Math.max(settings.minRewardRisk, 1.1)), 15, "Compressed VWAP/EMA trend-continuation short after pullback fails below VWAP."));
 				}
@@ -25415,7 +25568,7 @@ public class FuturesManager {
 				&& (!settings.vwapRequireHigherTimeframeGuard || higherTimeframeBreakoutLong(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = Math.min(recentSwingLow(bars, index, 4), bar.vwap) - (spec.tickSize * 2.0);
 				double risk = bar.close - stop;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("VRCL", "VWAP Reclaim Continuation", "LONG", index, bar.close, stop, bar.close + (risk * settings.vwapReclaimRewardRisk), 18, "VWAP reclaim continuation long after a controlled cross back above VWAP with EMA and volume confirmation."));
 					lastBucket = bucket;
 				}
@@ -25434,7 +25587,7 @@ public class FuturesManager {
 				&& (!settings.vwapRequireHigherTimeframeGuard || higherTimeframeBearish(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = Math.max(recentSwingHigh(bars, index, 4), bar.vwap) + (spec.tickSize * 2.0);
 				double risk = stop - bar.close;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("VRCL", "VWAP Reclaim Continuation", "SHORT", index, bar.close, stop, bar.close - (risk * settings.vwapReclaimRewardRisk), 18, "VWAP reclaim continuation short after a controlled cross back below VWAP with EMA and volume confirmation."));
 					lastBucket = bucket;
 				}
@@ -25485,7 +25638,7 @@ public class FuturesManager {
 				&& closeLocation >= 0.56) {
 				double stop = Math.min(recentSwingLow(bars, index, 3), bar.ema20) - (spec.tickSize * 2.0);
 				double risk = bar.close - stop;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("MSCALP", "Micro Trend Scalp", "LONG", index, bar.close, stop, bar.close + (risk * settings.microScalpRewardRisk), settings.microScalpMaxHoldBars, "Causal 1-minute futures scalp after VWAP/EMA trend pullback and next-bar execution."));
 					lastBucket = bucket;
 				}
@@ -25502,7 +25655,7 @@ public class FuturesManager {
 				&& closeLocation <= 0.44) {
 				double stop = Math.max(recentSwingHigh(bars, index, 3), bar.ema20) + (spec.tickSize * 2.0);
 				double risk = stop - bar.close;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("MSCALP", "Micro Trend Scalp", "SHORT", index, bar.close, stop, bar.close - (risk * settings.microScalpRewardRisk), settings.microScalpMaxHoldBars, "Causal 1-minute futures scalp after VWAP/EMA trend pullback and next-bar execution."));
 					lastBucket = bucket;
 				}
@@ -25570,7 +25723,7 @@ public class FuturesManager {
 				&& (!settings.requireHigherTimeframeGuard || higherTimeframeConstructive(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = Math.min(recentSwingLow(bars, index, 5), bar.ema20) - (spec.tickSize * 2.0);
 				double risk = bar.close - stop;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("TLAD", "Trend Ladder Pullback", "LONG", index, bar.close, stop, bar.close + (risk * settings.trendLadderRewardRisk), settings.trendLadderMaxHoldBars, "Repeated intraday trend-ladder long after EMA/VWAP pullback and continuation confirmation."));
 					lastLongBucket = bucket;
 				}
@@ -25591,7 +25744,7 @@ public class FuturesManager {
 				&& (!settings.requireHigherTimeframeGuard || higherTimeframeBearish(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = Math.max(recentSwingHigh(bars, index, 5), bar.ema20) + (spec.tickSize * 2.0);
 				double risk = stop - bar.close;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("TLAD", "Trend Ladder Pullback", "SHORT", index, bar.close, stop, bar.close - (risk * settings.trendLadderRewardRisk), settings.trendLadderMaxHoldBars, "Repeated intraday trend-ladder short after EMA/VWAP pullback and continuation confirmation."));
 					lastShortBucket = bucket;
 				}
@@ -25672,7 +25825,7 @@ public class FuturesManager {
 				&& (!settings.requireHigherTimeframeGuard || higherTimeframeBreakoutLong(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = boxLow - (spec.tickSize * 2.0);
 				double risk = bar.close - stop;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("RCB", "Range Compression Breakout", "LONG", index, bar.close, stop, bar.close + (risk * settings.rangeCompressionRewardRisk), settings.rangeCompressionMaxHoldBars, "Tight intraday range compression resolves upward with VWAP, EMA, volume, and next-bar execution filters."));
 					lastLongBucket = bucket;
 				}
@@ -25693,7 +25846,7 @@ public class FuturesManager {
 				&& (!settings.requireHigherTimeframeGuard || higherTimeframeBearish(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = boxHigh + (spec.tickSize * 2.0);
 				double risk = stop - bar.close;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("RCB", "Range Compression Breakout", "SHORT", index, bar.close, stop, bar.close - (risk * settings.rangeCompressionRewardRisk), settings.rangeCompressionMaxHoldBars, "Tight intraday range compression resolves downward with VWAP, EMA, volume, and next-bar execution filters."));
 					lastShortBucket = bucket;
 				}
@@ -25750,7 +25903,7 @@ public class FuturesManager {
 				&& (!settings.requireHigherTimeframeGuard || higherTimeframeConstructive(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = Math.min(recentSwingLow(bars, index, 5), profile.valueAreaHigh - reclaimDistance) - (spec.tickSize * 2.0);
 				double risk = bar.close - stop;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("VPB", "Prior Value Area Hold", "LONG", index, bar.close, stop, bar.close + (risk * settings.valueAreaRewardRisk), settings.valueAreaMaxHoldBars, "Prior-session value area high holds as support; approximate volume profile bias is long with VWAP/EMA confirmation."));
 					lastLongBucket = bucket;
 				}
@@ -25769,7 +25922,7 @@ public class FuturesManager {
 				&& (!settings.requireHigherTimeframeGuard || higherTimeframeBearish(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = Math.max(recentSwingHigh(bars, index, 5), profile.valueAreaLow + reclaimDistance) + (spec.tickSize * 2.0);
 				double risk = stop - bar.close;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("VPB", "Prior Value Area Rejection", "SHORT", index, bar.close, stop, bar.close - (risk * settings.valueAreaRewardRisk), settings.valueAreaMaxHoldBars, "Prior-session value area low rejects as resistance; approximate volume profile bias is short with VWAP/EMA confirmation."));
 					lastShortBucket = bucket;
 				}
@@ -25887,7 +26040,7 @@ public class FuturesManager {
 				&& (!settings.requireHigherTimeframeGuard || higherTimeframeBreakoutLong(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = compressedLongStop(spec, bars, index, bar.close, maxRiskTicks);
 				double risk = bar.close - stop;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("KELT", "Keltner ATR Breakout Scalp", "LONG", index, bar.close, stop, bar.close + (risk * settings.keltnerRewardRisk), settings.keltnerMaxHoldBars, "1-minute Keltner/ATR volatility breakout scalp with VWAP, EMA, RSI, volume, and next-bar execution filters."));
 					lastBucket = bucket;
 				}
@@ -25905,7 +26058,7 @@ public class FuturesManager {
 				&& (!settings.requireHigherTimeframeGuard || higherTimeframeBearish(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = compressedShortStop(spec, bars, index, bar.close, maxRiskTicks);
 				double risk = stop - bar.close;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("KELT", "Keltner ATR Breakout Scalp", "SHORT", index, bar.close, stop, bar.close - (risk * settings.keltnerRewardRisk), settings.keltnerMaxHoldBars, "1-minute Keltner/ATR volatility breakout scalp with VWAP, EMA, RSI, volume, and next-bar execution filters."));
 					lastBucket = bucket;
 				}
@@ -25967,7 +26120,7 @@ public class FuturesManager {
 				double stop = compressedLongStop(spec, bars, index, bar.close, maxRiskTicks);
 				double risk = bar.close - stop;
 				double target = Math.min(bar.ema20, bar.close + (risk * settings.keltnerRewardRisk));
-				if (risk > 0.0 && target > bar.close + (spec.tickSize * 2.0) && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && target > bar.close + (spec.tickSize * 2.0) && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("KREV", "Keltner Band Reclaim Reversion", "LONG", index, bar.close, stop, target, settings.keltnerMaxHoldBars, "1-minute Keltner lower-band reclaim mean-reversion scalp in flatter VWAP/EMA conditions."));
 					lastBucket = bucket;
 				}
@@ -25983,7 +26136,7 @@ public class FuturesManager {
 				double stop = compressedShortStop(spec, bars, index, bar.close, maxRiskTicks);
 				double risk = stop - bar.close;
 				double target = Math.max(bar.ema20, bar.close - (risk * settings.keltnerRewardRisk));
-				if (risk > 0.0 && target < bar.close - (spec.tickSize * 2.0) && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && target < bar.close - (spec.tickSize * 2.0) && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("KREV", "Keltner Band Reclaim Reversion", "SHORT", index, bar.close, stop, target, settings.keltnerMaxHoldBars, "1-minute Keltner upper-band reclaim mean-reversion scalp in flatter VWAP/EMA conditions."));
 					lastBucket = bucket;
 				}
@@ -26062,7 +26215,7 @@ public class FuturesManager {
 				&& (!settings.requireHigherTimeframeGuard || higherTimeframeBreakoutLong(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = compressedLongStop(spec, bars, index, bar.close, maxRiskTicks);
 				double risk = bar.close - stop;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("AFT", "Afternoon Continuation", "LONG", index, bar.close, stop, bar.close + (risk * settings.afternoonRewardRisk), settings.afternoonMaxHoldBars, "Afternoon local-range continuation long with VWAP, EMA, volume, and next-bar execution filters."));
 				}
 			}
@@ -26079,7 +26232,7 @@ public class FuturesManager {
 				&& (!settings.requireHigherTimeframeGuard || higherTimeframeBearish(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = compressedShortStop(spec, bars, index, bar.close, maxRiskTicks);
 				double risk = stop - bar.close;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("AFT", "Afternoon Continuation", "SHORT", index, bar.close, stop, bar.close - (risk * settings.afternoonRewardRisk), settings.afternoonMaxHoldBars, "Afternoon local-range continuation short with VWAP, EMA, volume, and next-bar execution filters."));
 				}
 			}
@@ -26177,7 +26330,7 @@ public class FuturesManager {
 						&& (!settings.requireHigherTimeframeGuard || higherTimeframeBreakoutLong(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 						double stop = compressedLongStop(spec, bars, index, bar.close, maxRiskTicks);
 						double risk = bar.close - stop;
-						if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+						if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 							signals.add(signal("IPB", "Opening Impulse Pullback", "LONG", index, bar.close, stop, bar.close + (risk * Math.max(0.85, impulseRewardRisk)), 25, "First-half-hour directional impulse followed by VWAP/EMA pullback continuation with opening volume/volatility confirmation."));
 							pullbackSignals++;
 							lastPullbackBucket = bucket;
@@ -26197,7 +26350,7 @@ public class FuturesManager {
 						&& (!settings.requireHigherTimeframeGuard || higherTimeframeBearish(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 						double stop = compressedShortStop(spec, bars, index, bar.close, maxRiskTicks);
 						double risk = stop - bar.close;
-						if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+						if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 							signals.add(signal("IPB", "Opening Impulse Pullback", "SHORT", index, bar.close, stop, bar.close - (risk * Math.max(0.85, impulseRewardRisk)), 25, "First-half-hour directional impulse followed by VWAP/EMA pullback continuation with opening volume/volatility confirmation."));
 							pullbackSignals++;
 							lastPullbackBucket = bucket;
@@ -26221,7 +26374,7 @@ public class FuturesManager {
 				&& (!settings.requireHigherTimeframeGuard || higherTimeframeBreakoutLong(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = compressedLongStop(spec, bars, index, bar.close, maxRiskTicks);
 				double risk = bar.close - stop;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("MIM", "Market Intraday Momentum", "LONG", index, bar.close, stop, bar.close + (risk * settings.marketIntradayMomentumRewardRisk), 35, "Late-session long when first-half-hour and late-session futures momentum align with VWAP/EMA confirmation."));
 					break;
 				}
@@ -26235,7 +26388,7 @@ public class FuturesManager {
 				&& (!settings.requireHigherTimeframeGuard || higherTimeframeBearish(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = compressedShortStop(spec, bars, index, bar.close, maxRiskTicks);
 				double risk = stop - bar.close;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("MIM", "Market Intraday Momentum", "SHORT", index, bar.close, stop, bar.close - (risk * settings.marketIntradayMomentumRewardRisk), 35, "Late-session short when first-half-hour and late-session futures momentum align with VWAP/EMA confirmation."));
 					break;
 				}
@@ -26376,7 +26529,7 @@ public class FuturesManager {
 				&& (!settings.requireHigherTimeframeGuard || higherTimeframeBreakoutLong(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = Math.min(recentSwingLow(bars, index, 5), previousHigh - retestDistance) - (spec.tickSize * 2.0);
 				double risk = bar.close - stop;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("PDB", "Prior-Day Breakout Retest", "LONG", index, bar.close, stop, bar.close + (risk * settings.priorDayBreakoutRewardRisk), 35, "Accepted prior-day high breakout retest with VWAP/EMA continuation confirmation."));
 					lastLongBucket = bucket;
 				}
@@ -26397,7 +26550,7 @@ public class FuturesManager {
 				&& (!settings.requireHigherTimeframeGuard || higherTimeframeBearish(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 				double stop = Math.max(recentSwingHigh(bars, index, 5), previousLow + retestDistance) + (spec.tickSize * 2.0);
 				double risk = stop - bar.close;
-				if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxRiskTicks) {
+				if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxRiskTicks)) {
 					signals.add(signal("PDB", "Prior-Day Breakout Retest", "SHORT", index, bar.close, stop, bar.close - (risk * settings.priorDayBreakoutRewardRisk), 35, "Accepted prior-day low breakdown retest with VWAP/EMA continuation confirmation."));
 					lastShortBucket = bucket;
 				}
@@ -26460,7 +26613,7 @@ public class FuturesManager {
 								stop = accepted.close - minRisk;
 							}
 							double risk = accepted.close - stop;
-							if (risk > 0.0 && riskTicks(spec, accepted.close, stop) <= maxRiskTicks) {
+							if (risk > 0.0 && riskTicksWithinMax(spec, accepted.close, stop, maxRiskTicks)) {
 								signals.add(signal("FVG", "Fair Value Gap Reclaim", "LONG", acceptedIndex, accepted.close, stop, accepted.close + (risk * settings.fvgRewardRisk), settings.fvgMaxHoldBars, fvgSignalNotes(spec, "Bullish", gapLow, gapHigh, index, acceptedIndex, settings)));
 								break;
 							}
@@ -26503,7 +26656,7 @@ public class FuturesManager {
 							stop = accepted.close + minRisk;
 						}
 						double risk = stop - accepted.close;
-						if (risk > 0.0 && riskTicks(spec, accepted.close, stop) <= maxRiskTicks) {
+						if (risk > 0.0 && riskTicksWithinMax(spec, accepted.close, stop, maxRiskTicks)) {
 							signals.add(signal("FVG", "Fair Value Gap Reclaim", "SHORT", acceptedIndex, accepted.close, stop, accepted.close - (risk * settings.fvgRewardRisk), settings.fvgMaxHoldBars, fvgSignalNotes(spec, "Bearish", gapLow, gapHigh, index, acceptedIndex, settings)));
 							break;
 						}
@@ -26563,7 +26716,7 @@ public class FuturesManager {
 									stop = entry.close + minRisk;
 								}
 								double risk = stop - entry.close;
-								if (risk > 0.0 && riskTicks(spec, entry.close, stop) <= maxRiskTicks) {
+								if (risk > 0.0 && riskTicksWithinMax(spec, entry.close, stop, maxRiskTicks)) {
 									signals.add(signal("IFVG", "Inversion Fair Value Gap Retest", "SHORT", entryIndex, entry.close, stop, entry.close - (risk * settings.fvgRewardRisk), settings.fvgMaxHoldBars, ifvgSignalNotes(spec, "Bearish", gapLow, gapHigh, index, invalidationIndex, entryIndex, settings)));
 									break;
 								}
@@ -26599,7 +26752,7 @@ public class FuturesManager {
 									stop = entry.close - minRisk;
 								}
 								double risk = entry.close - stop;
-								if (risk > 0.0 && riskTicks(spec, entry.close, stop) <= maxRiskTicks) {
+								if (risk > 0.0 && riskTicksWithinMax(spec, entry.close, stop, maxRiskTicks)) {
 									signals.add(signal("IFVG", "Inversion Fair Value Gap Retest", "LONG", entryIndex, entry.close, stop, entry.close + (risk * settings.fvgRewardRisk), settings.fvgMaxHoldBars, ifvgSignalNotes(spec, "Bullish", gapLow, gapHigh, index, invalidationIndex, entryIndex, settings)));
 									break;
 								}
@@ -27170,7 +27323,7 @@ public class FuturesManager {
 						&& (!settings.requireHigherTimeframeGuard || higherTimeframeBreakoutLong(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 						double stop = Math.min(recentSwingLow(bars, index, 8), bar.ema20) - (spec.tickSize * 2.0);
 						double risk = bar.close - stop;
-						if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxCloseMomentumRiskTicks) {
+						if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxCloseMomentumRiskTicks)) {
 							signals.add(signal("CMOM", "Close Momentum", "LONG", index, bar.close, stop, bar.close + (risk * settings.closeMomentumRewardRisk), 40, "Late-session trend continuation after rest-of-day momentum confirms near session high."));
 						}
 					}
@@ -27189,7 +27342,7 @@ public class FuturesManager {
 						&& (!settings.requireHigherTimeframeGuard || higherTimeframeBearish(fifteenMinuteBars, oneHourBars, bar.marketTime))) {
 						double stop = Math.max(recentSwingHigh(bars, index, 8), bar.ema20) + (spec.tickSize * 2.0);
 						double risk = stop - bar.close;
-						if (risk > 0.0 && riskTicks(spec, bar.close, stop) <= maxCloseMomentumRiskTicks) {
+						if (risk > 0.0 && riskTicksWithinMax(spec, bar.close, stop, maxCloseMomentumRiskTicks)) {
 							signals.add(signal("CMOM", "Close Momentum", "SHORT", index, bar.close, stop, bar.close - (risk * settings.closeMomentumRewardRisk), 40, "Late-session trend continuation after rest-of-day momentum confirms near session low."));
 						}
 					}
@@ -28706,6 +28859,14 @@ public class FuturesManager {
 			return 0.0;
 		}
 		return Math.abs(entry - stop) / spec.tickSize;
+	}
+
+	private static boolean riskTicksWithinMax(InstrumentSpec spec, double entry, double stop, double maxRiskTicks) {
+		return ticksWithinMax(riskTicks(spec, entry, stop), maxRiskTicks);
+	}
+
+	private static boolean ticksWithinMax(double ticks, double maxTicks) {
+		return ticks <= maxTicks + 1.0e-6;
 	}
 
 	private static double defaultBodyPct(Bar bar) {

@@ -40,6 +40,7 @@ public class FuturesLiveTradeLifecycleTest {
 		assertTrue(json.contains("\"exitReasonPayloads\":true"), json);
 		assertTrue(json.contains("\"thinkingLogFlow\":true"), json);
 		assertTrue(json.contains("\"brokerOrdersSuppressed\":true"), json);
+		assertTrue(json.contains("\"provenance\":\"synthetic_live_lifecycle_self_test\""), json);
 		assertTrue(json.contains("DTM_PARTIAL_HALF_RUNNER_EXTENDED"), json);
 		assertTrue(json.contains("SIMULATED_DTM_PARTIAL_CLOSE"), json);
 		assertTrue(json.contains("DTM_CUT_EARLY_THESIS_FAILED"), json);
@@ -53,6 +54,7 @@ public class FuturesLiveTradeLifecycleTest {
 		assertEquals(3, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesLiveSignalDecisions WHERE status LIKE 'SIMULATED_%EXIT'"));
 		assertEquals(3, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesLiveThinkingLog WHERE eventType = 'ORDER_SUBMITTED'"));
 		assertEquals(3, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesLiveThinkingLog WHERE eventType = 'POSITION_EXITED'"));
+		assertEquals(9, TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesLiveThinkingLog WHERE detailsJson LIKE '%\"provenance\":\"synthetic_live_lifecycle_self_test\"%'"));
 		assertTrue(TestDatabaseSupport.countRows("SELECT COUNT(*) FROM FuturesLiveThinkingLog WHERE eventType = 'DTM_DECISION'") >= 2);
 	}
 }
