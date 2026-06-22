@@ -5,13 +5,16 @@ import {
   chartCandlesForMonitorTimeline,
   displayCandlesForChart,
   liveBotControlState,
+  mergeCurrentCandleIntoSeries,
   liveMonitorMatchesCacheKey,
   liveMonitorCacheKey,
   liveMonitorRequestKey,
   monitorLimitForTimeframe,
+  normalizeMonitorTimeframe,
   mergeSeriesCandleVolume,
   resolveLivePatchVolume,
   shouldAppendLivePatchCandle,
+  timeAxisLabelIndexes,
   visibleLiveEventDetailEntries,
 } from "./futuresLiveChartUtils.js";
 
@@ -98,6 +101,14 @@ test("liveMonitorRequestKey separates in-flight monitor requests by selected tim
     liveMonitorRequestKey("MES,MNQ,NQ", "4h"),
     "liveMonitor:4h:MES,MNQ,NQ"
   );
+});
+
+test("normalizeMonitorTimeframe preserves every supported chart timeframe", () => {
+  assert.equal(normalizeMonitorTimeframe("1m"), "1m");
+  assert.equal(normalizeMonitorTimeframe("5m"), "5m");
+  assert.equal(normalizeMonitorTimeframe("30m"), "30m");
+  assert.equal(normalizeMonitorTimeframe("1h"), "1h");
+  assert.equal(normalizeMonitorTimeframe("4h"), "4h");
 });
 
 test("liveMonitorCacheKey separates cached chart data by timeframe and symbol universe", () => {
@@ -187,6 +198,30 @@ test("shouldAppendLivePatchCandle rejects stale session jumps from live marks", 
   assert.equal(shouldAppendLivePatchCandle({ series, patch: livePatch, timeframe: "1m" }), false);
 });
 
+test("mergeCurrentCandleIntoSeries appends a healthy live mark after stale captured history", () => {
+  const series = [
+    { time: "2026-06-19 13:03", close: 30652.75, high: 30652.75, low: 30652.75 },
+    { time: "2026-06-19 13:04", close: 30647, high: 30647, low: 30647 },
+  ];
+  const livePatch = {
+    time: "2026-06-22 05:10",
+    open: 30753.13,
+    high: 30753.75,
+    low: 30752,
+    close: 30752.63,
+    events: 37,
+    live: true,
+  };
+
+  const blockedByDefault = mergeCurrentCandleIntoSeries(series, livePatch, "1m");
+  assert.equal(blockedByDefault.length, 2);
+
+  const merged = mergeCurrentCandleIntoSeries(series, livePatch, "1m", { allowSessionJump: true });
+  assert.equal(merged.length, 3);
+  assert.equal(merged[2].time, "2026-06-22 05:10");
+  assert.equal(merged[2].close, 30752.63);
+});
+
 test("shouldAppendLivePatchCandle does not seed an empty monitor timeline from live marks", () => {
   const livePatch = { time: "2026-06-22 00:59", close: 7535.25, live: true };
 
@@ -201,6 +236,22 @@ test("shouldAppendLivePatchCandle allows normal next live mark candles", () => {
   const livePatch = { time: "2026-06-11 09:32", close: 28894.88, live: true };
 
   assert.equal(shouldAppendLivePatchCandle({ series, patch: livePatch, timeframe: "1m" }), true);
+});
+
+test("timeAxisLabelIndexes shows true one-minute control instead of coarse ten-minute labels", () => {
+  const candles = Array.from({ length: 24 }, (_, index) => ({
+    time: `2026-06-22 05:${String(index).padStart(2, "0")}`,
+  }));
+
+  assert.deepEqual(timeAxisLabelIndexes(candles, "1m"), Array.from({ length: 24 }, (_, index) => index));
+});
+
+test("timeAxisLabelIndexes keeps higher timeframes readable without pretending they are 1m", () => {
+  const candles = Array.from({ length: 48 }, (_, index) => ({
+    time: `2026-06-22 ${String(Math.floor(index / 2)).padStart(2, "0")}:${index % 2 ? "30" : "00"}`,
+  }));
+
+  assert.deepEqual(timeAxisLabelIndexes(candles, "30m"), [0, 8, 16, 24, 32, 40, 47]);
 });
 
 test("shouldAppendLivePatchCandle uses 4h timeframe gap tolerance", () => {

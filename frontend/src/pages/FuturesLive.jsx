@@ -7,14 +7,15 @@ import {
   chartCandlesForMonitorTimeline,
   displayCandlesForChart,
   liveBotControlState,
+  mergeCurrentCandleIntoSeries,
   liveMonitorCacheKey,
   liveMonitorMatchesCacheKey,
   liveMarksRequestKey,
   liveMonitorRequestKey,
   monitorLimitForTimeframe,
+  normalizeMonitorTimeframe as normalizeClientTimeframe,
   mergeSeriesCandleVolume,
-  resolveLivePatchVolume,
-  shouldAppendLivePatchCandle,
+  timeAxisLabelIndexes,
   visibleLiveEventDetailEntries,
 } from "./futuresLiveChartUtils.js";
 import {
@@ -2752,7 +2753,7 @@ function FuturesMarketChart({
     );
   }
 
-  const timeLabelEvery = Math.max(1, Math.floor(visibleCandles.length / 6));
+  const timeLabelIndexes = new Set(timeAxisLabelIndexes(visibleCandles, timeframe));
 
   return (
     <div
@@ -2985,7 +2986,7 @@ function FuturesMarketChart({
         })}
 
         {visibleCandles.map((candle, index) => (
-          index % timeLabelEvery === 0 || index === visibleCandles.length - 1 ? (
+          timeLabelIndexes.has(index) ? (
             <text key={`time-${candle.time || index}-${index}`} x={toX(index)} y={axisY} textAnchor="middle" className="futures-time-axis-label">
               {compactTime(candle.time)}
             </text>
@@ -3056,7 +3057,9 @@ function mergeMonitorWithMarks(monitor, marks, timeframe) {
   Object.entries(marks.symbols || {}).forEach(([rawSymbol, patch]) => {
     const symbol = String(rawSymbol || "").toUpperCase();
     if (!symbol || !patch?.currentCandle) return;
-    marketData[symbol] = mergeCurrentCandleIntoSeries(marketData[symbol], patch.currentCandle, normalizedTimeframe);
+    marketData[symbol] = mergeCurrentCandleIntoSeries(marketData[symbol], patch.currentCandle, normalizedTimeframe, {
+      allowSessionJump: Boolean(marks.feedFresh) || Number(marks.feedStaleSeconds ?? MARKET_DATA_STALE_SECONDS + 1) <= MARKET_DATA_STALE_SECONDS,
+    });
   });
   return {
     ...baseMonitor,
@@ -3091,44 +3094,6 @@ function candleHistorySignature(candles) {
   const first = history[0] || {};
   const last = history[history.length - 1] || {};
   return `${history.length}:${first.time || ""}:${last.time || ""}:${hash >>> 0}`;
-}
-
-function mergeCurrentCandleIntoSeries(series, currentCandle, timeframe = "1m") {
-  const candles = Array.isArray(series) ? [...series] : [];
-  const patch = normalizeCandle(currentCandle);
-  if (!patch.time || Number(patch.close || 0) <= 0) return candles;
-  const lastIndex = candles.length - 1;
-  if (lastIndex < 0) return candles;
-  const last = normalizeCandle(candles[lastIndex]);
-  const lastTime = parseChartTime(last.time);
-  const patchTime = parseChartTime(patch.time);
-  if (last.time === patch.time) {
-    const resolvedVolume = resolveLivePatchVolume(candles, patch, last);
-    candles[lastIndex] = {
-      ...last,
-      ...patch,
-      high: Math.max(Number(last.high || 0), Number(patch.high || patch.close || 0)),
-      low: Math.min(Number(last.low || patch.low || patch.close || 0), Number(patch.low || patch.close || 0)),
-      volume: resolvedVolume,
-      vwap: Number(last.vwap || 0) || Number(patch.vwap || 0),
-      ema9: Number(last.ema9 || 0) || Number(patch.ema9 || 0),
-      ema20: Number(last.ema20 || 0) || Number(patch.ema20 || 0),
-      rsi14: Number(last.rsi14 || 0) || Number(patch.rsi14 || 0),
-      live: true,
-    };
-    return candles;
-  }
-  if (
-    patchTime
-    && (!lastTime || patchTime > lastTime)
-    && shouldAppendLivePatchCandle({ series: candles, patch, timeframe })
-  ) {
-    candles.push({
-      ...patch,
-      volume: resolveLivePatchVolume(candles, patch, null),
-    });
-  }
-  return candles;
 }
 
 function mergeMonitorWithCachedMarketData(primary, fallback) {
@@ -3231,11 +3196,6 @@ function chooseBestDisplayMonitor(liveMonitor, cachedMonitor, selectedSymbol) {
   const mergedLength = Array.isArray(merged?.marketData?.[symbol]) ? merged.marketData[symbol].length : 0;
   if (mergedLength >= Math.max(liveLength, cachedLength, MIN_OPENING_CHART_BARS)) return merged;
   return cachedLength > liveLength ? cachedMonitor : liveMonitor;
-}
-
-function normalizeClientTimeframe(value) {
-  if (value === "5m" || value === "30m" || value === "1h") return value;
-  return "1m";
 }
 
 function augmentTopstepMetricsWithMarks(metrics, symbolStates) {

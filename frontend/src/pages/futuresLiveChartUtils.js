@@ -25,6 +25,67 @@ export function liveMonitorMatchesCacheKey(monitor, cacheKey, timeframe) {
   return !monitor.monitorCacheKey || monitor.monitorCacheKey === cacheKey;
 }
 
+export function mergeCurrentCandleIntoSeries(series, currentCandle, timeframe = "1m", options = {}) {
+  const candles = Array.isArray(series) ? [...series] : [];
+  const patch = normalizeCandle(currentCandle);
+  if (!patch.time || positiveNumber(patch.close) <= 0) return candles;
+  const lastIndex = candles.length - 1;
+  if (lastIndex < 0) return candles;
+  const last = normalizeCandle(candles[lastIndex]);
+  const lastTime = chartTimeMs(last.time);
+  const patchTime = chartTimeMs(patch.time);
+  if (last.time === patch.time) {
+    const resolvedVolume = resolveLivePatchVolume(candles, patch, last);
+    candles[lastIndex] = {
+      ...last,
+      ...patch,
+      high: Math.max(positiveNumber(last.high), positiveNumber(patch.high || patch.close)),
+      low: Math.min(positiveNumber(last.low || last.close), positiveNumber(patch.low || patch.close)),
+      volume: resolvedVolume,
+      vwap: positiveNumber(last.vwap) || positiveNumber(patch.vwap),
+      ema9: positiveNumber(last.ema9) || positiveNumber(patch.ema9),
+      ema20: positiveNumber(last.ema20) || positiveNumber(patch.ema20),
+      rsi14: positiveNumber(last.rsi14) || positiveNumber(patch.rsi14),
+      live: true,
+    };
+    return candles;
+  }
+  if (
+    patchTime
+    && (!lastTime || patchTime > lastTime)
+    && (options.allowSessionJump || shouldAppendLivePatchCandle({ series: candles, patch, timeframe }))
+  ) {
+    candles.push({
+      ...patch,
+      volume: resolveLivePatchVolume(candles, patch, null),
+      live: true,
+    });
+  }
+  return candles;
+}
+
+export function timeAxisLabelIndexes(candles, timeframe = "1m") {
+  const count = Array.isArray(candles) ? candles.length : 0;
+  if (count <= 0) return [];
+  const normalized = normalizeMonitorTimeframe(timeframe);
+  let step;
+  if (normalized === "1m") {
+    step = count <= 48 ? 1 : count <= 96 ? 2 : 5;
+  } else if (normalized === "5m") {
+    step = count <= 48 ? 3 : 6;
+  } else {
+    step = Math.max(1, Math.floor(count / 6));
+  }
+  const indexes = [];
+  for (let index = 0; index < count; index += step) {
+    indexes.push(index);
+  }
+  if (indexes[indexes.length - 1] !== count - 1) {
+    indexes.push(count - 1);
+  }
+  return indexes;
+}
+
 export function liveBotControlState({ botStarted = false, busyAction = "" } = {}) {
   if (busyAction === "start") return { active: false, label: "Starting..." };
   if (busyAction === "stop") return { active: true, label: "Stopping..." };
@@ -142,7 +203,7 @@ export function shouldAppendLivePatchCandle({ series, patch, timeframe = "1m" } 
   return patchTime - lastTime <= maxGapMs;
 }
 
-function normalizeMonitorTimeframe(value) {
+export function normalizeMonitorTimeframe(value) {
   if (value === "5m" || value === "30m" || value === "1h" || value === "4h") return value;
   return "1m";
 }
@@ -160,6 +221,21 @@ function chartTimeMs(value) {
   const clean = String(value).trim().replace(" ", "T");
   const parsed = Date.parse(clean);
   return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function normalizeCandle(candle) {
+  return {
+    ...candle,
+    open: Number(candle?.open || candle?.close || 0),
+    high: Number(candle?.high || candle?.close || 0),
+    low: Number(candle?.low || candle?.close || 0),
+    close: Number(candle?.close || 0),
+    volume: Number(candle?.volume || 0),
+    vwap: Number(candle?.vwap || 0),
+    ema9: Number(candle?.ema9 || 0),
+    ema20: Number(candle?.ema20 || 0),
+    rsi14: Number(candle?.rsi14 || 0),
+  };
 }
 
 function liveEventDetailValueVisible(value) {

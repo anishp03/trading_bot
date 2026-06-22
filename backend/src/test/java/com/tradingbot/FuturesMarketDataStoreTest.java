@@ -360,6 +360,32 @@ public class FuturesMarketDataStoreTest {
 	}
 
 	@Test
+	public void liveMonitorCandlesMergeFreshRealtimeRowsAfterStaleCapturedRows() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		FuturesMarketDataStore.initializeStore();
+		ProjectXRealtimeManager.initializeStore();
+		insertCapturedBar("NQ", "2026-06-19T17:03:00Z", 30652.75);
+		insertCapturedBar("NQ", "2026-06-19T17:04:00Z", 30647.0);
+		insertRealtimeEvent("NQ", "2026-06-22 05:10:00", 30752.63);
+		Object originalRuntime = realtimeRuntimeField().get(null);
+		try {
+			setRealtimeRuntime("2026-06-22 01:34:37");
+			cacheEmptyWarmup("NQ", "1m", 20);
+
+			String json = FuturesManager.getLiveMonitorJson("NQ", 20, "1m");
+
+			assertTrue(json.contains("\"timeframe\":\"1m\""), json);
+			assertTrue(json.contains("\"time\":\"2026-06-19 13:03\""), json);
+			assertTrue(json.contains("\"time\":\"2026-06-22 05:10\""), json);
+			assertTrue(json.contains("\"close\":30752.63"), json);
+			assertTrue(json.contains("\"eventType\":\"GatewayTrade\""), json);
+		} finally {
+			realtimeRuntimeField().set(null, originalRuntime);
+			clearWarmupState();
+		}
+	}
+
+	@Test
 	public void liveMonitorAggregatesCapturedRowsForFourHourChart() throws Exception {
 		TestDatabaseSupport.useTempDatabase(tempDir);
 		FuturesMarketDataStore.initializeStore();

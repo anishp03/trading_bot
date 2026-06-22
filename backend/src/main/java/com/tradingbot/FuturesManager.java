@@ -5853,6 +5853,9 @@ public class FuturesManager {
 				return rs.getInt(1);
 			}
 		} catch (SQLException e) {
+			if (String.valueOf(e.getMessage()).toLowerCase().contains("no such table")) {
+				return 0;
+			}
 			e.printStackTrace();
 		}
 		return 0;
@@ -11167,12 +11170,17 @@ public class FuturesManager {
 				return liveSession.sessionId;
 			}
 		}
-		String sql = "SELECT sessionID FROM FuturesLiveEngineSessions ORDER BY sessionID DESC LIMIT 1";
 		try (Connection conn = DatabaseManager.getConnection();
-			 Statement stmt = conn.createStatement();
-			 ResultSet rs = stmt.executeQuery(sql)) {
-			if (rs.next()) {
-				return rs.getInt(1);
+			 Statement stmt = conn.createStatement()) {
+			try (ResultSet tables = stmt.executeQuery("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'FuturesLiveEngineSessions' LIMIT 1")) {
+				if (!tables.next()) {
+					return 0;
+				}
+			}
+			try (ResultSet rs = stmt.executeQuery("SELECT sessionID FROM FuturesLiveEngineSessions ORDER BY sessionID DESC LIMIT 1")) {
+				if (rs.next()) {
+					return rs.getInt(1);
+				}
 			}
 		} catch (SQLException e) {
 			e.printStackTrace();
@@ -11396,12 +11404,10 @@ public class FuturesManager {
 			? liveCapturedBarsForMonitorSymbol(symbol, timeframe, limit)
 			: new ArrayList<Bar>();
 		List<RealtimeCandle> capturedCandles = realtimeCandlesFromBars(capturedBars, "LIVE_CAPTURED_BARS");
-		List<RealtimeCandle> realtimeCandles = new ArrayList<RealtimeCandle>();
-		if (capturedCandles.isEmpty()) {
-			List<RealtimePricePoint> realtimePoints = realtimePricePointsForSymbol(symbol, realtimePointLimitForCandles(limit, timeframe));
-			realtimeCandles = aggregateRealtimeCandles(realtimePoints, timeframe, limit);
-		}
-		List<RealtimeCandle> candles = mergeMonitorCandles(warmupCandles, capturedCandles.isEmpty() ? realtimeCandles : capturedCandles, limit);
+		List<RealtimePricePoint> realtimePoints = realtimePricePointsForSymbol(symbol, realtimePointLimitForCandles(limit, timeframe));
+		List<RealtimeCandle> realtimeCandles = aggregateRealtimeCandles(realtimePoints, timeframe, limit);
+		List<RealtimeCandle> liveCandles = mergeMonitorCandles(capturedCandles, realtimeCandles, limit);
+		List<RealtimeCandle> candles = mergeMonitorCandles(warmupCandles, liveCandles, limit);
 		StringBuilder json = new StringBuilder("[");
 		int liveEvents = 0;
 		int warmupBars = 0;
@@ -11444,10 +11450,12 @@ public class FuturesManager {
 		series.pointsJson = json.toString();
 		series.localBars = warmupBars;
 		series.liveEvents = liveEvents;
-		if (series.capturedBars > 0) {
+		if (liveEvents > 0 || series.pollEvents > 0) {
+			series.dataSource = series.capturedBars > 0
+				? (warmupBars > 0 ? "PROJECTX_SIGNALR_WITH_CAPTURED_BARS_AND_WARMUP" : "PROJECTX_SIGNALR_WITH_CAPTURED_BARS")
+				: (warmupBars > 0 ? "PROJECTX_SIGNALR_WITH_WARMUP" : "PROJECTX_SIGNALR");
+		} else if (series.capturedBars > 0) {
 			series.dataSource = warmupBars > 0 ? "LIVE_CAPTURED_BARS_WITH_WARMUP" : "LIVE_CAPTURED_BARS";
-		} else if (liveEvents > 0 || series.pollEvents > 0) {
-			series.dataSource = warmupBars > 0 ? "PROJECTX_SIGNALR_WITH_WARMUP" : "PROJECTX_SIGNALR";
 		} else if (warmupBars > 0) {
 			series.dataSource = warmup.dataSource;
 		} else {
@@ -12530,18 +12538,19 @@ public class FuturesManager {
 		ProjectXRealtimeManager.initializeStore();
 		List<RealtimePricePoint> points = new ArrayList<RealtimePricePoint>();
 		String startedAt = ProjectXRealtimeManager.currentStartedAt();
+		if (startedAt == null || startedAt.trim().isEmpty()) {
+			return points;
+		}
 		String requestedSymbol = normalizeSymbol(symbol);
 		String sql = "SELECT realtimeEventID, eventType, contractId, symbol, payloadJson, receivedAt FROM FuturesLiveRealtimeEvents "
 			+ "WHERE hub = 'market' AND symbol = ? AND eventType <> 'GatewayDepth' "
-			+ (startedAt == null || startedAt.trim().isEmpty() ? "AND 1 = 0 " : "AND receivedAt >= ? ")
+			+ "AND receivedAt >= ? "
 			+ "ORDER BY realtimeEventID DESC LIMIT ?";
 		try (Connection conn = ProjectXRealtimeManager.openRealtimeConnection();
 			 PreparedStatement pstmt = conn.prepareStatement(sql)) {
 			pstmt.setString(1, requestedSymbol);
 			int parameterIndex = 2;
-			if (startedAt != null && !startedAt.trim().isEmpty()) {
-				pstmt.setString(parameterIndex++, startedAt);
-			}
+			pstmt.setString(parameterIndex++, startedAt);
 			pstmt.setInt(parameterIndex, boundedInt(limit, 180, 1, LIVE_REALTIME_EVENT_SAMPLE_CAP));
 			try (ResultSet rs = pstmt.executeQuery()) {
 				while (rs.next()) {
