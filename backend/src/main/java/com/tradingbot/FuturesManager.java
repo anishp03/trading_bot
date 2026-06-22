@@ -11365,10 +11365,12 @@ public class FuturesManager {
 		}
 		marketData.append("}");
 		symbolStates.append("]");
-		String source = hasCapturedBars
-			? (hasWarmupBars ? "LIVE_CAPTURED_BARS_WITH_WARMUP" : "LIVE_CAPTURED_BARS")
-			: hasRealtimeTicks || hasPollSnapshots
-				? (hasWarmupBars ? "PROJECTX_SIGNALR_WITH_WARMUP" : "PROJECTX_SIGNALR")
+		String source = hasRealtimeTicks || hasPollSnapshots
+			? (hasCapturedBars
+				? (hasWarmupBars ? "PROJECTX_SIGNALR_WITH_CAPTURED_BARS_AND_WARMUP" : "PROJECTX_SIGNALR_WITH_CAPTURED_BARS")
+				: (hasWarmupBars ? "PROJECTX_SIGNALR_WITH_WARMUP" : "PROJECTX_SIGNALR"))
+			: hasCapturedBars
+				? (hasWarmupBars ? "LIVE_CAPTURED_BARS_WITH_WARMUP" : "LIVE_CAPTURED_BARS")
 				: (hasWarmupBars ? "PROJECTX_HISTORY_WARMUP" : (realtimeRunning ? "PROJECTX_SIGNALR_WAITING" : "LIVE_NOT_STARTED"));
 		return "{"
 			+ "\"success\":true,"

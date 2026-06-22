@@ -375,6 +375,7 @@ public class FuturesMarketDataStoreTest {
 			String json = FuturesManager.getLiveMonitorJson("NQ", 20, "1m");
 
 			assertTrue(json.contains("\"timeframe\":\"1m\""), json);
+			assertTrue(json.contains("\"dataSource\":\"PROJECTX_SIGNALR_WITH_CAPTURED_BARS\""), json);
 			assertTrue(json.contains("\"time\":\"2026-06-19 13:03\""), json);
 			assertTrue(json.contains("\"time\":\"2026-06-22 05:10\""), json);
 			assertTrue(json.contains("\"close\":30752.63"), json);
