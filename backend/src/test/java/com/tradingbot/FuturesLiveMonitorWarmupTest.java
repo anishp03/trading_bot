@@ -39,10 +39,24 @@ public class FuturesLiveMonitorWarmupTest {
 		assertEquals(0, barsSize(warmup));
 	}
 
+	@Test
+	public void graphWarmupUsesFullTimelineLimitForEveryTimeframe() throws Exception {
+		assertEquals(2000, liveGraphWarmupLimit("1m"));
+		assertEquals(2000, liveGraphWarmupLimit("5m"));
+		assertEquals(2000, liveGraphWarmupLimit("30m"));
+		assertEquals(2000, liveGraphWarmupLimit("1h"));
+	}
+
 	private static Object liveWarmupBarsForMonitorSymbol(String symbol, String timeframe, int limit) throws Exception {
 		Method method = FuturesManager.class.getDeclaredMethod("liveWarmupBarsForMonitorSymbol", String.class, String.class, int.class);
 		method.setAccessible(true);
 		return method.invoke(null, symbol, timeframe, limit);
+	}
+
+	private static int liveGraphWarmupLimit(String timeframe) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("liveGraphWarmupLimit", String.class);
+		method.setAccessible(true);
+		return ((Integer) method.invoke(null, timeframe)).intValue();
 	}
 
 	private static Object newLiveSession() throws Exception {

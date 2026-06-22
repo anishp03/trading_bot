@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  chartCandlesForMonitorTimeline,
   displayCandlesForChart,
   liveBotControlState,
   liveMonitorMatchesCacheKey,
   liveMonitorCacheKey,
   liveMonitorRequestKey,
+  monitorLimitForTimeframe,
   mergeSeriesCandleVolume,
   resolveLivePatchVolume,
   shouldAppendLivePatchCandle,
@@ -21,6 +23,24 @@ test("displayCandlesForChart keeps short live-only series visible instead of bla
   ];
 
   assert.deepEqual(displayCandlesForChart(liveOnlyCandles, 24), liveOnlyCandles);
+});
+
+test("chartCandlesForMonitorTimeline preserves warmup and live candles across sessions", () => {
+  const candles = [
+    { time: "2026-06-18 15:58", close: 7564 },
+    { time: "2026-06-18 15:59", close: 7563.5 },
+    { time: "2026-06-19 09:30", close: 7562 },
+    { time: "2026-06-19 09:31", close: 7562.5 },
+  ];
+
+  assert.deepEqual(chartCandlesForMonitorTimeline(candles), candles);
+});
+
+test("monitorLimitForTimeframe requests the full live graph timeline", () => {
+  assert.equal(monitorLimitForTimeframe("1m"), 2000);
+  assert.equal(monitorLimitForTimeframe("5m"), 2000);
+  assert.equal(monitorLimitForTimeframe("30m"), 2000);
+  assert.equal(monitorLimitForTimeframe("1h"), 2000);
 });
 
 test("liveBotControlState does not expose a separate stop market feed state", () => {
@@ -152,6 +172,12 @@ test("shouldAppendLivePatchCandle rejects stale session jumps from live marks", 
   const livePatch = { time: "2026-06-11 08:08", close: 28894.88, live: true };
 
   assert.equal(shouldAppendLivePatchCandle({ series, patch: livePatch, timeframe: "1m" }), false);
+});
+
+test("shouldAppendLivePatchCandle does not seed an empty monitor timeline from live marks", () => {
+  const livePatch = { time: "2026-06-22 00:59", close: 7535.25, live: true };
+
+  assert.equal(shouldAppendLivePatchCandle({ series: [], patch: livePatch, timeframe: "1m" }), false);
 });
 
 test("shouldAppendLivePatchCandle allows normal next live mark candles", () => {

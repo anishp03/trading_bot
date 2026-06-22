@@ -22,7 +22,7 @@ import {
 } from "./liveTradingWorkspaceUtils.js";
 
 const TIMEFRAME_OPTIONS = ["1m", "5m", "30m", "1h"];
-const DEFAULT_VISIBLE_RANGE = "1D";
+const DEFAULT_VISIBLE_RANGE = "ALL";
 
 function LiveTradingWorkspaceComponent({
   botStarted,

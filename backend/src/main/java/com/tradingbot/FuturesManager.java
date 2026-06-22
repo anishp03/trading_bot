@@ -156,6 +156,7 @@ public class FuturesManager {
 	private static String liveEntryGateOpenedLoggedDate = "";
 	private static String liveEntryGateClosedLoggedDate = "";
 	private static final String[] LIVE_GRAPH_TIMEFRAMES = new String[] { "1m", "5m", "30m", "1h" };
+	private static final int LIVE_GRAPH_TIMELINE_LIMIT = 2000;
 	private static final long LIVE_WARMUP_CACHE_TTL_MS = TimeUnit.HOURS.toMillis(6L);
 	private static final int LIVE_REALTIME_EVENT_SAMPLE_FLOOR = 1200;
 	private static final int LIVE_REALTIME_EVENT_SAMPLE_CAP = 180000;
@@ -11540,7 +11541,7 @@ public class FuturesManager {
 	private static boolean liveGraphWarmupReadyForSymbol(String symbol) {
 		for (int index = 0; index < LIVE_GRAPH_TIMEFRAMES.length; index++) {
 			String timeframe = LIVE_GRAPH_TIMEFRAMES[index];
-			if (!liveWarmupCacheReady(symbol, timeframe, liveMonitorDefaultLimit(timeframe))) {
+			if (!liveWarmupCacheReady(symbol, timeframe, liveGraphWarmupLimit(timeframe))) {
 				return false;
 			}
 		}
@@ -11600,7 +11601,7 @@ public class FuturesManager {
 			}
 			for (int timeframeIndex = 0; timeframeIndex < LIVE_GRAPH_TIMEFRAMES.length; timeframeIndex++) {
 				String timeframe = LIVE_GRAPH_TIMEFRAMES[timeframeIndex];
-				int limit = liveMonitorDefaultLimit(timeframe);
+				int limit = liveGraphWarmupLimit(timeframe);
 				String cacheKey = liveWarmupCacheKey(symbol, timeframe, limit);
 				LiveWarmupBars cached;
 				synchronized (LIVE_WARMUP_CACHE) {
@@ -11658,7 +11659,7 @@ public class FuturesManager {
 		int maxMinuteWindow = 0;
 		for (int index = 0; index < LIVE_GRAPH_TIMEFRAMES.length; index++) {
 			String timeframe = LIVE_GRAPH_TIMEFRAMES[index];
-			int limit = liveMonitorDefaultLimit(timeframe);
+			int limit = liveGraphWarmupLimit(timeframe);
 			int minutesPerCandle = liveMonitorTimeframeMinutes(timeframe);
 			maxMinuteWindow = Math.max(maxMinuteWindow, (limit * minutesPerCandle) + 390);
 		}
@@ -11682,7 +11683,7 @@ public class FuturesManager {
 		Map<String, LiveWarmupBars> loaded = new HashMap<String, LiveWarmupBars>();
 		for (int index = 0; index < LIVE_GRAPH_TIMEFRAMES.length; index++) {
 			String timeframe = LIVE_GRAPH_TIMEFRAMES[index];
-			int limit = liveMonitorDefaultLimit(timeframe);
+			int limit = liveGraphWarmupLimit(timeframe);
 			loaded.put(liveWarmupCacheKey(normalizedSymbol, timeframe, limit), buildWarmupBarsFromMinuteBars(normalizedSymbol, sourceMinuteBars, timeframe, limit, dataSource));
 		}
 		synchronized (LIVE_WARMUP_CACHE) {
@@ -12483,6 +12484,10 @@ public class FuturesManager {
 			return 360;
 		}
 		return 520;
+	}
+
+	private static int liveGraphWarmupLimit(String timeframe) {
+		return LIVE_GRAPH_TIMELINE_LIMIT;
 	}
 
 	private static int liveMonitorTimeframeMinutes(String timeframe) {

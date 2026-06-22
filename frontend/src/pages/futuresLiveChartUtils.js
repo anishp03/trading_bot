@@ -2,6 +2,14 @@ export function displayCandlesForChart(candles) {
   return Array.isArray(candles) ? candles : [];
 }
 
+export function chartCandlesForMonitorTimeline(candles) {
+  return Array.isArray(candles) ? candles : [];
+}
+
+export function monitorLimitForTimeframe() {
+  return 2000;
+}
+
 export function liveMonitorRequestKey(symbolsCsv, timeframe) {
   return `liveMonitor:${normalizeMonitorTimeframe(timeframe)}:${String(symbolsCsv || "").trim()}`;
 }
@@ -125,7 +133,7 @@ export function shouldAppendLivePatchCandle({ series, patch, timeframe = "1m" } 
   const candles = Array.isArray(series) ? series : [];
   const patchTime = chartTimeMs(patch?.time || patch?.barTime || patch?.timestamp);
   if (!patchTime) return false;
-  if (!candles.length) return true;
+  if (!candles.length) return false;
   const last = candles[candles.length - 1] || {};
   const lastTime = chartTimeMs(last.time || last.barTime || last.timestamp);
   if (!lastTime) return false;

@@ -4,12 +4,14 @@ import { useOutletContext } from "react-router-dom";
 import LiveTradingWorkspace from "../components/LiveTradingWorkspace.jsx";
 import TradeAnalysisModal from "../components/TradeAnalysisModal.jsx";
 import {
+  chartCandlesForMonitorTimeline,
   displayCandlesForChart,
   liveBotControlState,
   liveMonitorCacheKey,
   liveMonitorMatchesCacheKey,
   liveMarksRequestKey,
   liveMonitorRequestKey,
+  monitorLimitForTimeframe,
   mergeSeriesCandleVolume,
   resolveLivePatchVolume,
   shouldAppendLivePatchCandle,
@@ -411,7 +413,7 @@ export default function FuturesLive() {
       const normalized = rawChartCandles
         .map(normalizeCandle)
         .filter((candle) => candle.time && Number(candle.close || 0) > 0);
-      return latestSessionChartCandles(normalized);
+      return chartCandlesForMonitorTimeline(normalized);
     },
     [rawChartCandles]
   );
@@ -3094,7 +3096,7 @@ function mergeCurrentCandleIntoSeries(series, currentCandle, timeframe = "1m") {
   const patch = normalizeCandle(currentCandle);
   if (!patch.time || Number(patch.close || 0) <= 0) return candles;
   const lastIndex = candles.length - 1;
-  if (lastIndex < 0) return [patch];
+  if (lastIndex < 0) return candles;
   const last = normalizeCandle(candles[lastIndex]);
   const lastTime = parseChartTime(last.time);
   const patchTime = parseChartTime(patch.time);
@@ -3206,23 +3208,6 @@ function mergeSymbolStatesWithMarks(symbolStates, marks) {
   return Array.from(bySymbol.values());
 }
 
-function latestSessionChartCandles(candles) {
-  const series = Array.isArray(candles) ? candles : [];
-  if (series.length <= 1) return series;
-  const datedCandles = series
-    .map((candle) => ({ candle, time: parseChartTime(candle?.time) }))
-    .filter((entry) => entry.time);
-  if (datedCandles.length <= 1) return series;
-  const dateKeys = new Set(datedCandles.map((entry) => chartDateKey(entry.time)).filter(Boolean));
-  if (dateKeys.size <= 1) return series;
-  const latestDateKey = chartDateKey(datedCandles[datedCandles.length - 1].time);
-  if (!latestDateKey) return series;
-  const latestSession = datedCandles
-    .filter((entry) => chartDateKey(entry.time) === latestDateKey)
-    .map((entry) => entry.candle);
-  return latestSession.length > 0 ? latestSession : series;
-}
-
 function resolveDisplayMonitor(liveMonitor, monitorCache, symbolsCsv, selectedTimeframe, selectedSymbol) {
   const normalizedTimeframe = normalizeClientTimeframe(selectedTimeframe);
   const cacheKey = liveMonitorCacheKey(symbolsCsv, normalizedTimeframe);
@@ -3249,17 +3234,6 @@ function chooseBestDisplayMonitor(liveMonitor, cachedMonitor, selectedSymbol) {
 function normalizeClientTimeframe(value) {
   if (value === "5m" || value === "30m" || value === "1h") return value;
   return "1m";
-}
-
-function chartDateKey(time) {
-  const date = new Date(time);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
 }
 
 function augmentTopstepMetricsWithMarks(metrics, symbolStates) {
@@ -4412,7 +4386,7 @@ function buildSymbolTrackers({ symbols, states, decisions, marketData, brokerPos
     const state = stateBySymbol.get(normalizedSymbol) || null;
     const brokerPosition = brokerBySymbol.get(normalizedSymbol) || null;
     const candles = Array.isArray(marketData?.[normalizedSymbol]) ? marketData[normalizedSymbol] : [];
-    const sessionCandles = latestSessionChartCandles(candles.map(normalizeCandle).filter((candle) => candle.time && Number(candle.close || 0) > 0));
+    const sessionCandles = chartCandlesForMonitorTimeline(candles.map(normalizeCandle).filter((candle) => candle.time && Number(candle.close || 0) > 0));
     const lastPrice = Number(latestChartPrice(sessionCandles) || state?.lastPrice || 0);
     const firstPrice = Number(sessionCandles[0]?.close || 0);
     const changePct = firstPrice > 0 ? ((lastPrice - firstPrice) / firstPrice) * 100 : Number(state?.changePct || 0);
@@ -6261,13 +6235,6 @@ function easternDateParts(date) {
     hour: Number(values.hour === "24" ? 0 : values.hour || 0),
     minute: Number(values.minute || 0),
   };
-}
-
-function monitorLimitForTimeframe(value) {
-  if (value === "1h") return 160;
-  if (value === "30m") return 220;
-  if (value === "5m") return 360;
-  return 520;
 }
 
 function timeframeLabel(value) {
