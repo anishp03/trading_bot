@@ -2518,6 +2518,22 @@ textarea {
   background: rgba(125, 211, 252, 0.1);
 }
 
+.live-workspace-symbols button.has-live-trade {
+  color: #ff4d64;
+  font-weight: 950;
+  border-color: rgba(255, 77, 100, 0.48);
+  background: rgba(255, 77, 100, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 77, 100, 0.2), 0 0 0 1px rgba(255, 77, 100, 0.08);
+}
+
+.live-workspace-symbols button.has-live-trade:hover,
+.live-workspace-symbols button.has-live-trade:focus,
+.live-workspace-symbols button.has-live-trade.active {
+  color: #ff6b7c;
+  border-color: rgba(255, 77, 100, 0.72);
+  background: rgba(255, 77, 100, 0.18);
+}
+
 .live-workspace-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);

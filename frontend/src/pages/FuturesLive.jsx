@@ -1484,6 +1484,7 @@ export default function FuturesLive() {
           isTransitioning={chartTransitioning}
           symbol={selectedChartSymbol}
           symbols={monitorSymbols}
+          activeTradeSymbols={botTrackers}
           timeframe={selectedTimeframe}
           onSymbolChange={selectChartSymbol}
           onTimeframeChange={changeTimeframe}

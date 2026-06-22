@@ -10,6 +10,7 @@ import {
 } from "lightweight-charts";
 import { EASTERN_TIME_LABEL, formatEstTime } from "../utils/time.js";
 import {
+  activeTradeSymbolSet,
   chartSourceStatus,
   chartSeriesSyncPlan,
   formatChartTickMark,
@@ -30,6 +31,7 @@ function LiveTradingWorkspaceComponent({
   isTransitioning,
   symbol,
   symbols,
+  activeTradeSymbols = [],
   timeframe,
   onSymbolChange,
   onTimeframeChange,
@@ -66,7 +68,23 @@ function LiveTradingWorkspaceComponent({
 
   const chartCandles = useMemo(() => normalizeCandles(candles), [candles]);
   const activeTrades = useMemo(() => normalizeTrades(trades), [trades]);
+  const activeTradeSymbolsSet = useMemo(() => activeTradeSymbolSet(activeTradeSymbols), [activeTradeSymbols]);
   const chartDataKey = `${String(symbol || "").toUpperCase()}|${timeframe || "1m"}`;
+  const symbolButtonClassName = useCallback((optionSymbol) => {
+    const normalizedOption = String(optionSymbol || "").toUpperCase();
+    const selected = String(symbol || "").toUpperCase() === normalizedOption;
+    const hasLiveTrade = activeTradeSymbolsSet.has(normalizedOption);
+    return [
+      selected ? "active" : "",
+      hasLiveTrade ? "has-live-trade" : "",
+    ].filter(Boolean).join(" ");
+  }, [activeTradeSymbolsSet, symbol]);
+  const symbolButtonTitle = useCallback((optionSymbol) => {
+    const normalizedOption = String(optionSymbol || "").toUpperCase();
+    return activeTradeSymbolsSet.has(normalizedOption)
+      ? `${normalizedOption} has an active live trade`
+      : `Show ${normalizedOption} chart`;
+  }, [activeTradeSymbolsSet]);
   const selectedTrade = activeTrades.find((trade) => trade.id === selectedTradeId)
     || activeTrades.find((trade) => !trade.closed)
     || activeTrades[activeTrades.length - 1]
@@ -307,7 +325,8 @@ function LiveTradingWorkspaceComponent({
             <button
               type="button"
               key={candidate}
-              className={String(candidate).toUpperCase() === String(symbol).toUpperCase() ? "active" : ""}
+              className={symbolButtonClassName(candidate)}
+              title={symbolButtonTitle(candidate)}
               onClick={() => onSymbolChange?.(candidate)}
             >
               {candidate}

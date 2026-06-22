@@ -6,6 +6,7 @@ import {
   chartSeriesSyncPlan,
   formatChartTickMark,
   formatChartTimeLabel,
+  activeTradeSymbolSet,
   liveWorkspacePropsAreEqual,
   rangeBarsForTimeframe,
   shouldApplyChartSeriesSync,
@@ -195,6 +196,34 @@ test("workspace render comparator ignores hot candle ticks until the UI revision
   assert.equal(liveWorkspacePropsAreEqual(previous, { ...nextTick, uiRevision: 8 }), false);
   assert.equal(liveWorkspacePropsAreEqual(previous, { ...nextTick, symbol: "NQ" }), false);
   assert.equal(liveWorkspacePropsAreEqual(previous, { ...nextTick, trades: [{ id: "t1", currentPrice: 101, stopPrice: 99 }] }), false);
+});
+
+test("workspace render comparator updates when symbol trade indicators change", () => {
+  const previous = {
+    symbol: "MES",
+    timeframe: "1m",
+    uiRevision: 7,
+    candles: [{ time: 1, close: 100 }],
+    symbols: ["MES", "NQ"],
+    trades: [],
+    activeTradeSymbols: ["MES"],
+    botStarted: true,
+  };
+
+  assert.equal(liveWorkspacePropsAreEqual(previous, { ...previous, activeTradeSymbols: ["MES"] }), true);
+  assert.equal(liveWorkspacePropsAreEqual(previous, { ...previous, activeTradeSymbols: ["NQ"] }), false);
+});
+
+test("activeTradeSymbolSet returns normalized symbols with open trades", () => {
+  const symbols = activeTradeSymbolSet([
+    { symbol: "mes", liveTrades: 1 },
+    { symbol: "NQ", liveTrades: 0 },
+    { symbol: "MCL", liveTrades: "2" },
+    { symbol: "", liveTrades: 4 },
+    null,
+  ]);
+
+  assert.deepEqual([...symbols].sort(), ["MCL", "MES"]);
 });
 
 test("chartSeriesSyncPlan does not clear same-chart live candles for transient empty payloads", () => {

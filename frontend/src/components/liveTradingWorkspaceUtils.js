@@ -48,6 +48,20 @@ export function shouldApplyChartSeriesSync({ incomingChartKey, activeChartKey })
   return !incoming || !active || incoming === active;
 }
 
+export function activeTradeSymbolSet(items) {
+  const symbols = new Set();
+  const source = items instanceof Set ? [...items] : Array.isArray(items) ? items : [];
+  source.forEach((item) => {
+    const symbol = typeof item === "string" ? item : item?.symbol;
+    const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+    if (!normalizedSymbol) return;
+    if (typeof item === "string" || Number(item?.liveTrades || 0) > 0) {
+      symbols.add(normalizedSymbol);
+    }
+  });
+  return symbols;
+}
+
 export function visibleRangeForCandles(candles, range, timeframe) {
   if (!Array.isArray(candles) || candles.length === 0) return null;
   const bars = rangeBarsForTimeframe(range, timeframe);
@@ -125,6 +139,7 @@ export function liveWorkspaceRenderSignature(props) {
     Number(props?.uiRevision || 0),
     status,
     symbolsSignature(props?.symbols),
+    activeTradeSymbolsSignature(props?.activeTradeSymbols),
     tradesSignature(props?.trades),
     props?.sidebarSignature || "",
   ].join("|");
@@ -339,6 +354,10 @@ function symbolsSignature(symbols) {
   return (Array.isArray(symbols) ? symbols : [])
     .map((symbol) => String(symbol || "").toUpperCase())
     .join(",");
+}
+
+function activeTradeSymbolsSignature(symbols) {
+  return [...activeTradeSymbolSet(symbols)].sort().join(",");
 }
 
 function tradesSignature(trades) {
