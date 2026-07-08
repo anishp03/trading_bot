@@ -186,6 +186,46 @@ public class FuturesConnectionManagerTest {
 	}
 
 	@Test
+	public void startReadinessRefreshesStaleTopstepConnectionAfterAccountChange() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		try (FakeProjectXServer server = new FakeProjectXServer()) {
+			AtomicInteger loginCalls = new AtomicInteger();
+			saveTopstepConnection(server.baseUrl());
+			server.on("/Auth/loginKey", exchange -> {
+				loginCalls.incrementAndGet();
+				json(exchange, 200, "{\"success\":true,\"token\":\"fresh-token\"}");
+			});
+
+			String tested = FuturesConnectionManager.testConnection("TOPSTEPX");
+			assertTrue(tested.contains("\"status\":\"connected\""), tested);
+			assertTrue(FuturesConnectionManager.isExecutionProviderReady("TOPSTEPX"));
+
+			String saved = FuturesConnectionManager.saveTopstepAccount("50KTC-V2-DLL-592396-25854219", "24407573", true);
+			assertTrue(saved.contains("\"success\":true"), saved);
+			assertFalse(FuturesConnectionManager.isExecutionProviderReady("TOPSTEPX"));
+
+			assertTrue(FuturesConnectionManager.refreshExecutionProviderReadyForStart("TOPSTEPX"));
+			assertTrue(FuturesConnectionManager.isExecutionProviderReady("TOPSTEPX"));
+			assertEquals(2, loginCalls.get());
+		}
+	}
+
+	@Test
+	public void startReadinessDetailIncludesFailedTopstepAuthRefresh() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		try (FakeProjectXServer server = new FakeProjectXServer()) {
+			saveTopstepConnection(server.baseUrl());
+			server.on("/Auth/loginKey", exchange -> json(exchange, 200, "{\"success\":false,\"errorCode\":3}"));
+
+			assertFalse(FuturesConnectionManager.refreshExecutionProviderReadyForStart("TOPSTEPX"));
+			String detail = FuturesConnectionManager.executionProviderReadyDetail("TOPSTEPX");
+
+			assertTrue(detail.contains("TopStep API connection test failed"), detail);
+			assertTrue(detail.contains("errorCode=3"), detail);
+		}
+	}
+
+	@Test
 	public void deletingActiveTopstepAccountClearsConnectedAccountId() {
 		TestDatabaseSupport.useTempDatabase(tempDir);
 		FuturesConnectionManager.saveConnection(

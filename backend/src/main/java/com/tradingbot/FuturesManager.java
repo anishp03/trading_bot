@@ -19634,7 +19634,7 @@ public class FuturesManager {
 			if (!requiredAccountId.equals(configuredAccountId)) {
 				return "{\"success\":false,\"message\":" + jsonString("Select Topstep account " + requiredAccountId + " before starting the live bot.") + ",\"status\":" + getLiveStatusJson() + "}";
 			}
-			if (!FuturesConnectionManager.isExecutionProviderReady(normalizedMode)) {
+			if (!FuturesConnectionManager.refreshExecutionProviderReadyForStart(normalizedMode)) {
 				return "{\"success\":false,\"message\":"
 					+ jsonString("Live futures execution is not ready for " + normalizedMode + ". " + FuturesConnectionManager.executionProviderReadyDetail(normalizedMode))
 					+ ",\"status\":" + getLiveStatusJson() + "}";

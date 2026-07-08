@@ -391,6 +391,7 @@ export default function FuturesLive() {
     () => calculateTradeMetrics(allTradeRows, liveRiskAccountSize),
     [allTradeRows, liveRiskAccountSize]
   );
+  const accountSummaryTradeMetrics = brokerHistoryDataActive ? allTradeMetrics : EMPTY_TRADE_METRICS;
   const filteredAllTradeMetrics = useMemo(
     () => calculateTradeMetrics(filteredAllTradeRows, liveRiskAccountSize),
     [filteredAllTradeRows, liveRiskAccountSize]
@@ -401,7 +402,7 @@ export default function FuturesLive() {
     () => filteredAllTradeRows.slice((boundedAllTradePage - 1) * LIVE_ALL_TRADES_PAGE_SIZE, boundedAllTradePage * LIVE_ALL_TRADES_PAGE_SIZE),
     [boundedAllTradePage, filteredAllTradeRows]
   );
-  const tradeMetricCount = allTradeRows.length;
+  const tradeMetricCount = brokerHistoryDataActive ? allTradeRows.length : Number(metrics?.numberOfTrades || 0);
   const displayMonitor = useMemo(
     () => resolveDisplayMonitor(liveMonitor, monitorCache, symbolsCsv, selectedTimeframe, selectedChartSymbol),
     [liveMonitor, monitorCache, selectedChartSymbol, selectedTimeframe, symbolsCsv]
@@ -453,9 +454,9 @@ export default function FuturesLive() {
     ? Number(metrics?.currentPnl ?? metrics?.currentBalance ?? 0)
     : Number(metrics?.currentBalance ?? Number(metrics?.accountSize || 0) + Number(metrics?.currentPnl || 0));
   const brokerTotalFees = finiteNumberOrNull(metrics?.totalFees ?? metrics?.broker?.totalFees);
-  const totalFeesCardValue = brokerTotalFees != null && metrics?.brokerMetricsReady !== false
+  const totalFeesCardValue = brokerTotalFees != null && brokerHistoryDataActive
     ? brokerTotalFees
-    : allTradeMetrics.totalFees;
+    : accountSummaryTradeMetrics.totalFees;
   const sidebarStartReady = Boolean(futuresSidebarStatus?.topstepApi?.ready);
   const chartLiveTradeRows = useMemo(
     () => liveTrades,
@@ -547,7 +548,7 @@ export default function FuturesLive() {
   );
   const thinkingEntries = backendThinkingEntries.length > 0 ? backendThinkingEntries : observedThinking;
   const logDrawerEntries = useMemo(() => coalesceLiveBotLogEntries(thinkingEntries), [thinkingEntries]);
-  const canStartLiveBot = !backendOffline && !selectedAccountDisabled && Boolean(sidebarStartReady && activeStrategyPreset && !liveStatus?.running);
+  const canStartLiveBot = !backendOffline && !selectedAccountDisabled && Boolean(activeStrategyPreset && !liveStatus?.running);
   const launchTone = backendOffline ? "offline" : botStarted ? "live" : sidebarStartReady ? "ready" : "pending";
   const launchLabel = backendOffline ? "Bot Status: OFF" : botStarted ? "Running" : sidebarStartReady ? "Ready" : marketIdle && !marketSession?.entryWindowOpen ? "Closed" : "Setup";
   const noteChartInteraction = useCallback(() => {
@@ -1308,9 +1309,6 @@ export default function FuturesLive() {
     if (!status?.backend?.online) {
       throw new Error("Backend Status is OFF in the sidebar. Start Live Bot will unlock when the backend status is back on.");
     }
-    if (!status?.topstepApi?.ready) {
-      throw new Error("TopStep API is OFF in the sidebar. Save and test the TopStep API connection first.");
-    }
   }
 
   async function runAction(action, handler) {
@@ -1468,12 +1466,12 @@ export default function FuturesLive() {
         <MetricCard label="Total Fees" value={formatFees(totalFeesCardValue)} />
         <MetricCard label="Return %" value={formatPct(metrics?.returnPct)} accent={Number(metrics?.returnPct || 0)} />
         <MetricCard label="Trades" value={String(tradeMetricCount)} />
-        <MetricCard label="Win Rate" value={formatRate(allTradeMetrics.winRate)} />
-        <MetricCard label="Avg Win" value={formatCurrency(allTradeMetrics.avgWin)} accent={allTradeMetrics.avgWin} />
-        <MetricCard label="Avg Loss" value={formatCurrency(allTradeMetrics.avgLoss)} accent={allTradeMetrics.avgLoss} />
-        <MetricCard label="Avg Day" value={formatCurrency(allTradeMetrics.avgDay)} accent={allTradeMetrics.avgDay} />
-        <MetricCard label="Avg Week" value={formatCurrency(allTradeMetrics.avgWeek)} accent={allTradeMetrics.avgWeek} />
-        <MetricCard label="Avg Month" value={formatCurrency(allTradeMetrics.avgMonth)} accent={allTradeMetrics.avgMonth} />
+        <MetricCard label="Win Rate" value={formatRate(accountSummaryTradeMetrics.winRate)} />
+        <MetricCard label="Avg Win" value={formatCurrency(accountSummaryTradeMetrics.avgWin)} accent={accountSummaryTradeMetrics.avgWin} />
+        <MetricCard label="Avg Loss" value={formatCurrency(accountSummaryTradeMetrics.avgLoss)} accent={accountSummaryTradeMetrics.avgLoss} />
+        <MetricCard label="Avg Day" value={formatCurrency(accountSummaryTradeMetrics.avgDay)} accent={accountSummaryTradeMetrics.avgDay} />
+        <MetricCard label="Avg Week" value={formatCurrency(accountSummaryTradeMetrics.avgWeek)} accent={accountSummaryTradeMetrics.avgWeek} />
+        <MetricCard label="Avg Month" value={formatCurrency(accountSummaryTradeMetrics.avgMonth)} accent={accountSummaryTradeMetrics.avgMonth} />
       </section>
 
       <LiveRiskHeartbeatCard heartbeat={riskHeartbeat} />
@@ -1514,6 +1512,11 @@ export default function FuturesLive() {
         <div className="d-flex align-items-start justify-content-between gap-2 flex-wrap">
           <div>
             <div className="fw-bold app-kicker">All Trades</div>
+            {!brokerHistoryDataActive && allTradeRows.length > 0 && (
+              <div className="app-muted app-kicker">
+                Broker metrics are offline. These are cached Topstep fills for this account, not the current account balance.
+              </div>
+            )}
           </div>
           <span className="app-badge app-neutral-badge">{formatInteger(filteredAllTradeRows.length)} / {formatInteger(allTradeRows.length)} rows</span>
         </div>
@@ -1532,7 +1535,7 @@ export default function FuturesLive() {
         />
         <TradeMetricsGrid
           metrics={filteredAllTradeMetrics}
-          pnlLabel="Filtered P/L"
+          pnlLabel={brokerHistoryDataActive ? "Filtered P/L" : "Cached P/L"}
           tradeLabel="Filtered Trades"
           returnLabel="Filtered Return"
         />

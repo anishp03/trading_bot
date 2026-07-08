@@ -688,6 +688,21 @@ public class FuturesConnectionManager {
 		return isBlank(executionProviderReadinessIssue(config));
 	}
 
+	public static boolean refreshExecutionProviderReadyForStart(String provider) {
+		initializeStore();
+		String normalizedProvider = normalizeProvider(provider);
+		ConnectionConfig config = loadConnection(normalizedProvider);
+		String issue = executionProviderReadinessIssue(config);
+		if (isBlank(issue)) {
+			return true;
+		}
+		if (!TOPSTEPX.equals(config.provider) || !config.enabled || isBlank(config.username) || isBlank(config.apiKey)) {
+			return false;
+		}
+		String tested = testConnection(normalizedProvider);
+		return "connected".equals(extractJsonString(tested, "status")) && isExecutionProviderReady(normalizedProvider);
+	}
+
 	public static String executionProviderReadyDetail(String provider) {
 		ConnectionConfig config = loadConnection(provider);
 		String issue = executionProviderReadinessIssue(config);
@@ -3958,6 +3973,12 @@ public class FuturesConnectionManager {
 				: "Execution provider connection is disabled.";
 		}
 		if (!"connected".equals(config.lastTestStatus)) {
+			String lastMessage = cleanOrDefault(config.lastTestMessage, "");
+			if (!isBlank(lastMessage)) {
+				return TOPSTEPX.equals(config.provider)
+					? "TopStep API connection test failed: " + lastMessage
+					: "Execution provider connection test failed: " + lastMessage;
+			}
 			return TOPSTEPX.equals(config.provider)
 				? "Save and test the TopStep API connection."
 				: "Save and test the execution provider connection.";
