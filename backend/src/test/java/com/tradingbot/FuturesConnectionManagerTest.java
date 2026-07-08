@@ -168,6 +168,24 @@ public class FuturesConnectionManagerTest {
 	}
 
 	@Test
+	public void topstepConnectionReadyExpiresAfterSelectedAccountChanges() throws Exception {
+		TestDatabaseSupport.useTempDatabase(tempDir);
+		try (FakeProjectXServer server = new FakeProjectXServer()) {
+			saveTopstepConnection(server.baseUrl());
+			server.on("/Auth/loginKey", exchange -> json(exchange, 200, "{\"success\":true,\"token\":\"fresh-token\"}"));
+
+			String tested = FuturesConnectionManager.testConnection("TOPSTEPX");
+			assertTrue(tested.contains("\"status\":\"connected\""), tested);
+			assertTrue(FuturesConnectionManager.isExecutionProviderReady("TOPSTEPX"));
+
+			String saved = FuturesConnectionManager.saveTopstepAccount("50KTC-V2-DLL-592396-25854219", "24407573", true);
+
+			assertTrue(saved.contains("\"success\":true"), saved);
+			assertFalse(FuturesConnectionManager.isExecutionProviderReady("TOPSTEPX"));
+		}
+	}
+
+	@Test
 	public void deletingActiveTopstepAccountClearsConnectedAccountId() {
 		TestDatabaseSupport.useTempDatabase(tempDir);
 		FuturesConnectionManager.saveConnection(

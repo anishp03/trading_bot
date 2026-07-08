@@ -685,9 +685,18 @@ public class FuturesConnectionManager {
 
 	public static boolean isExecutionProviderReady(String provider) {
 		ConnectionConfig config = loadConnection(provider);
-		return config.enabled
-			&& "connected".equals(config.lastTestStatus)
-			&& (TRADOVATE.equals(config.provider) || TOPSTEPX.equals(config.provider));
+		return isBlank(executionProviderReadinessIssue(config));
+	}
+
+	public static String executionProviderReadyDetail(String provider) {
+		ConnectionConfig config = loadConnection(provider);
+		String issue = executionProviderReadinessIssue(config);
+		if (!isBlank(issue)) {
+			return issue;
+		}
+		return TOPSTEPX.equals(config.provider)
+			? "TopStep API connection is saved and current."
+			: "Execution provider connection is saved and current.";
 	}
 
 	public static String getTopstepxConfiguredAccountId() {
@@ -3936,6 +3945,44 @@ public class FuturesConnectionManager {
 		} catch (SQLException e) {
 			e.printStackTrace();
 			return fallback;
+		}
+	}
+
+	private static String executionProviderReadinessIssue(ConnectionConfig config) {
+		if (config == null || !(TRADOVATE.equals(config.provider) || TOPSTEPX.equals(config.provider))) {
+			return "Unsupported futures execution provider.";
+		}
+		if (!config.enabled) {
+			return TOPSTEPX.equals(config.provider)
+				? "TopStep API connection is disabled."
+				: "Execution provider connection is disabled.";
+		}
+		if (!"connected".equals(config.lastTestStatus)) {
+			return TOPSTEPX.equals(config.provider)
+				? "Save and test the TopStep API connection."
+				: "Save and test the execution provider connection.";
+		}
+		if (!connectionTestCoversLatestConfig(config)) {
+			return TOPSTEPX.equals(config.provider)
+				? "Test the TopStep API connection after the latest account or connection change."
+				: "Test the execution provider connection after the latest config change.";
+		}
+		return "";
+	}
+
+	private static boolean connectionTestCoversLatestConfig(ConnectionConfig config) {
+		String lastTestAt = cleanOrDefault(config.lastTestAt, "");
+		if (isBlank(lastTestAt)) {
+			return false;
+		}
+		String updatedAt = cleanOrDefault(config.updatedAt, "");
+		if (isBlank(updatedAt)) {
+			return true;
+		}
+		try {
+			return !Instant.parse(lastTestAt).isBefore(Instant.parse(updatedAt));
+		} catch (Exception ignored) {
+			return lastTestAt.compareTo(updatedAt) >= 0;
 		}
 	}
 

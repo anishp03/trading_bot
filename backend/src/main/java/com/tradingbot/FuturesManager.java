@@ -19634,12 +19634,12 @@ public class FuturesManager {
 			if (!requiredAccountId.equals(configuredAccountId)) {
 				return "{\"success\":false,\"message\":" + jsonString("Select Topstep account " + requiredAccountId + " before starting the live bot.") + ",\"status\":" + getLiveStatusJson() + "}";
 			}
-				if (!FuturesConnectionManager.isExecutionProviderReady(normalizedMode)) {
-					return "{\"success\":false,\"message\":"
-						+ jsonString("Live futures execution is not ready for " + normalizedMode + ". Save and test that connection first.")
-						+ ",\"status\":" + getLiveStatusJson() + "}";
-				}
-				boolean realtimeAccountMismatch = ProjectXRealtimeManager.isRunning()
+			if (!FuturesConnectionManager.isExecutionProviderReady(normalizedMode)) {
+				return "{\"success\":false,\"message\":"
+					+ jsonString("Live futures execution is not ready for " + normalizedMode + ". " + FuturesConnectionManager.executionProviderReadyDetail(normalizedMode))
+					+ ",\"status\":" + getLiveStatusJson() + "}";
+			}
+			boolean realtimeAccountMismatch = ProjectXRealtimeManager.isRunning()
 					&& !requiredAccountId.equals(ProjectXRealtimeManager.currentAccountId());
 				if (realtimeAccountMismatch || !ProjectXRealtimeManager.isRunning() || (orderFlowFeaturesEnabled && !ProjectXRealtimeManager.isDepthIncluded())) {
 					boolean includeDepth = orderFlowFeaturesEnabled || (ProjectXRealtimeManager.isRunning() && !ProjectXRealtimeManager.isDepthIncluded());
@@ -20072,6 +20072,7 @@ public class FuturesManager {
 		long feedStaleSeconds = feed.staleSeconds;
 		boolean feedFresh = copy.running && feed.fresh;
 		boolean topstepApiReady = FuturesConnectionManager.isExecutionProviderReady("TOPSTEPX");
+		String topstepApiDetail = FuturesConnectionManager.executionProviderReadyDetail("TOPSTEPX");
 		boolean tradingEnabled = copy.running
 			&& marketStatus.entryWindowOpen
 			&& realtimeRunning
@@ -20096,7 +20097,7 @@ public class FuturesManager {
 		} else if (!marketStatus.entryWindowOpen) {
 			tradingDetail = marketStatus.label + ": " + marketStatus.detail;
 		} else if (!topstepApiReady) {
-			tradingDetail = "TopStep API connection is not confirmed.";
+			tradingDetail = topstepApiDetail;
 		} else if (!feedFresh) {
 			tradingDetail = "Waiting for fresh ProjectX market data.";
 		} else {
@@ -20107,7 +20108,7 @@ public class FuturesManager {
 			+ "\"backend\":{\"online\":true,\"label\":\"ON\",\"detail\":\"Backend API responded.\"},"
 			+ "\"bot\":{\"running\":" + copy.running + ",\"label\":" + jsonString(copy.running ? "ON" : "OFF") + ",\"detail\":" + jsonString(cleanOrDefault(copy.lastDecision, "Futures live runner is idle.")) + "},"
 			+ "\"marketData\":{\"receiving\":" + feedFresh + ",\"running\":" + realtimeRunning + ",\"label\":" + jsonString(feedFresh ? "ON" : "OFF") + ",\"lastEventAt\":" + jsonString(lastRealtimeEventAt) + ",\"staleSeconds\":" + feedStaleSeconds + ",\"detail\":" + jsonString(marketDataDetail) + "},"
-			+ "\"topstepApi\":{\"ready\":" + topstepApiReady + ",\"label\":" + jsonString(topstepApiReady ? "ON" : "OFF") + ",\"accountId\":" + jsonString(FuturesConnectionManager.getTopstepxConfiguredAccountId()) + ",\"detail\":" + jsonString(topstepApiReady ? "TopStep API connection is saved and passing." : "Save and test the TopStep API connection.") + "},"
+			+ "\"topstepApi\":{\"ready\":" + topstepApiReady + ",\"label\":" + jsonString(topstepApiReady ? "ON" : "OFF") + ",\"accountId\":" + jsonString(FuturesConnectionManager.getTopstepxConfiguredAccountId()) + ",\"detail\":" + jsonString(topstepApiDetail) + "},"
 			+ "\"trading\":{\"enabled\":" + tradingEnabled + ",\"label\":" + jsonString(tradingEnabled ? "ON" : "OFF") + ",\"detail\":" + jsonString(tradingDetail) + ",\"marketSession\":" + marketSessionJson(marketStatus) + "},"
 			+ "\"strategyConfig\":{\"active\":true,\"label\":" + jsonString(strategyPreset) + ",\"preset\":" + jsonString(strategyPreset) + ",\"updatedAt\":" + jsonString(snapshot == null ? "" : snapshot.updatedAt) + ",\"detail\":" + jsonString(strategyPreset) + "}"
 			+ "}";
