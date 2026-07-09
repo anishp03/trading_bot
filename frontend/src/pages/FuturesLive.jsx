@@ -402,7 +402,6 @@ export default function FuturesLive() {
     () => filteredAllTradeRows.slice((boundedAllTradePage - 1) * LIVE_ALL_TRADES_PAGE_SIZE, boundedAllTradePage * LIVE_ALL_TRADES_PAGE_SIZE),
     [boundedAllTradePage, filteredAllTradeRows]
   );
-  const tradeMetricCount = brokerHistoryDataActive ? allTradeRows.length : Number(metrics?.numberOfTrades || 0);
   const displayMonitor = useMemo(
     () => resolveDisplayMonitor(liveMonitor, monitorCache, symbolsCsv, selectedTimeframe, selectedChartSymbol),
     [liveMonitor, monitorCache, selectedChartSymbol, selectedTimeframe, symbolsCsv]
@@ -436,6 +435,7 @@ export default function FuturesLive() {
     () => accountAnalyticsActive ? accountScopedMetrics : defaultLiveAccountMetrics(effectiveLiveAccountSize, accountScopeId),
     [accountAnalyticsActive, accountScopeId, accountScopedMetrics, effectiveLiveAccountSize]
   );
+  const tradeMetricCount = brokerHistoryDataActive ? allTradeRows.length : Number(metrics?.numberOfTrades || 0);
   const riskHeartbeat = useMemo(
     () => buildLiveRiskHeartbeat({
       liveStatus,
