@@ -8467,6 +8467,19 @@ public class FuturesManager {
 		);
 		boolean success = jsonBoolean(responseJson, "success");
 		String status = topstepxLiveSubmitStatus(responseJson, success, successStatus, failureStatus);
+		if ("PROTECTION_FAILED_TOPSTEPX".equals(status)) {
+			String protectionOrderId = brokerOrderIdFromJson(responseJson);
+			String protectionCancelJson = protectionOrderId.length() == 0
+				? "{\"success\":false,\"message\":\"No broker order id was available for emergency resting-entry cancel.\"}"
+				: FuturesConnectionManager.cancelTopstepxPracticeRestingEntryOrder(requiredAccountId, normalizedSymbol, protectionOrderId, tag);
+			String protectionFlattenJson = FuturesConnectionManager.closeTopstepxPracticeSymbolPosition(requiredAccountId, normalizedSymbol);
+			responseJson = mergeSimpleJson(responseJson, "\"protectionAction\":{"
+				+ "\"reason\":\"BROKER_BRACKETS_NOT_CONFIRMED\","
+				+ "\"cancelRestingEntry\":" + jsonObjectOrDefault(protectionCancelJson, "{}") + ","
+				+ "\"flattenSymbol\":" + jsonObjectOrDefault(protectionFlattenJson, "{}")
+				+ "}");
+			success = false;
+		}
 		String restingCancelJson = "";
 		if (shouldCancelRestingEntryAfterSubmit(cleanStrategyCode, status)) {
 			String restingOrderId = brokerOrderIdFromJson(responseJson);
@@ -8522,10 +8535,22 @@ public class FuturesManager {
 		if (!success) {
 			return cleanOrDefault(failureStatus, "SUBMIT_REJECTED_TOPSTEPX");
 		}
+		if (liveBrokerSubmitMissingBracketProtection(responseJson)) {
+			return "PROTECTION_FAILED_TOPSTEPX";
+		}
 		if (topstepxBrokerSubmitVerifiedOpenOrder(responseJson, "")) {
 			return "RESTING_TOPSTEPX";
 		}
 		return cleanOrDefault(successStatus, "SUBMITTED_TOPSTEPX");
+	}
+
+	private static boolean liveBrokerSubmitMissingBracketProtection(String responseJson) {
+		String clean = cleanOrDefault(responseJson, "");
+		return jsonBoolean(clean, "success")
+			&& jsonBoolean(clean, "brokerSubmitAccepted")
+			&& clean.contains("\"bracketsSubmitted\"")
+			&& !jsonBoolean(clean, "bracketsSubmitted")
+			&& !jsonBoolean(clean, "requiresAutoOcoBrackets");
 	}
 
 	private static boolean shouldCancelRestingEntryAfterSubmit(String strategyCode, String status) {
@@ -8547,10 +8572,14 @@ public class FuturesManager {
 	private static boolean liveEntryStatusIsTerminalNonFill(String status) {
 		String cleanStatus = cleanOrDefault(status, "");
 		return "MISSED_EXECUTION_TOPSTEPX".equals(cleanStatus)
-			|| "CANCEL_FAILED_RESTING_TOPSTEPX".equals(cleanStatus);
+			|| "CANCEL_FAILED_RESTING_TOPSTEPX".equals(cleanStatus)
+			|| "PROTECTION_FAILED_TOPSTEPX".equals(cleanStatus);
 	}
 
 	private static String liveBrokerSubmitMessage(String responseJson, String status, boolean success) {
+		if ("PROTECTION_FAILED_TOPSTEPX".equals(cleanOrDefault(status, ""))) {
+			return "TopstepX accepted an entry without broker-confirmed SL/TP brackets; the bot attempted emergency cancel/flatten and did not mark the entry as managed.";
+		}
 		if ("MISSED_EXECUTION_TOPSTEPX".equals(cleanOrDefault(status, ""))) {
 			return "TopstepX accepted the PDB entry as a resting order, but no fill was confirmed; the resting entry was canceled and marked missed.";
 		}
@@ -8620,7 +8649,32 @@ public class FuturesManager {
 
 	private static boolean liveEntryStatusCreatesManagedPosition(String status) {
 		String cleanStatus = cleanOrDefault(status, "");
-		return "SUBMITTED_TOPSTEPX".equals(cleanStatus) || "ACCEPTED_SIMULATED_LIVE".equals(cleanStatus);
+		return "SUBMITTED_TOPSTEPX".equals(cleanStatus)
+			|| "BROKER_FILLED_RESTING_TOPSTEPX".equals(cleanStatus)
+			|| "ACCEPTED_SIMULATED_LIVE".equals(cleanStatus);
+	}
+
+	private static boolean livePositionIsDtmManaged(PortfolioPosition position) {
+		return position != null && liveEntryStatusCreatesManagedPosition(position.sourceStatus);
+	}
+
+	private static boolean livePositionBlocksNewEntries(PortfolioPosition position) {
+		if (position == null || normalizeSymbol(position.symbol).length() == 0 || position.contracts <= 0) {
+			return false;
+		}
+		String cleanStatus = cleanOrDefault(position.sourceStatus, "");
+		return liveEntryStatusCreatesManagedPosition(cleanStatus) || "RESTING_TOPSTEPX".equals(cleanStatus);
+	}
+
+	private static void applyLiveBrokerSubmitStateToPosition(PortfolioPosition position, String status, String brokerSubmitJson, String accountId) {
+		if (position == null) {
+			return;
+		}
+		position.sourceStatus = cleanOrDefault(status, "");
+		position.accountId = cleanOrDefault(accountId, position.accountId);
+		position.brokerOrderId = firstNonBlank(jsonText(brokerSubmitJson, "brokerOrderId", ""), jsonText(brokerSubmitJson, "orderId", ""), brokerOrderIdFromJson(brokerSubmitJson));
+		position.customTag = jsonText(brokerSubmitJson, "customTag", "");
+		position.contractId = jsonText(brokerSubmitJson, "contractId", "");
 	}
 
 	private static String closeTopstepxPracticePositionViaAdapter(
@@ -16074,7 +16128,8 @@ public class FuturesManager {
 							+ "\"tradeReason\":" + entryReasonJson
 							+ "}"
 					);
-					if (order.position != null && liveEntryStatusCreatesManagedPosition(status)) {
+					applyLiveBrokerSubmitStateToPosition(order.position, status, brokerSubmitJson, activeLiveTopstepAccountId(session, snapshot));
+					if (order.position != null && livePositionBlocksNewEntries(order.position)) {
 						openPositions.add(order.position);
 					}
 				String strategyKey = strategyDailyLimitKey(candidate.symbol, signal.strategyCode);
@@ -16242,14 +16297,18 @@ public class FuturesManager {
 			return 0;
 		}
 		List<String> brokerPositions = jsonArrayObjects(brokerMetricsJson, "positions");
+		List<String> brokerOrders = jsonArrayObjects(brokerMetricsJson, "orders");
 		List<String> brokerTrades = jsonArrayObjects(brokerMetricsJson, "trades");
 		int reconciled = 0;
 		for (int index = 0; index < openPositions.size(); index++) {
 			PortfolioPosition position = openPositions.get(index);
-			if (!"SUBMITTED_TOPSTEPX".equals(cleanOrDefault(position.sourceStatus, ""))) {
+			if (!liveEntryStatusCanBrokerReconcile(position.sourceStatus)) {
 				continue;
 			}
 			if (brokerPositionExistsFor(position, brokerPositions)) {
+				continue;
+			}
+			if ("RESTING_TOPSTEPX".equals(cleanOrDefault(position.sourceStatus, "")) && brokerOpenOrderExistsFor(position, brokerOrders)) {
 				continue;
 			}
 			BrokerCloseFill closeFill = matchingBrokerCloseFill(position, brokerTrades);
@@ -16332,6 +16391,22 @@ public class FuturesManager {
 		return reconciled;
 	}
 
+	private static boolean liveEntryStatusCanBrokerReconcile(String status) {
+		String cleanStatus = cleanOrDefault(status, "");
+		return "SUBMITTED_TOPSTEPX".equals(cleanStatus)
+			|| "RESTING_TOPSTEPX".equals(cleanStatus)
+			|| "BROKER_FILLED_RESTING_TOPSTEPX".equals(cleanStatus);
+	}
+
+	private static boolean liveBrokerPositionExistsFor(PortfolioPosition position) {
+		return brokerPositionExistsFor(position, liveRuntimeBrokerPositions());
+	}
+
+	private static List<String> liveRuntimeBrokerPositions() {
+		String positionsJson = LiveRuntimeState.getBrokerPositionsJson();
+		return jsonArrayObjects("{\"positions\":" + jsonObjectOrDefault(positionsJson, "[]") + "}", "positions");
+	}
+
 	private static boolean brokerPositionExistsFor(PortfolioPosition position, List<String> brokerPositions) {
 		if (position == null) {
 			return false;
@@ -16342,6 +16417,35 @@ public class FuturesManager {
 			String brokerSymbol = normalizeSymbol(jsonText(brokerPosition, "symbol", ""));
 			int contracts = (int) Math.round(jsonNumber(brokerPosition, "contracts", 0.0));
 			if (symbol.equals(brokerSymbol) && contracts > 0) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean brokerOpenOrderExistsFor(PortfolioPosition position, List<String> brokerOrders) {
+		if (position == null || brokerOrders == null || brokerOrders.isEmpty()) {
+			return false;
+		}
+		String symbol = normalizeSymbol(position.symbol);
+		String accountId = cleanOrDefault(position.accountId, "");
+		String brokerOrderId = cleanOrderId(position.brokerOrderId);
+		String customTag = cleanOrDefault(position.customTag, "");
+		for (int index = 0; index < brokerOrders.size(); index++) {
+			String order = brokerOrders.get(index);
+			if (!symbol.equals(normalizeSymbol(jsonText(order, "symbol", "")))) {
+				continue;
+			}
+			String orderAccountId = cleanOrDefault(jsonText(order, "accountId", ""), "");
+			if (accountId.length() > 0 && orderAccountId.length() > 0 && !accountId.equals(orderAccountId)) {
+				continue;
+			}
+			String orderId = cleanOrderId(String.valueOf((long) jsonFirstNumber(order, new String[] { "id", "orderId", "brokerOrderId" }, 0.0)));
+			String orderTag = cleanOrDefault(jsonText(order, "customTag", ""), "");
+			if (brokerOrderId.length() > 0 && brokerOrderId.equals(orderId)) {
+				return true;
+			}
+			if (customTag.length() > 0 && (orderTag.equals(customTag) || orderTag.startsWith(customTag + "-"))) {
 				return true;
 			}
 		}
@@ -16397,7 +16501,12 @@ public class FuturesManager {
 		}
 		double targetDistance = Math.abs(exitPrice - position.targetPrice);
 		double stopDistance = Math.abs(exitPrice - position.stopPrice);
-		String fillType = targetDistance <= stopDistance ? "target" : "stop-loss";
+		boolean stopFill = stopDistance < targetDistance;
+		boolean longProfitLockStop = "LONG".equalsIgnoreCase(position.side) && position.stopPrice > position.entryPrice;
+		boolean shortProfitLockStop = "SHORT".equalsIgnoreCase(position.side) && position.stopPrice < position.entryPrice;
+		String fillType = targetDistance <= stopDistance
+			? "target"
+			: ((stopFill && (longProfitLockStop || shortProfitLockStop)) ? "profit-lock stop" : "stop-loss");
 		return "Broker " + fillType + " fill; Topstep order " + closeFill.orderId + ".";
 	}
 
@@ -16538,7 +16647,9 @@ public class FuturesManager {
 				}
 			}
 		} catch (SQLException e) {
-			e.printStackTrace();
+			if (!String.valueOf(e.getMessage()).toLowerCase(Locale.US).contains("no such table")) {
+				e.printStackTrace();
+			}
 		}
 		return false;
 	}
@@ -19128,7 +19239,7 @@ public class FuturesManager {
 			+ "FROM FuturesLiveSignalDecisions entry "
 			+ "LEFT JOIN FuturesLiveStrategySnapshots snapshot ON entry.snapshotID = snapshot.snapshotID "
 			+ "WHERE entry.sessionID = ? AND entry.snapshotID = ? AND entry.contracts > 0 "
-			+ "AND entry.status IN ('SUBMITTED_TOPSTEPX', 'ACCEPTED_SIMULATED_LIVE') "
+			+ "AND entry.status IN ('SUBMITTED_TOPSTEPX', 'RESTING_TOPSTEPX', 'ACCEPTED_SIMULATED_LIVE') "
 			+ "AND NOT EXISTS ("
 				+ "SELECT 1 FROM FuturesLiveSignalDecisions exit "
 				+ "WHERE exit.sessionID = entry.sessionID AND exit.snapshotID = entry.snapshotID "
@@ -19151,9 +19262,9 @@ public class FuturesManager {
 					String strategyCode = cleanOrDefault(rs.getString("strategyCode"), "LIVE");
 					String payloadJson = cleanOrDefault(rs.getString("payloadJson"), "{}");
 					String ledgerResponseJson = cleanOrDefault(rs.getString("ledgerResponseJson"), "{}");
-					if (topstepxBrokerSubmitVerifiedOpenOrder(payloadJson, ledgerResponseJson)) {
-						continue;
-					}
+					String sourceStatus = cleanOrDefault(rs.getString("status"), "");
+					boolean restingEntry = "RESTING_TOPSTEPX".equals(sourceStatus);
+					boolean openOrderVerified = topstepxBrokerSubmitVerifiedOpenOrder(payloadJson, ledgerResponseJson);
 					int maxHoldBars = Math.max(0, (int) Math.round(jsonNumber(payloadJson, "maxHoldBars", liveMaxHoldBarsForStrategy(strategyCode, strategySettings))));
 					PortfolioPosition position = new PortfolioPosition();
 					position.symbol = symbol;
@@ -19189,7 +19300,18 @@ public class FuturesManager {
 						maxHoldBars,
 						"Existing live portfolio exposure."
 					);
-					position.sourceStatus = cleanOrDefault(rs.getString("status"), "");
+					position.sourceStatus = sourceStatus;
+					boolean brokerConfirmedOpen = liveBrokerPositionExistsFor(position);
+					if (openOrderVerified && !restingEntry) {
+						continue;
+					}
+					if (restingEntry) {
+						if (brokerConfirmedOpen) {
+							position.sourceStatus = "BROKER_FILLED_RESTING_TOPSTEPX";
+						} else if (!includePendingReconcile) {
+							continue;
+						}
+					}
 					applyDynamicTradeStateToPosition(sessionId, snapshotId, position);
 					positions.add(position);
 				}

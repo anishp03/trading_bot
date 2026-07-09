@@ -19,6 +19,8 @@ import {
   visibleLiveEventDetailEntries,
 } from "./futuresLiveChartUtils.js";
 import {
+  brokerRoundTripNetPnl,
+  brokerRoundTripTradeCost,
   composeTradeCacheRealizedPnl,
   isBrokerConfirmedTradeCacheRow,
   mergeTradeCachePnlFields,
@@ -3666,8 +3668,10 @@ function buildBrokerClosedTradeRows(trades, provenance = []) {
           accountId: trade.accountId,
           orderId: trade.orderId || trade.brokerOrderId,
           side: tradeSide,
+          originalContracts: contracts,
           remaining: contracts,
           price: fillPrice,
+          fees: tradeCostTotal(trade) || 0,
           createdAt: trade.createdAt,
         });
         openLots.set(key, lots);
@@ -3679,6 +3683,7 @@ function buildBrokerClosedTradeRows(trades, provenance = []) {
     let remaining = contracts || 1;
     let matchedContracts = 0;
     let weightedEntry = 0;
+    let matchedEntryFees = 0;
     let entryTime = "";
     let entrySide = "";
     let entryOrderId = "";
@@ -3689,13 +3694,16 @@ function buildBrokerClosedTradeRows(trades, provenance = []) {
       remaining -= take;
       matchedContracts += take;
       weightedEntry += lot.price * take;
+      matchedEntryFees += Number(lot.fees || 0) * (take / Math.max(1, Number(lot.originalContracts || take)));
       entryTime = entryTime || lot.createdAt;
       entrySide = entrySide || lot.side;
       entryOrderId = entryOrderId || lot.orderId;
     });
     openLots.set(key, lots.filter((lot) => lot.remaining > 0));
 
-    const fees = tradeCostTotal(trade);
+    const closeFees = tradeCostTotal(trade) || 0;
+    const fees = brokerRoundTripTradeCost(trade, matchedEntryFees);
+    const brokerNetPnl = brokerRoundTripNetPnl(trade, matchedEntryFees);
     const entryPrice = matchedContracts > 0 ? weightedEntry / matchedContracts : 0;
     const rowContracts = matchedContracts || contracts;
     const positionSide = entrySide ? positionSideFromEntrySide(entrySide) : positionSideFromClosingSide(tradeSide);
@@ -3715,7 +3723,7 @@ function buildBrokerClosedTradeRows(trades, provenance = []) {
       : "Topstep Trade/search reported a close fill with no entry fill in the current broker window.";
     const pnlFields = mergeTradeCachePnlFields(
       {
-        pnl: Number(trade.pnl || 0),
+        pnl: brokerNetPnl,
         finalLegPnl: Number(trade.pnl || 0),
         dtmRealizedPnl: matchedDecision?.dtmRealizedPnl,
         dtmPartialContractsClosed: matchedDecision?.dtmPartialContractsClosed,
@@ -3762,6 +3770,8 @@ function buildBrokerClosedTradeRows(trades, provenance = []) {
       structuredExitReason: matchedDecision?.structuredExitReason || tradeReasonExitText(matchedDecision?.tradeReason),
       dtmDetails: tradeDtmDetailsText(matchedDecision),
       fees,
+      closeFees,
+      entryFees: matchedEntryFees,
       brokerFees: finiteNumberOrNull(trade.brokerFees ?? trade.fees),
       commission: finiteNumberOrNull(trade.commission ?? trade.commissions),
       totalFees: fees,

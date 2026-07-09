@@ -29,10 +29,42 @@ export function composeTradeCacheRealizedPnl(row, fallbackPnl = 0) {
   return roundCurrency(firstFinite(row?.pnl, fallbackPnl) || 0);
 }
 
+function tradeCostTotal(row) {
+  const explicitTotal = finiteNumberOrNull(row?.totalFees);
+  if (explicitTotal != null) return explicitTotal;
+  const fees = finiteNumberOrNull(row?.fees ?? row?.brokerFees);
+  const commission = finiteNumberOrNull(row?.commission ?? row?.commissions);
+  if (fees == null && commission == null) return null;
+  return (fees || 0) + (commission || 0);
+}
+
+export function brokerRoundTripTradeCost(closeFill = {}, matchedEntryCost = 0) {
+  const closeCost = tradeCostTotal(closeFill) || 0;
+  return roundCurrency(closeCost + (finiteNumberOrNull(matchedEntryCost) || 0));
+}
+
+export function brokerRoundTripNetPnl(closeFill = {}, matchedEntryCost = 0) {
+  const entryCost = finiteNumberOrNull(matchedEntryCost) || 0;
+  const closeNetPnl = firstFinite(closeFill?.pnl);
+  if (closeNetPnl != null) return roundCurrency(closeNetPnl - entryCost);
+  const grossPnl = firstFinite(closeFill?.grossPnl, closeFill?.profitAndLoss);
+  if (grossPnl != null) return roundCurrency(grossPnl - brokerRoundTripTradeCost(closeFill, entryCost));
+  return roundCurrency(firstFinite(closeFill?.pnl, 0) || 0);
+}
+
 export function mergeTradeCachePnlFields(row = {}, cachedRow = {}) {
   const dtmRealizedPnl = firstFinite(row.dtmRealizedPnl, cachedRow.dtmRealizedPnl);
   const partialContracts = firstFinite(row.dtmPartialContractsClosed, cachedRow.dtmPartialContractsClosed);
   const hasDtmPartial = (partialContracts || 0) > 0 || Math.abs(dtmRealizedPnl || 0) > 0;
+  const rowBrokerConfirmed = isBrokerConfirmedTradeCacheRow(row);
+  if (rowBrokerConfirmed) {
+    const fields = { pnl: roundCurrency(firstFinite(row.pnl, row.finalLegPnl, cachedRow.pnl) || 0) };
+    const finalLegPnl = firstFinite(row.finalLegPnl, cachedRow.finalLegPnl);
+    if (finalLegPnl != null) fields.finalLegPnl = roundCurrency(finalLegPnl);
+    if (dtmRealizedPnl != null) fields.dtmRealizedPnl = roundCurrency(dtmRealizedPnl);
+    if (partialContracts != null) fields.dtmPartialContractsClosed = partialContracts;
+    return fields;
+  }
   if (!hasDtmPartial) {
     return { pnl: roundCurrency(firstFinite(row.pnl, cachedRow.pnl) || 0) };
   }

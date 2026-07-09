@@ -168,6 +168,90 @@ public class FuturesLiveBrokerReconcileOpenPositionTest {
 	}
 
 	@Test
+	public void restingOrderWithBrokerCloseFillReconcilesToFlatSync() throws Exception {
+		insertSnapshot();
+		insertLiveDecision(
+			86,
+			"RESTING_TOPSTEPX",
+			"2026-06-26 10:22",
+			"2026-06-26 10:23",
+			"TopstepX order is resting from live signal with no confirmed fill (order 3191283592).",
+			"{\"brokerSubmit\":{\"success\":true,\"status\":\"RESTING_TOPSTEPX\",\"orderId\":3191283592,\"brokerOrderId\":\"3191283592\","
+				+ "\"customTag\":\"live-signal-MGC-omom-1782483783242\",\"bracketsSubmitted\":true,"
+				+ "\"verificationSource\":\"OPEN_ORDER\",\"verification\":{\"attempted\":true,\"source\":\"OPEN_ORDER\","
+				+ "\"order\":{\"id\":3191283592,\"fillVolume\":0}}},"
+				+ "\"customTag\":\"live-signal-MGC-omom-1782483783242\"}"
+		);
+		String brokerMetrics = "{"
+			+ "\"success\":true,"
+			+ "\"source\":\"TOPSTEPX\","
+			+ "\"positions\":[],"
+			+ "\"trades\":[{"
+				+ "\"accountId\":\"24175826\","
+				+ "\"symbol\":\"MNQ\","
+				+ "\"side\":\"BUY\","
+				+ "\"closed\":true,"
+				+ "\"orderId\":3191283593,"
+				+ "\"createdAt\":\"2026-06-26T14:26:33.000000+00:00\","
+				+ "\"price\":30752.75,"
+				+ "\"pnl\":-250.0,"
+				+ "\"fees\":4.35"
+			+ "}]"
+		+ "}";
+
+		int reconciled = reconcileBrokerFlatLiveEntries(74, 47, brokerMetrics);
+
+		assertEquals(1, reconciled, "later-filled RESTING_TOPSTEPX entries must reconcile from broker close fills");
+		assertEquals(-250.0, resolvedDecisionPnl());
+		assertEquals(0, countPendingBrokerReconcileRows(), "a matching broker close fill should not leave a pending reconcile row");
+	}
+
+	@Test
+	public void restingOrderWithBrokerOpenPositionBecomesManagedPosition() throws Exception {
+		insertSnapshot();
+		insertLiveDecision(
+			86,
+			"RESTING_TOPSTEPX",
+			"2026-06-26 12:52",
+			"2026-06-26 12:53",
+			"TopstepX order is resting from live signal with no confirmed fill (order 3192547356).",
+			"{\"brokerSubmit\":{\"success\":true,\"status\":\"RESTING_TOPSTEPX\",\"orderId\":3192547356,\"brokerOrderId\":\"3192547356\","
+				+ "\"customTag\":\"live-signal-MCL-ifvg-1782492781477\",\"bracketsSubmitted\":true,"
+				+ "\"verificationSource\":\"OPEN_ORDER\",\"verification\":{\"attempted\":true,\"source\":\"OPEN_ORDER\","
+				+ "\"order\":{\"id\":3192547356,\"fillVolume\":0}}},"
+				+ "\"customTag\":\"live-signal-MCL-ifvg-1782492781477\"}"
+		);
+		LiveRuntimeState.updateBrokerMetricsJson("{"
+			+ "\"success\":true,"
+			+ "\"source\":\"TOPSTEPX\","
+			+ "\"accountId\":\"24175826\","
+			+ "\"positions\":[{"
+				+ "\"accountId\":\"24175826\","
+				+ "\"symbol\":\"MNQ\","
+				+ "\"side\":\"SHORT\","
+				+ "\"contracts\":2,"
+				+ "\"averagePrice\":30724.5,"
+				+ "\"createdAt\":\"2026-06-26T16:53:07.000000+00:00\""
+			+ "}],"
+			+ "\"orders\":[],"
+			+ "\"trades\":[]"
+			+ "}");
+
+		List<?> positions = liveOpenPositionsForSession(74, 47);
+
+		assertEquals(1, positions.size(), "broker-confirmed filled RESTING_TOPSTEPX entries must become DTM-managed positions");
+	}
+
+	@Test
+	public void restingOrderCreatesPendingExposureReservationButNotDtmManagedPosition() throws Exception {
+		Object position = portfolioPosition("MNQ", "LONG", 16, 30642.0, 30628.0, 30672.0);
+		setField(position, "sourceStatus", "RESTING_TOPSTEPX");
+
+		assertTrue(livePositionBlocksNewEntries(position), "resting entry reservations must block duplicate same-symbol candidates");
+		assertFalse(livePositionIsDtmManaged(position), "unfilled resting entry reservations must not be DTM managed");
+	}
+
+	@Test
 	public void pdbShortUsesMarketableProtectedLimitPrice() throws Exception {
 		double brokerEntry = liveBrokerSubmitEntryPrice("PDB", "MGC", "SHORT", 4236.9, 4239.0, 4233.9, 4236.8, 4237.0);
 
@@ -237,6 +321,26 @@ public class FuturesLiveBrokerReconcileOpenPositionTest {
 		);
 
 		assertEquals("RESTING_TOPSTEPX", status, "non-PDB broker launch paths must keep their existing resting-order semantics");
+	}
+
+	@Test
+	public void acceptedTopstepSubmitWithoutBracketsIsProtectionFailure() throws Exception {
+		assertTrue(liveBrokerSubmitMissingBracketProtection(
+			"{\"success\":true,\"brokerSubmitAccepted\":true,\"orderId\":3192547356,\"bracketsSubmitted\":false}"
+		));
+		assertFalse(liveBrokerSubmitMissingBracketProtection(
+			"{\"success\":true,\"brokerSubmitAccepted\":true,\"orderId\":3192547356,\"bracketsSubmitted\":true}"
+		));
+	}
+
+	@Test
+	public void brokerFlatSyncLabelsProfitLockStopSeparatelyFromStopLoss() throws Exception {
+		Object position = portfolioPosition("MNQ", "LONG", 2, 100.0, 101.0, 105.0);
+		Object closeFill = brokerCloseFill("3192547357", 101.0, 120.0, "2026-06-26T17:10:50.000000+00:00");
+
+		String reason = brokerFlatSyncExitReason(position, closeFill, 101.0);
+
+		assertTrue(reason.contains("profit-lock stop fill"), reason);
 	}
 
 	@Test
@@ -328,6 +432,18 @@ public class FuturesLiveBrokerReconcileOpenPositionTest {
 		return (String) method.invoke(null, strategyCode, status, cancelJson);
 	}
 
+	private static boolean liveBrokerSubmitMissingBracketProtection(String responseJson) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("liveBrokerSubmitMissingBracketProtection", String.class);
+		method.setAccessible(true);
+		return ((Boolean) method.invoke(null, responseJson)).booleanValue();
+	}
+
+	private static String brokerFlatSyncExitReason(Object position, Object closeFill, double exitPrice) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("brokerFlatSyncExitReason", position.getClass(), closeFill.getClass(), double.class);
+		method.setAccessible(true);
+		return (String) method.invoke(null, position, closeFill, exitPrice);
+	}
+
 	private static int reconcileBrokerFlatLiveEntries(int sessionId, int snapshotId, String brokerMetricsJson) throws Exception {
 		Method method = FuturesManager.class.getDeclaredMethod("reconcileBrokerFlatLiveEntries", int.class, int.class, String.class);
 		method.setAccessible(true);
@@ -348,6 +464,44 @@ public class FuturesLiveBrokerReconcileOpenPositionTest {
 		Constructor<?> constructor = type.getDeclaredConstructor();
 		constructor.setAccessible(true);
 		return constructor.newInstance();
+	}
+
+	private static Object portfolioPosition(String symbol, String side, int contracts, double entryPrice, double stopPrice, double targetPrice) throws Exception {
+		Class<?> type = Class.forName("com.tradingbot.FuturesManager$PortfolioPosition");
+		Constructor<?> constructor = type.getDeclaredConstructor();
+		constructor.setAccessible(true);
+		Object position = constructor.newInstance();
+		setField(position, "symbol", symbol);
+		setField(position, "side", side);
+		setField(position, "contracts", contracts);
+		setField(position, "entryPrice", entryPrice);
+		setField(position, "stopPrice", stopPrice);
+		setField(position, "targetPrice", targetPrice);
+		return position;
+	}
+
+	private static Object brokerCloseFill(String orderId, double price, double pnl, String createdAt) throws Exception {
+		Class<?> type = Class.forName("com.tradingbot.FuturesManager$BrokerCloseFill");
+		Constructor<?> constructor = type.getDeclaredConstructor();
+		constructor.setAccessible(true);
+		Object fill = constructor.newInstance();
+		setField(fill, "orderId", orderId);
+		setField(fill, "price", price);
+		setField(fill, "pnl", pnl);
+		setField(fill, "createdAt", createdAt);
+		return fill;
+	}
+
+	private static boolean livePositionBlocksNewEntries(Object position) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("livePositionBlocksNewEntries", position.getClass());
+		method.setAccessible(true);
+		return ((Boolean) method.invoke(null, position)).booleanValue();
+	}
+
+	private static boolean livePositionIsDtmManaged(Object position) throws Exception {
+		Method method = FuturesManager.class.getDeclaredMethod("livePositionIsDtmManaged", position.getClass());
+		method.setAccessible(true);
+		return ((Boolean) method.invoke(null, position)).booleanValue();
 	}
 
 	private static void setField(Object target, String fieldName, Object value) throws Exception {

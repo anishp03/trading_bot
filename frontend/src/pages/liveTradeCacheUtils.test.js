@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  brokerRoundTripNetPnl,
+  brokerRoundTripTradeCost,
   composeTradeCacheRealizedPnl,
   isBrokerConfirmedTradeCacheRow,
   mergeTradeCachePnlFields,
@@ -20,12 +22,12 @@ test("composeTradeCacheRealizedPnl adds DTM partial PnL to broker final leg", ()
   );
 });
 
-test("mergeTradeCachePnlFields keeps broker final leg but preserves local DTM realized total", () => {
+test("mergeTradeCachePnlFields keeps broker PnL authoritative while preserving local DTM fields", () => {
   const merged = mergeTradeCachePnlFields(
     {
       cacheSource: "topstep-enriched",
-      pnl: 72.69,
-      finalLegPnl: 72.69,
+      pnl: 69.76,
+      finalLegPnl: 69.76,
       contracts: 3,
     },
     {
@@ -38,10 +40,18 @@ test("mergeTradeCachePnlFields keeps broker final leg but preserves local DTM re
     }
   );
 
-  assert.equal(merged.pnl, 146.25);
-  assert.equal(merged.finalLegPnl, 72.69);
+  assert.equal(merged.pnl, 69.76);
+  assert.equal(merged.finalLegPnl, 69.76);
   assert.equal(merged.dtmRealizedPnl, 73.56);
   assert.equal(merged.dtmPartialContractsClosed, 3);
+});
+
+test("brokerRoundTripTradeCost adds entry and close fill costs", () => {
+  assert.equal(brokerRoundTripTradeCost({ totalFees: 14.63 }, 14.63), 29.26);
+});
+
+test("brokerRoundTripNetPnl subtracts matched entry fees from broker close-fill net PnL", () => {
+  assert.equal(brokerRoundTripNetPnl({ pnl: -584.63 }, 14.63), -599.26);
 });
 
 test("mergeTradeCachePnlFields keeps plain broker PnL when no DTM partial exists", () => {
