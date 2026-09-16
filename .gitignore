@@ -7,79 +7,92 @@
 **/target/
 .mvn/wrapper/maven-wrapper.jar
 
-# Frontend
-frontend/node_modules/
-frontend/dist/
-frontend/.vite/
-frontend/coverage/
-frontend/.env
-frontend/.env.*
-!frontend/.env.example
+# Frontend dependencies and generated output
+node_modules/
+/frontend/dist/
+/frontend/dist-ssr/
+/frontend/.vite/
+/frontend/coverage/
+/frontend/build/
+
+# Environment and machine-local configuration
 .env
 .env.*
-/.env.example
-!frontend/.env.example
+!.env.example
+!/frontend/.env.example
+!/production_backend/.env.example
+*.local
 
-# Backend/dev artifacts kept local, but keep backend source in Git
-release/
-scripts/
-docker-compose.yml
-CONTAINER_DEPLOYMENT.md
+# Canonical backend development runtime artifacts
+/dev_runtime/
+/production_backend/logs/
+/production_backend/data/
+/production_backend/backups/
+/production_backend/market_data/
+/production_backend/release/
+/production_backend/cp.txt
 
-# Backend runtime output
-backend/target/
-backend/logs/
-backend/data/
-backend/backups/
-dev_runtime/
-release/**/tradingbot-backend.jar
+# Protected deployment and shared runtime state
+/live_backend/
+/LiveBackend/
+/shared_runtime/
 
-# Local databases and broker/account state
-backend/*.db
-backend/*.db-*
-backend/*.db.*
-backend/*.sqlite
-backend/*.sqlite3
-backups/
+# Databases, broker/account state, and SQLite sidecars
 *.db
+*.db-*
+*.db.*
 *.sqlite
 *.sqlite3
-backend/*.db-journal
-backend/*.db-shm
-backend/*.db-wal
-backend/trading_bot.db
-backend/cp.txt
-release/**/data/
-release/**/*.db
-release/**/*.sqlite
-release/**/*.sqlite3
+*.db-journal
+*.db-shm
+*.db-wal
 
-# Large generated or staged market-data backups
-backend/market_data/
-backend/market_data/**/*.csv
-backend/market_data/status.properties
-backend/market_data/futures/backups/
-backend/market_data/futures/topstepx_stage/
+# Generated ProjectBrain retrieval state
+/ProjectBrain/RAG/CurrentChat/
+/ProjectBrain/RAG/cache/
+/ProjectBrain/RAG/storage/
+/ProjectBrain/RAG/exports/
+/ProjectBrain/RAG/.chroma/
+/ProjectBrain/Vault/
+*.faiss
+*.index
 
-# Local IDE / OS / runtime files
-.idea/
-.vscode/
-*.classpath
-*.project
-*.settings/
-.DS_Store
-.venv/
+# Logs and crash/runtime output
 *.log
 *.ctxt
-.mtj.tmp/
 hs_err_pid*
 replay_pid*
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Local archives / export bundles
+# Local release bundles, backups, and archives
+/release/
+/backups/
 *.zip
 *.tar.gz
 *.rar
-LiveBackend/
+
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE and editor state
+.idea/
+.vscode/
+*.iml
+*.classpath
+*.project
+*.settings/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.mtj.tmp/
+
+# macOS
+.DS_Store

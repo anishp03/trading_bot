@@ -2,13 +2,6 @@ const DEV_API_BASE_URL = "http://localhost:7071";
 export const AUTH_STORAGE_KEY = "tradingbot.auth";
 
 function runtimeApiBaseUrl() {
-  if (typeof window !== "undefined") {
-    const runtimeUrl = String(window.__TRADINGBOT_CONFIG__?.API_BASE_URL || "").trim();
-    if (runtimeUrl) {
-      return runtimeUrl;
-    }
-  }
-
   const buildUrl = String(import.meta.env.VITE_API_BASE_URL || "").trim();
   if (buildUrl) {
     return buildUrl;

@@ -7,6 +7,3 @@
 
 /assets/*
   Cache-Control: no-store
-
-/env-config.js
-  Cache-Control: no-store

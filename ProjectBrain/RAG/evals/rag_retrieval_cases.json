@@ -1,0 +1,175 @@
+[
+  {
+    "name": "rag chat startup wrapper retrieval",
+    "query": "automatic RAG startup retrieval for every Codex chat",
+    "expected_paths": [
+      "AGENTS.md",
+      "ProjectBrain/RAG/scripts/chat_rag_cycle.py"
+    ],
+    "top_k": 8
+  },
+  {
+    "name": "rag closeout write-back wrapper retrieval",
+    "query": "automatic RAG closeout write durable memory and refresh index",
+    "expected_paths": [
+      "ProjectBrain/RAG/scripts/chat_rag_cycle.py",
+      "ProjectBrain/RAG/scripts/deposit_chat_memory.py"
+    ],
+    "top_k": 8
+  },
+  {
+    "name": "retrieval is pointer not proof guardrail",
+    "query": "retrieval output is a pointer not proof read source files directly",
+    "expected_paths": [
+      "AGENTS.md",
+      "ProjectBrain/RAG/Brain Memory Manual.md"
+    ],
+    "top_k": 8
+  },
+  {
+    "name": "indexing process script",
+    "query": "build or refresh the local project RAG index SQLite FTS5 chunks",
+    "expected_paths": [
+      "ProjectBrain/RAG/scripts/index_project.py",
+      "ProjectBrain/RAG/scripts/rag_lib.py"
+    ],
+    "top_k": 8
+  },
+  {
+    "name": "query retrieval direct evidence and stale index guard",
+    "query": "query project RAG direct evidence stale index warning reference-only graph expansion",
+    "expected_paths": [
+      "ProjectBrain/RAG/scripts/query_project.py"
+    ],
+    "top_k": 8
+  },
+  {
+    "name": "current chat is scratch not permanent corpus",
+    "query": "CurrentChat scratch memory is not part of the permanent RAG index",
+    "expected_paths": [
+      "ProjectBrain/RAG/scripts/current_chat_memory.py",
+      "ProjectBrain/RAG/memory.yml"
+    ],
+    "forbidden_path_prefixes": [
+      "ProjectBrain/RAG/CurrentChat/"
+    ],
+    "top_k": 8
+  },
+  {
+    "name": "evidence-gated chat memory deposit",
+    "query": "evidence-gated curated chat memory dump refuses unsourced facts and secrets",
+    "expected_paths": [
+      "ProjectBrain/RAG/scripts/deposit_chat_memory.py"
+    ],
+    "top_k": 8
+  },
+  {
+    "name": "rag health checks",
+    "query": "RAG health check stale files CurrentChat included eval failures",
+    "expected_paths": [
+      "ProjectBrain/RAG/scripts/rag_health.py"
+    ],
+    "top_k": 8
+  },
+  {
+    "name": "sprint routing must retrieve NextSprint before RAG scripts",
+    "query": "NextSprint ten task RAG codebase audit active queue",
+    "required_paths_top_n": {
+      "top_n": 3,
+      "paths": [
+        "ProjectBrain/Vault/Sprints/NextSprint.md"
+      ]
+    },
+    "forbidden_artifact_types_top_n": {
+      "top_n": 3,
+      "artifact_types": [
+        "rag-script"
+      ]
+    },
+    "top_k": 8
+  },
+  {
+    "name": "frontend backend contract must avoid chat dump authority",
+    "query": "frontend backend contract live start strategy config risk config payload source verification",
+    "required_artifact_types_top_n": {
+      "top_n": 5,
+      "artifact_types": [
+        "backend-source",
+        "frontend-source"
+      ]
+    },
+    "forbidden_artifact_types_top_n": {
+      "top_n": 5,
+      "artifact_types": [
+        "chat-dump"
+      ]
+    },
+    "max_per_file": 3,
+    "top_k": 10
+  },
+  {
+    "name": "live start payload must retrieve route and frontend caller",
+    "query": "FuturesLive /api/futures/live/start strategyPreset riskConfig payload",
+    "required_paths": [
+      "production_backend/src/FuturesLiveRoutes.java",
+      "frontend/src/pages/FuturesLive.jsx"
+    ],
+    "required_content": [
+      {
+        "path": "production_backend/src/FuturesLiveRoutes.java",
+        "contains": [
+          "strategyPreset"
+        ]
+      },
+      {
+        "path": "frontend/src/pages/FuturesLive.jsx",
+        "contains": [
+          "strategyPreset"
+        ]
+      }
+    ],
+    "top_k": 12
+  },
+  {
+    "name": "dtm fake-log loop diagnostic must retrieve runtime and DTM context",
+    "query": "DTM fake logs loop strategy logical issue gate bottleneck live execution",
+    "required_artifact_types_top_n": {
+      "top_n": 8,
+      "artifact_types": [
+        "dtm-note",
+        "runtime-note"
+      ]
+    },
+    "forbidden_artifact_types_top_n": {
+      "top_n": 5,
+      "artifact_types": [
+        "chat-dump"
+      ]
+    },
+    "top_k": 12
+  },
+  {
+    "name": "control plane source map should avoid same-file crowding",
+    "query": "current bot architecture source map line by line review control plane",
+    "required_artifact_types_top_n": {
+      "top_n": 8,
+      "artifact_types": [
+        "source-map",
+        "sprint-plan"
+      ]
+    },
+    "max_per_file": 2,
+    "top_k": 12
+  },
+  {
+    "name": "chat dump closeout should use consolidated ledger",
+    "query": "consolidated chat memory ledger RAG hardening",
+    "required_paths_top_n": {
+      "top_n": 3,
+      "paths": [
+        "ProjectBrain/Vault/ChatDumps/Chat Memory Ledger.md"
+      ]
+    },
+    "top_k": 8
+  }
+]

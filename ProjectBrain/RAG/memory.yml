@@ -1,0 +1,111 @@
+root: /Users/anishpatel/Documents/SoftwareProject
+vault: /Users/anishpatel/Documents/SoftwareProject/ProjectBrain/Vault
+storage: /Users/anishpatel/Documents/SoftwareProject/ProjectBrain/RAG/storage
+
+include:
+  - AGENTS.md
+  - ProjectBrain/Vault/**/*.md
+  - ProjectBrain/RAG/Brain Memory Manual.md
+  - ProjectBrain/RAG/memory.yml
+  - ProjectBrain/RAG/scripts/*.py
+  - run.sh
+  - .gitignore
+  - README.md
+  - production_backend/.mvn/wrapper/maven-wrapper.properties
+  - production_backend/mvnw
+  - production_backend/mvnw.cmd
+  - production_backend/pom.xml
+  - production_backend/**/*.md
+  - production_backend/src/*.java
+  - production_backend/resources/**/*
+  - production_backend/tests/*.java
+  - frontend/eslint.config.js
+  - frontend/index.html
+  - frontend/package.json
+  - frontend/package-lock.json
+  - frontend/public/_headers
+  - frontend/src/**/*.{js,jsx,ts,tsx,css}
+  - frontend/tests/**/*.{js,jsx,ts,tsx,css}
+  - frontend/functions/**/*.js
+  - frontend/vite.config.js
+  - scripts/**/*.{md,sh,ps1,mjs,yml,yaml,service}
+  - research/**/*.md
+
+exclude:
+  - "**/.env.example*"
+  - "**/node_modules/**"
+  - "**/target/**"
+  - "**/dist/**"
+  - "**/logs/**"
+  - "**/backups/**"
+  - "**/*.db"
+  - "**/*.db-shm"
+  - "**/*.db-wal"
+  - "live_backend/**"
+  - "ProjectBrain/RAG/cache/**"
+  - "ProjectBrain/RAG/storage/**"
+  - "ProjectBrain/RAG/exports/**"
+  - "ProjectBrain/RAG/CurrentChat/**"
+  - "dev_runtime/**"
+
+chunking:
+  # Smaller chunks reduce topic dilution and keep injected context under control.
+  # Markdown uses section-aware chunks; source files stay slightly larger so
+  # method/class bodies are less likely to be split.
+  target_tokens: 550
+  max_tokens: 850
+  overlap_tokens: 90
+  markdown_target_tokens: 500
+  markdown_max_tokens: 750
+  markdown_overlap_tokens: 80
+  code_target_tokens: 700
+  code_max_tokens: 1000
+  code_overlap_tokens: 120
+  min_heading_flush_tokens: 120
+
+retrieval:
+  mode: hybrid
+  # Retrieve wider direct candidate pools, then suppress graph/reference-only noise.
+  keyword_top_k: 60
+  vector_top_k: 50
+  embedding_top_k: 50
+  final_top_k: 6
+  context_keyword_top_k: 100
+  context_vector_top_k: 80
+  context_embedding_top_k: 60
+  context_final_top_k: 16
+  reference_weight: 0.14
+  reference_only_score_cap: 0.48
+  max_reference_only_final: 3
+  min_direct_evidence_for_graph_expansion: 0.18
+  normal_max_per_file: 2
+  stale_warning_enabled: true
+
+embeddings:
+  enabled: false
+  provider: local-hash
+  dimensions: 256
+
+organization:
+  reports:
+    diagnostics: ProjectBrain/Vault/Reports/Diagnostics
+    market_days: ProjectBrain/Vault/Reports/MarketDays
+  decisions: ProjectBrain/Vault/Decisions
+  concepts: ProjectBrain/Vault/Concepts
+  sprint_plan: ProjectBrain/Vault/Sprints/NextSprint.md
+  tags:
+    - strategy-presets
+    - risk-config
+    - live-start
+    - candidate-generation
+    - strategy-diagnostics
+    - order-flow
+    - dtm
+    - broker-reconcile
+    - ledger-trade-cache
+    - frontend-backend-contract
+    - market-data
+    - backtest
+    - deployment
+    - live-backend-diagnostic
+    - market-day-report

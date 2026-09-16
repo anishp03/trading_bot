@@ -2,12 +2,13 @@
 set -euo pipefail
 
 LABEL="com.tradingbot.backend"
-SOFTWARE_ROOT="/Users/anishpatel/Documents/SoftwareProject"
-PROJECT_ROOT="$SOFTWARE_ROOT/trading_bot"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SOFTWARE_ROOT="${SOFTWARE_ROOT:-$PROJECT_ROOT}"
 LIVE_BACKEND_DIR="$SOFTWARE_ROOT/live_backend"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 RUN_SCRIPT="$LIVE_BACKEND_DIR/bin/run-live-backend.sh"
-UPDATE_SCRIPT="$PROJECT_ROOT/scripts/update-live-backend.sh"
+UPDATE_SCRIPT="$SOFTWARE_ROOT/scripts/update-live-backend.sh"
 
 mkdir -p "$HOME/Library/LaunchAgents" "$LIVE_BACKEND_DIR/bin" "$LIVE_BACKEND_DIR/data" "$LIVE_BACKEND_DIR/logs"
 

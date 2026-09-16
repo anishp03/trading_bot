@@ -59,7 +59,7 @@ backend_base_url() {
 
 if [ ! -f "$TRADINGBOT_DB_PATH" ] && [ "${TRADINGBOT_ALLOW_EMPTY_SHARED_RUNTIME:-false}" != "true" ]; then
   log "Centralized runtime DB not found at $TRADINGBOT_DB_PATH."
-  log "Seed it from the live DB with trading_bot/scripts/prepare-shared-runtime.sh --apply before starting live."
+  log "Restore or explicitly provision the canonical shared runtime before starting live."
   log "Set TRADINGBOT_ALLOW_EMPTY_SHARED_RUNTIME=true only for isolated test runs."
   exit 1
 fi

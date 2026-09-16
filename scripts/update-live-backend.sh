@@ -2,12 +2,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKING_PROJECT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SOFTWARE_ROOT="$(cd "$WORKING_PROJECT/.." && pwd)"
-SOURCE_BACKEND="$WORKING_PROJECT/backend"
+SOFTWARE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SOURCE_BACKEND="$SOFTWARE_ROOT/production_backend"
 LIVE_BACKEND_DIR="${LIVE_BACKEND_DIR:-$SOFTWARE_ROOT/live_backend}"
 LIVE_BACKEND_CODE_DIR="$LIVE_BACKEND_DIR/backend"
 LIVE_MARKET_DATA_DIR="$LIVE_BACKEND_CODE_DIR/market_data"
+LEGACY_LIVE_TRADE_CACHE_DIR="$LIVE_BACKEND_CODE_DIR/data/live_trade_cache"
 SHARED_RUNTIME_DIR="${TRADINGBOT_RUNTIME_ROOT:-$SOFTWARE_ROOT/shared_runtime}"
 LABEL="${TRADINGBOT_LAUNCH_LABEL:-com.tradingbot.backend}"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
@@ -228,13 +228,13 @@ TRADINGBOT_FUTURES_DATA_DIR=$SHARED_RUNTIME_DIR/market_data/futures
 TRADINGBOT_LIVE_TRADE_CACHE_DIR=$SHARED_RUNTIME_DIR/data/live_trade_cache
 TRADINGBOT_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080
 TRADINGBOT_ENABLE_BACKEND_UPDATE=true
-TRADINGBOT_BACKEND_UPDATE_SCRIPT=$WORKING_PROJECT/scripts/update-live-backend.sh
+TRADINGBOT_BACKEND_UPDATE_SCRIPT=$SCRIPT_DIR/update-live-backend.sh
 TRADINGBOT_BACKEND_UPDATE_LOG=$LOG_FILE
 EOF
     chmod 600 "$ENV_FILE"
   else
     set_env_line "TRADINGBOT_ENABLE_BACKEND_UPDATE" "true"
-    set_env_line "TRADINGBOT_BACKEND_UPDATE_SCRIPT" "$WORKING_PROJECT/scripts/update-live-backend.sh"
+    set_env_line "TRADINGBOT_BACKEND_UPDATE_SCRIPT" "$SCRIPT_DIR/update-live-backend.sh"
     set_env_line "TRADINGBOT_BACKEND_UPDATE_LOG" "$LOG_FILE"
     set_env_line "TRADINGBOT_RUNTIME_ROOT" "$SHARED_RUNTIME_DIR"
     set_env_line "TRADINGBOT_RUNTIME_ROLE" "live"
@@ -242,7 +242,6 @@ EOF
     set_env_line "TRADINGBOT_EQUITY_MARKET_DATA_DIR" "$SHARED_RUNTIME_DIR/market_data"
     set_env_line "TRADINGBOT_FUTURES_DATA_DIR" "$SHARED_RUNTIME_DIR/market_data/futures"
     set_env_line "TRADINGBOT_LIVE_TRADE_CACHE_DIR" "$SHARED_RUNTIME_DIR/data/live_trade_cache"
-    set_env_line "TRADINGBOT_REQUIRE_APP_AUTH" "${TRADINGBOT_REQUIRE_APP_AUTH:-false}"
     remove_env_line "TRADINGBOT_AUTO_START_LIVE_BOT"
     remove_env_line "TRADINGBOT_KEEP_LIVE_BOT_ON"
     remove_env_line "TRADINGBOT_LIVE_AUTOSTART_SYMBOL"
@@ -282,6 +281,40 @@ load_live_env() {
   TRADINGBOT_EQUITY_MARKET_DATA_DIR="${TRADINGBOT_EQUITY_MARKET_DATA_DIR:-$SHARED_RUNTIME_DIR/market_data}"
   TRADINGBOT_FUTURES_DATA_DIR="${TRADINGBOT_FUTURES_DATA_DIR:-$SHARED_RUNTIME_DIR/market_data/futures}"
   TRADINGBOT_LIVE_TRADE_CACHE_DIR="${TRADINGBOT_LIVE_TRADE_CACHE_DIR:-$SHARED_RUNTIME_DIR/data/live_trade_cache}"
+}
+
+migrate_legacy_live_trade_cache() {
+  local legacy_file
+  local relative_path
+  local target_file
+
+  [ -d "$LEGACY_LIVE_TRADE_CACHE_DIR" ] || return 0
+  [ "$LEGACY_LIVE_TRADE_CACHE_DIR" != "$TRADINGBOT_LIVE_TRADE_CACHE_DIR" ] || return 0
+  legacy_file="$(find "$LEGACY_LIVE_TRADE_CACHE_DIR" -type f -print -quit 2>/dev/null || true)"
+  [ -n "$legacy_file" ] || return 0
+
+  log "Preserving legacy live trade cache in $TRADINGBOT_LIVE_TRADE_CACHE_DIR"
+  mkdir -p "$TRADINGBOT_LIVE_TRADE_CACHE_DIR"
+  while IFS= read -r -d '' legacy_file; do
+    relative_path="${legacy_file#"$LEGACY_LIVE_TRADE_CACHE_DIR/"}"
+    target_file="$TRADINGBOT_LIVE_TRADE_CACHE_DIR/$relative_path"
+    if [ -e "$target_file" ] && ! cmp -s "$legacy_file" "$target_file"; then
+      fail "Legacy live trade cache conflicts with canonical runtime file: $relative_path"
+    fi
+  done < <(find "$LEGACY_LIVE_TRADE_CACHE_DIR" -type f -print0)
+
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --ignore-existing "$LEGACY_LIVE_TRADE_CACHE_DIR/" "$TRADINGBOT_LIVE_TRADE_CACHE_DIR/"
+  else
+    cp -R -n "$LEGACY_LIVE_TRADE_CACHE_DIR/." "$TRADINGBOT_LIVE_TRADE_CACHE_DIR/"
+  fi
+
+  while IFS= read -r -d '' legacy_file; do
+    relative_path="${legacy_file#"$LEGACY_LIVE_TRADE_CACHE_DIR/"}"
+    target_file="$TRADINGBOT_LIVE_TRADE_CACHE_DIR/$relative_path"
+    [ -f "$target_file" ] && cmp -s "$legacy_file" "$target_file" \
+      || fail "Legacy live trade cache was not preserved: $relative_path"
+  done < <(find "$LEGACY_LIVE_TRADE_CACHE_DIR" -type f -print0)
 }
 
 build_backend() {
@@ -379,7 +412,7 @@ stop_backend() {
 }
 
 replace_backend_copy() {
-  log "Copying trading_bot/backend into live_backend/backend"
+  log "Copying production_backend into live_backend/backend"
   mkdir -p "$LIVE_BACKEND_CODE_DIR"
 
   if command -v rsync >/dev/null 2>&1; then
@@ -390,10 +423,16 @@ replace_backend_copy() {
       --exclude '*.db-*' \
       --exclude '*.sqlite' \
       --exclude '*.sqlite3' \
+      --exclude 'data/' \
       --exclude 'market_data/' \
       "$SOURCE_BACKEND/" "$LIVE_BACKEND_CODE_DIR/"
   else
+    local data_backup=""
     local market_data_backup=""
+    if [ -d "$LIVE_BACKEND_CODE_DIR/data" ]; then
+      data_backup="$(mktemp -d "$LIVE_BACKEND_DIR/data-backup.XXXXXX")"
+      cp -R "$LIVE_BACKEND_CODE_DIR/data/." "$data_backup/"
+    fi
     if [ -d "$LIVE_MARKET_DATA_DIR" ]; then
       market_data_backup="$(mktemp -d "$LIVE_BACKEND_DIR/market-data-backup.XXXXXX")"
       cp -R "$LIVE_MARKET_DATA_DIR/." "$market_data_backup/"
@@ -401,6 +440,12 @@ replace_backend_copy() {
     rm -rf "$LIVE_BACKEND_CODE_DIR"
     mkdir -p "$LIVE_BACKEND_CODE_DIR"
     cp -R "$SOURCE_BACKEND/." "$LIVE_BACKEND_CODE_DIR/"
+    if [ -n "$data_backup" ]; then
+      rm -rf "$LIVE_BACKEND_CODE_DIR/data"
+      mkdir -p "$LIVE_BACKEND_CODE_DIR/data"
+      cp -R "$data_backup/." "$LIVE_BACKEND_CODE_DIR/data/"
+      rm -rf "$data_backup"
+    fi
     if [ -n "$market_data_backup" ]; then
       rm -rf "$LIVE_MARKET_DATA_DIR"
       mkdir -p "$LIVE_MARKET_DATA_DIR"
@@ -425,11 +470,17 @@ replace_backend_copy() {
 }
 
 start_backend() {
+  local domain="gui/$(id -u)"
+  local target="$domain/$LABEL"
+
   rm -f "$MAINTENANCE_FILE"
   if [ -f "$PLIST" ]; then
     log "Starting backend with LaunchAgent $LABEL"
-    launchctl bootstrap "gui/$(id -u)" "$PLIST" >/dev/null 2>&1 || true
-    launchctl kickstart -k "gui/$(id -u)/$LABEL"
+    launchctl enable "$target"
+    if ! launchctl print "$target" >/dev/null 2>&1; then
+      launchctl bootstrap "$domain" "$PLIST"
+    fi
+    launchctl kickstart -k "$target"
   else
     log "LaunchAgent plist not found; starting backend directly for this session"
     nohup /bin/bash "$RUN_SCRIPT_LIVE" >> "$LIVE_BACKEND_DIR/logs/standalone.out.log" 2>> "$LIVE_BACKEND_DIR/logs/standalone.err.log" &
@@ -471,7 +522,10 @@ main() {
 
   if [ "$RESTART_BACKEND" -eq 1 ]; then
     stop_backend
+    migrate_legacy_live_trade_cache
     log "Skipping live DB backup; runtime DB remains canonical at $TRADINGBOT_DB_PATH"
+  else
+    log "Skipping legacy trade-cache migration without a confirmed backend stop; legacy data remains preserved in place."
   fi
 
   replace_backend_copy
